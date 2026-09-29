@@ -1,0 +1,10 @@
+Slotwise-Website – fertig gebaut, sofort online stellen (1 Minute, ohne GitHub, ohne Terminal)
+
+1. https://app.netlify.com/drop öffnen (kostenlos; Anmeldung mit E-Mail oder GitHub)
+2. Diesen ganzen Ordner "slotwise-website-online" auf das Feld ziehen
+3. Fertig – Netlify zeigt die Adresse (z. B. https://xyz.netlify.app). Alle Unterseiten funktionieren (_redirects liegt bei).
+
+Eigene Domain: in Netlify "Domain management" → Domain hinzufügen (slotwise.app o. ä.).
+
+Was drin ist: index.html, assets/site.js (React + Seiten), assets/site.css (Tailwind), Schriften (Inter, Plus Jakarta Sans), Favicon.
+Firmendaten für Impressum/Datenschutz fehlen noch → siehe Hinweis auf den Seiten; sag Claude die Daten, dann kommt ein neuer Ordner.
