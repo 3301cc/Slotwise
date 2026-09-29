@@ -1,0 +1,40 @@
+"use strict";
+/*
+ * Konfiguration aus Umgebungsvariablen – der einzige Ort, der process.env liest.
+ * Alles andere bekommt das fertige config-Objekt übergeben.
+ */
+const REQUIRED_SECRET_LENGTH = 32;
+
+function fromEnv(env = process.env) {
+  const deployed = Boolean(env.VERCEL || env.NODE_ENV === "production");
+  const redisUrl = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL || env.REDIS_REST_URL || "";
+  const redisToken = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN || env.REDIS_REST_TOKEN || "";
+  const secret = env.WAITLIST_SECRET && env.WAITLIST_SECRET.length >= REQUIRED_SECRET_LENGTH ? env.WAITLIST_SECRET : "";
+
+  return {
+    deployed,
+    secret: secret || (deployed ? "" : "local-dev-secret-not-for-production-use"),
+    siteUrl: (env.SITE_URL || (env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : "")).replace(/\/$/, ""),
+    redis: redisUrl && redisToken ? { url: redisUrl.replace(/\/$/, ""), token: redisToken } : null,
+    dataFile: env.WAITLIST_DATA_FILE || "",
+    mail: env.MAILJET_API_KEY && env.MAILJET_API_SECRET && env.WAITLIST_FROM_EMAIL
+      ? { apiKey: env.MAILJET_API_KEY, apiSecret: env.MAILJET_API_SECRET, from: env.WAITLIST_FROM_EMAIL, fromName: env.WAITLIST_FROM_NAME || "Slotwise" }
+      : null,
+    notifyEmail: env.WAITLIST_NOTIFY_EMAIL || "",
+    adminToken: env.WAITLIST_ADMIN_TOKEN || (deployed ? "" : "local-admin"),
+    tokenTtlMs: 72 * 60 * 60 * 1000,
+    rateLimit: { max: 5, windowSec: 600 },
+  };
+}
+
+/** Produktiv nur, wenn Signatur, Speicher und Mailversand eingerichtet sind. Lokal reicht der Dateispeicher. */
+function readiness(config) {
+  if (!config.deployed) return { ready: true, mode: "local", missing: [] };
+  const missing = [];
+  if (!config.secret) missing.push("WAITLIST_SECRET");
+  if (!config.redis) missing.push("KV_REST_API_URL/KV_REST_API_TOKEN");
+  if (!config.mail) missing.push("MAILJET_API_KEY/MAILJET_API_SECRET/WAITLIST_FROM_EMAIL");
+  return { ready: missing.length === 0, mode: "production", missing };
+}
+
+module.exports = { fromEnv, readiness };

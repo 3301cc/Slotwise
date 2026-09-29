@@ -1,0 +1,10 @@
+{
+  "name": "slotwise-website",
+  "private": true,
+  "type": "commonjs",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "node scripts/dev-server.js",
+    "test": "node --test scripts/waitlist.test.js"
+  }
+}

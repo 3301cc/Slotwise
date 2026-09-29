@@ -1,0 +1,3 @@
+"use strict";
+// Vercel-Einstieg: GET /api/waitlist/unsubscribe?t=…
+module.exports = require("../_lib/http").routes["GET /api/waitlist/unsubscribe"];

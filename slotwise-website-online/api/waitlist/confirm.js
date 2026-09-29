@@ -1,0 +1,3 @@
+"use strict";
+// Vercel-Einstieg: GET /api/waitlist/confirm?t=…
+module.exports = require("../_lib/http").routes["GET /api/waitlist/confirm"];
