@@ -1,0 +1,58 @@
+"use strict";
+/*
+ * Twilio ohne SDK: Webhook-Signatur, TwiML, SMS.
+ *
+ * Voice-Ablauf (rundenbasiert, damit er auf Vercel-Funktionen UND dem Standalone-Server läuft):
+ *   Twilio → POST /api/agent/voice-webhook (CallSid, From, SpeechResult …)
+ *   Antwort: TwiML mit <Say> (Text-to-Speech, Amazon-Polly-Stimme über Twilio) und
+ *   <Gather input="speech"> (Speech-to-Text). Jede Nutzeräußerung ist ein neuer Webhook-Aufruf.
+ *   Ein dauerhaft offener Media-Stream (WebSocket) ist damit nicht nötig.
+ */
+const crypto = require("node:crypto");
+
+/** Signaturprüfung nach Twilio-Doku: Base64(HMAC-SHA1(authToken, url + sortierte(key+value))) */
+function validSignature({ authToken, url, params, signature }) {
+  if (!authToken || !signature) return false;
+  const data = url + Object.keys(params || {}).sort().map((k) => k + params[k]).join("");
+  const expected = crypto.createHmac("sha1", authToken).update(data).digest("base64");
+  const a = Buffer.from(expected), b = Buffer.from(String(signature));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]);
+
+/** TwiML-Bausteine. voice: Polly-Stimmen, z. B. "Polly.Vicki-Neural" (de-DE), "Polly.Joanna-Neural" (en-US). */
+function twiml({ say, gather, hangup, dial, language = "de-DE", voice = "Polly.Vicki-Neural", actionUrl }) {
+  const parts = [];
+  const sayXml = (t) => `<Say language="${language}" voice="${voice}">${esc(t)}</Say>`;
+  if (gather) {
+    parts.push(`<Gather input="speech" language="${language}" speechTimeout="auto" actionOnEmptyResult="true" action="${esc(actionUrl)}" method="POST">`);
+    if (say) parts.push(sayXml(say));
+    parts.push("</Gather>");
+    parts.push(sayXml(language.startsWith("de") ? "Ich habe Sie leider nicht verstanden. Auf Wiederhören." : "Sorry, I did not catch that. Goodbye."));
+  } else if (say) {
+    parts.push(sayXml(say));
+  }
+  if (dial) parts.push(`<Dial>${esc(dial)}</Dial>`);
+  if (hangup) parts.push("<Hangup/>");
+  return `<?xml version="1.0" encoding="UTF-8"?><Response>${parts.join("")}</Response>`;
+}
+
+/** SMS über die REST-API (Basic Auth). */
+function smsSender({ accountSid, authToken, from }, fetchImpl = fetch) {
+  return async function sendSms(to, body) {
+    const res = await fetchImpl(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`, {
+      method: "POST",
+      headers: { Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ To: to, From: from, Body: body }).toString(),
+    });
+    if (!res.ok) throw new Error(`twilio sms ${res.status}: ${(await res.text().catch(() => "")).slice(0, 200)}`);
+  };
+}
+
+/** Lokal / Tests: SMS ins Log statt versenden. */
+function consoleSms(log = console.log) {
+  return async (to, body) => { log(`[sms → ${to}] ${body}`); };
+}
+
+module.exports = { validSignature, twiml, smsSender, consoleSms };
