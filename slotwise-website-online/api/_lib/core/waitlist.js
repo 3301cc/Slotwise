@@ -39,6 +39,11 @@ function createWaitlist(config, deps = {}) {
   function unsubscribeUrl(baseUrl, email) {
     return `${baseUrl}/api/waitlist/unsubscribe?t=${encodeURIComponent(tokens.sign({ p: "unsub", e: email }))}`;
   }
+  function authorized(headers) {
+    const given = String((headers && headers.authorization) || "").replace(/^Bearer\s+/i, "");
+    const a = Buffer.from(given), b = Buffer.from(config.adminToken || "");
+    return Boolean(config.adminToken) && a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
   async function rateLimited(ip) {
     const key = crypto.createHash("sha256").update(`rl:${ip || "unknown"}`).digest("hex").slice(0, 32);
     const n = await store.incrWithTtl(key, config.rateLimit.windowSec, now());
@@ -136,13 +141,21 @@ function createWaitlist(config, deps = {}) {
       }
     },
 
+    /** GET, Authorization: Bearer <adminToken> → { confirmed } (nur die Zahl, keine Adressen) */
+    async stats({ headers }) {
+      if (!authorized(headers)) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
+      try {
+        const all = await store.all();
+        return json(200, { confirmed: Object.keys(all).length });
+      } catch (err) {
+        log.error("[waitlist] Statistik fehlgeschlagen:", err.message);
+        return json(502, { error: "upstream_failed" });
+      }
+    },
+
     /** GET, Authorization: Bearer <adminToken> */
     async exportCsv({ headers }) {
-      const given = String((headers && headers.authorization) || "").replace(/^Bearer\s+/i, "");
-      const a = Buffer.from(given), b = Buffer.from(config.adminToken || "");
-      if (!config.adminToken || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-        return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
-      }
+      if (!authorized(headers)) return json(401, { error: "unauthorized" }, { "WWW-Authenticate": "Bearer" });
       try {
         const all = await store.all();
         const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
