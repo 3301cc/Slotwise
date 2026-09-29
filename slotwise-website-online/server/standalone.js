@@ -22,6 +22,7 @@ function serveStatic(req, res) {
   const { pathname } = new URL(req.url, "http://local");
   let file = path.normalize(path.join(ROOT, decodeURIComponent(pathname)));
   const hidden = /[\\/](\.data|api|server|scripts|node_modules)([\\/]|$)/.test(file) || path.basename(file).startsWith(".");
+  if (file.startsWith(ROOT) && !hidden && fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, "index.html"); // Verzeichnis → index.html (wie Vercel)
   if (!file.startsWith(ROOT) || hidden || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(ROOT, "index.html");
   for (const [k, v] of Object.entries(HEADERS)) res.setHeader(k, v);
   res.setHeader("Content-Type", TYPES[path.extname(file)] || "application/octet-stream");
