@@ -177,6 +177,14 @@
   // ---------- Verdrahtung ----------
   async function init() {
     $("#greeting-date").textContent = fmtLong.format(new Date());
+    const status = await API.status();
+    const mode = $("#mode-note");
+    if (API.live) {
+      mode.innerHTML = `<span class="rounded bg-emerald-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-50">Live</span>Feed, Kalender und Einstellungen kommen vom Agenten${status && status.model ? ` (Modell: ${esc(status.model)})` : ""}.`;
+      mode.className = "inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900";
+    } else if (status && !status.ready) {
+      mode.innerHTML = `<span class="rounded bg-amber-900 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-50">Demo</span>Agent noch nicht eingerichtet (fehlt: ${esc(status.missing.join(", "))}). Beispieldaten.`;
+    }
     const [metrics, activity, week, settings] = await Promise.all([API.getMetrics(), API.getActivity(), API.getWeek(), API.getSettings()]);
     renderMetrics(metrics); renderActivity(activity); renderWeek(week); fillSettings(settings);
 
@@ -200,10 +208,12 @@
       if (ok || no) {
         const id = (ok || no).dataset.approve || (ok || no).dataset.reject;
         const s = weekData.slots.find((x) => x.id === id);
-        if (ok) s.kind = "booked"; else weekData.slots = weekData.slots.filter((x) => x.id !== id);
-        renderWeek(weekData); $("#slot-detail").classList.add("hidden");
-        $("#activity-list").prepend(activityItem({ id: `u${Date.now()}`, kind: ok ? "booked" : "info", at: new Date().toISOString(),
-          text: ok ? `Du hast den Vorschlag „${s.title}${s.with ? ` mit ${s.with}` : ""}“ freigegeben – Bestätigung geht raus` : `Vorschlag „${s.title}“ abgelehnt – der Agent bietet eine Alternative an` }, true));
+        API.decide(id, ok ? "approve" : "reject").then(() => {
+          if (ok) s.kind = "booked"; else weekData.slots = weekData.slots.filter((x) => x.id !== id);
+          renderWeek(weekData); $("#slot-detail").classList.add("hidden");
+          if (!API.live) $("#activity-list").prepend(activityItem({ id: `u${Date.now()}`, kind: ok ? "booked" : "info", at: new Date().toISOString(),
+            text: ok ? `Du hast den Vorschlag „${s.title}${s.with ? ` mit ${s.with}` : ""}“ freigegeben – Bestätigung geht raus` : `Vorschlag „${s.title}“ abgelehnt – der Agent bietet eine Alternative an` }, true));
+        }).catch(() => { $("#slot-detail").insertAdjacentHTML("beforeend", '<p class="mt-2 text-xs text-red-700">Das hat nicht geklappt. Bitte noch einmal versuchen.</p>'); });
       }
     });
 

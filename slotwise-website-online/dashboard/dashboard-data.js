@@ -5,13 +5,15 @@
  * (unten in MOCK), später ersetzt `SlotwiseAPI.http` sie durch echte Aufrufe – die Formen bleiben gleich.
  * Zeiten sind ISO-8601 in UTC; Anzeige rechnet nach Europe/Berlin um.
  *
- * Endpunkte (geplant, apps/web → api/):
- *   GET  /api/dashboard/metrics                   → Metrics
- *   GET  /api/dashboard/activity?limit=20         → Activity[]
- *   GET  /api/dashboard/week?start=YYYY-MM-DD     → { days: Day[], slots: Slot[] }
- *   GET  /api/agent/settings                      → AgentSettings
- *   PUT  /api/agent/settings                      → AgentSettings
- *   GET  /api/waitlist/stats  (Bearer)            → { confirmed: number }   ← Zähler „Verifizierte Leads“
+ * Live-Modus: sobald ein Admin-Token hinterlegt ist (localStorage "slotwise.adminToken" = WAITLIST_ADMIN_TOKEN),
+ * sprechen Feed, Kalender, Einstellungen und Freigaben mit der echten Agenten-API (api/_lib/core/agent/api.js):
+ *   GET  /api/agent/activity?since=&limit=        → { items: Activity[] }   (Polling alle 10 s)
+ *   GET  /api/agent/week?start=                   → { start, end, slots: Slot[] }
+ *   GET  /api/agent/settings · PUT /api/agent/settings
+ *   POST /api/agent/decision { id, action }       → Vorschlag freigeben/ablehnen
+ *   GET  /api/waitlist/stats                      → { confirmed }          ← Zähler „Verifizierte Leads“
+ * Ohne Token: Beispieldaten (MOCK) – die Formen sind identisch.
+ * Noch Mock (kein Endpunkt): Metriken Conversion / gesparte Zeit / Event-Typen.
  */
 (function (global) {
   "use strict";
@@ -80,19 +82,20 @@
   const SETTINGS_KEY = "slotwise.dashboard.agentSettings";
 
   const SlotwiseAPI = {
-    /** Auf `true` setzen (oder `baseUrl` angeben), sobald die echten Endpunkte stehen. */
-    live: false,
     baseUrl: "",
     adminToken() { try { return localStorage.getItem("slotwise.adminToken") || ""; } catch { return ""; } },
-    async http(path, init) {
-      const res = await fetch(this.baseUrl + path, { credentials: "include", ...init });
+    /** Live, sobald ein Admin-Token hinterlegt ist. */
+    get live() { return Boolean(this.adminToken()); },
+    async http(path, init = {}) {
+      const res = await fetch(this.baseUrl + path, { ...init, headers: { Authorization: `Bearer ${this.adminToken()}`, ...(init.headers || {}) } });
       if (!res.ok) throw new Error(`${path}: ${res.status}`);
       return res.json();
     },
+    /** Bereitschaft der Agenten-API (ohne Token abrufbar, ohne Werte). */
+    async status() { try { return await fetch(this.baseUrl + "/api/agent/status").then((r) => (r.ok ? r.json() : null)); } catch { return null; } },
 
     async getMetrics() {
-      if (this.live) return this.http("/api/dashboard/metrics");
-      const m = await delay(MOCK.metrics);
+      const m = await delay(MOCK.metrics); // Conversion/Zeit/Event-Typen: noch ohne Endpunkt
       // Zähler „Verifizierte Leads“ aus der Warteliste: GET /api/waitlist/stats braucht den Admin-Token.
       // Bis die App eine Anmeldung hat: Token einmalig im Browser hinterlegen →
       //   localStorage.setItem("slotwise.adminToken", "<WAITLIST_ADMIN_TOKEN>")
@@ -106,11 +109,11 @@
       return m;
     },
     async getActivity(limit = 20) {
-      if (this.live) return this.http(`/api/dashboard/activity?limit=${limit}`);
+      if (this.live) return (await this.http(`/api/agent/activity?limit=${limit}`)).items;
       return delay(MOCK.activity.slice(0, limit));
     },
     async getWeek(startISO) {
-      if (this.live) return this.http(`/api/dashboard/week?start=${encodeURIComponent(startISO)}`);
+      if (this.live) return this.http(`/api/agent/week${startISO ? `?start=${encodeURIComponent(startISO)}` : ""}`);
       return delay({ start: monday.toISOString(), slots: MOCK.slots });
     },
     async getSettings() {
@@ -120,12 +123,32 @@
     },
     async saveSettings(settings) {
       const next = { ...settings, updatedAt: new Date().toISOString() };
-      if (this.live) return this.http("/api/agent/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+      if (this.live) return this.http("/api/agent/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) });
       try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch { /* ignorieren */ }
       return delay(next, 250);
     },
-    /** Demo: neue Aktivität nachschieben (Live-Gefühl). Echte Version: Server-Sent Events auf /api/dashboard/activity/stream */
+    /** Vorschlag freigeben/ablehnen. Live: Server; Demo: nur lokal. */
+    async decide(id, action) {
+      if (this.live) return this.http("/api/agent/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, action }) });
+      return delay({ ok: true, local: true }, 100);
+    },
+    /**
+     * Neue Aktivität: live per Polling (alle 10 s, nur Einträge seit dem letzten Stand – Serverless-tauglich,
+     * kein offener Socket). Demo: drei Beispieleinträge nachschieben.
+     */
     subscribeActivity(onEvent) {
+      if (this.live) {
+        let since = new Date().toISOString();
+        const tick = async () => {
+          try {
+            const { items, serverTime } = await this.http(`/api/agent/activity?since=${encodeURIComponent(since)}&limit=20`);
+            items.slice().reverse().forEach(onEvent);
+            since = serverTime || since;
+          } catch { /* nächster Versuch beim nächsten Tick */ }
+        };
+        const t = setInterval(tick, 10000);
+        return () => clearInterval(t);
+      }
       const extra = [
         { kind: "proposed", text: "Neue Anfrage über die Buchungsseite: Erstgespräch, Wunsch Di. 10:00 – Slot geprüft, frei", ref: { type: "slot", id: "s3" } },
         { kind: "info", text: "Kalender-Sync mit Google abgeschlossen, 2 neue Belegungen übernommen" },
