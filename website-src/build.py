@@ -103,6 +103,16 @@ def main():
     OUT.write_text(s, encoding="utf-8")
     subprocess.run(["node", "--check", str(OUT)], check=True)
     print(f"ok: {OUT.relative_to(ROOT)} ({len(s):,} Bytes)")
+    build_dashboard_css()
+
+
+def build_dashboard_css():
+    """dashboard/dashboard.css aus website-src/dashboard/ mit der Tailwind-CLI (TAILWINDCSS=/pfad, sonst npx)."""
+    src = HERE / "dashboard"
+    out = ROOT / "slotwise-website-online" / "dashboard" / "dashboard.css"
+    tw = [os.environ["TAILWINDCSS"]] if os.environ.get("TAILWINDCSS") else (["tailwindcss"] if shutil.which("tailwindcss") else ["npx", "--yes", "tailwindcss@3"])
+    subprocess.run(tw + ["-c", "tailwind.config.js", "-i", "dashboard.src.css", "-o", str(out), "--minify"], cwd=src, check=True, capture_output=True)
+    print(f"ok: {out.relative_to(ROOT)} ({out.stat().st_size:,} Bytes)")
 
 
 if __name__ == "__main__":
