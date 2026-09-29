@@ -28,9 +28,9 @@
   const icon = (name, cls = "h-5 w-5") =>
     `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
   const TONE = {
-    emerald: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
-    indigo: "border-indigo-500/20 bg-indigo-500/10 text-indigo-300",
-    slate: "border-slate-700 bg-slate-800 text-slate-300",
+    emerald: "border-emerald-100 bg-emerald-50 text-emerald-700",
+    indigo: "border-indigo-100 bg-indigo-50 text-indigo-700",
+    slate: "border-slate-200 bg-slate-50 text-slate-700",
   };
 
   // ---------- 1 · KPIs ----------
@@ -43,23 +43,23 @@
     $("#kpi-grid").innerHTML = list.map((m) => `
       <article class="card p-5" aria-label="${esc(m.label)}">
         <div class="flex items-start justify-between gap-3">
-          <p class="text-sm text-slate-400">${esc(m.label)}</p>
+          <p class="text-sm text-slate-500">${esc(m.label)}</p>
           <span class="grid h-9 w-9 flex-none place-items-center rounded-xl border ${TONE[m.tone]}">${icon(m.icon)}</span>
         </div>
-        <p class="tabular mt-3 font-display text-3xl font-extrabold tracking-tight text-white">${fmtValue(m)}</p>
-        <p class="mt-1 text-xs text-slate-400">
-          ${m.delta != null ? `<span class="font-semibold ${m.delta >= 0 ? "text-emerald-300" : "text-red-300"}">${m.delta >= 0 ? "+" : ""}${m.delta.toLocaleString("de-DE")}${m.unit === "percent" ? " Pkt." : m.unit === "hours" ? " Std" : ""}</span> ` : ""}${esc(m.deltaLabel || "")}
+        <p class="tabular mt-3 font-display text-3xl font-extrabold tracking-tight text-slate-900">${fmtValue(m)}</p>
+        <p class="mt-1 text-xs text-slate-500">
+          ${m.delta != null ? `<span class="font-semibold ${m.delta >= 0 ? "text-emerald-700" : "text-red-700"}">${m.delta >= 0 ? "+" : ""}${m.delta.toLocaleString("de-DE")}${m.unit === "percent" ? " Pkt." : m.unit === "hours" ? " Std" : ""}</span> ` : ""}${esc(m.deltaLabel || "")}
         </p>
       </article>`).join("");
   }
 
   // ---------- 2 · Aktivität ----------
   const KIND = {
-    proposed: { dot: "bg-indigo-400", ring: "ring-indigo-400/30", label: "Vorschlag" },
-    booked: { dot: "bg-emerald-400", ring: "ring-emerald-400/30", label: "Gebucht" },
-    buffer: { dot: "bg-indigo-400", ring: "ring-indigo-400/30", label: "Puffer" },
-    conflict: { dot: "bg-red-400", ring: "ring-red-400/30", label: "Konflikt verhindert" },
-    info: { dot: "bg-slate-400", ring: "ring-slate-400/30", label: "Info" },
+    proposed: { dot: "bg-indigo-500", ring: "ring-indigo-100", label: "Vorschlag" },
+    booked: { dot: "bg-emerald-500", ring: "ring-emerald-100", label: "Gebucht" },
+    buffer: { dot: "bg-indigo-500", ring: "ring-indigo-100", label: "Puffer" },
+    conflict: { dot: "bg-red-500", ring: "ring-red-100", label: "Konflikt verhindert" },
+    info: { dot: "bg-slate-400", ring: "ring-slate-100", label: "Info" },
   };
   function activityItem(a, fresh = false) {
     const k = KIND[a.kind] || KIND.info;
@@ -69,11 +69,11 @@
     li.innerHTML = `
       <span class="mt-1.5 h-2.5 w-2.5 flex-none rounded-full ${k.dot} ring-4 ${k.ring}" aria-hidden="true"></span>
       <div class="min-w-0 flex-1">
-        <p class="text-sm leading-relaxed text-slate-200">${esc(a.text)}</p>
+        <p class="text-sm leading-relaxed text-slate-800">${esc(a.text)}</p>
         <p class="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
-          <span class="font-medium text-slate-400">${k.label}</span><span aria-hidden="true">·</span>
+          <span class="font-medium text-slate-500">${k.label}</span><span aria-hidden="true">·</span>
           <time datetime="${esc(a.at)}" title="${esc(new Date(a.at).toLocaleString("de-DE", { timeZone: TZ }))}">${relTime(a.at)}</time>
-          ${a.ref ? `<span aria-hidden="true">·</span><button type="button" class="link-slot underline-offset-2 hover:underline hover:text-slate-300" data-ref="${esc(a.ref.type)}:${esc(a.ref.id)}">Im Kalender zeigen</button>` : ""}
+          ${a.ref ? `<span aria-hidden="true">·</span><button type="button" class="link-slot underline-offset-2 hover:underline hover:text-slate-900" data-ref="${esc(a.ref.type)}:${esc(a.ref.id)}">Im Kalender zeigen</button>` : ""}
         </p>
       </div>`;
     return li;
@@ -87,9 +87,9 @@
   // ---------- 3 · Wochenkalender ----------
   const DAY_START = 8, DAY_END = 18, PX_PER_HOUR = 48;
   const KIND_SLOT = {
-    booked: "bg-emerald-500/90 text-white border-emerald-400/60",
-    proposed: "bg-indigo-500/25 text-indigo-100 border-dashed border-indigo-400",
-    blocked: "bg-slate-700/80 text-slate-300 border-slate-600",
+    booked: "bg-emerald-600 text-white border-emerald-700",
+    proposed: "bg-indigo-50 text-indigo-900 border-dashed border-indigo-400",
+    blocked: "bg-slate-100 text-slate-600 border-slate-300",
   };
   const SOURCE = { manual: "manuell", ai: "KI-Agent", google: "Google Kalender", icloud: "iCloud", microsoft: "Microsoft 365" };
   let weekData = null;
@@ -122,13 +122,13 @@
         </button>`;
       }).join("");
       const nowLine = i === todayIdx && nowMin >= DAY_START * 60 && nowMin <= DAY_END * 60
-        ? `<div class="pointer-events-none absolute left-0 right-0 z-10 border-t-2 border-red-400/80" style="top:${((nowMin - DAY_START * 60) / 60) * PX_PER_HOUR}px" aria-hidden="true"><span class="absolute -left-1 -top-[5px] h-2 w-2 rounded-full bg-red-400"></span></div>` : "";
-      return `<div class="relative border-l border-slate-800" style="height:${height}px" role="gridcell" aria-label="${esc(fmtDay.format(d))}">${hours.slice(0, -1).map((_, k) => `<div class="absolute left-0 right-0 border-t border-slate-800/70" style="top:${k * PX_PER_HOUR}px" aria-hidden="true"></div>`).join("")}${nowLine}${blocks}</div>`;
+        ? `<div class="pointer-events-none absolute left-0 right-0 z-10 border-t-2 border-red-500" style="top:${((nowMin - DAY_START * 60) / 60) * PX_PER_HOUR}px" aria-hidden="true"><span class="absolute -left-1 -top-[5px] h-2 w-2 rounded-full bg-red-500"></span></div>` : "";
+      return `<div class="relative border-l border-slate-100" style="height:${height}px" role="gridcell" aria-label="${esc(fmtDay.format(d))}">${hours.slice(0, -1).map((_, k) => `<div class="absolute left-0 right-0 border-t border-slate-100" style="top:${k * PX_PER_HOUR}px" aria-hidden="true"></div>`).join("")}${nowLine}${blocks}</div>`;
     }).join("");
 
     $("#week-grid").innerHTML = `
-      <div class="grid grid-cols-[52px_repeat(5,minmax(0,1fr))] border-b border-slate-800 text-center text-xs" role="row">
-        <div></div>${days.map((d, i) => `<div class="py-2 ${i === todayIdx ? "text-white" : "text-slate-400"}" role="columnheader">
+      <div class="grid grid-cols-[52px_repeat(5,minmax(0,1fr))] border-b border-slate-100 text-center text-xs" role="row">
+        <div></div>${days.map((d, i) => `<div class="py-2 ${i === todayIdx ? "text-slate-900" : "text-slate-500"}" role="columnheader">
           <span class="block font-medium">${esc(new Intl.DateTimeFormat("de-DE", { timeZone: TZ, weekday: "short" }).format(d))}</span>
           <span class="tabular inline-grid h-6 w-6 place-items-center rounded-full ${i === todayIdx ? "bg-emerald-600 font-bold text-white" : ""}">${d.getDate()}</span></div>`).join("")}
       </div>
@@ -148,8 +148,8 @@
     box.innerHTML = `
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p class="font-semibold text-white">${esc(s.title)}${s.with ? ` <span class="font-normal text-slate-400">mit ${esc(s.with)}</span>` : ""}</p>
-          <p class="tabular mt-0.5 text-slate-300">${esc(fmtLong.format(new Date(s.start)))}, ${fmtTime.format(new Date(s.start))}–${fmtTime.format(new Date(s.end))} Uhr</p>
+          <p class="font-semibold text-slate-900">${esc(s.title)}${s.with ? ` <span class="font-normal text-slate-500">mit ${esc(s.with)}</span>` : ""}</p>
+          <p class="tabular mt-0.5 text-slate-700">${esc(fmtLong.format(new Date(s.start)))}, ${fmtTime.format(new Date(s.start))}–${fmtTime.format(new Date(s.end))} Uhr</p>
           <p class="mt-0.5 text-xs text-slate-500">${KINDLABEL[s.kind]} · Quelle: ${SOURCE[s.source] || "–"}</p>
         </div>
         ${s.kind === "proposed" ? `<div class="flex gap-2">
@@ -220,7 +220,18 @@
       btn.disabled = false;
     });
 
+    // Seitenleiste: aktiven Bereich beim Scrollen markieren
+    const navLinks = [...document.querySelectorAll("#side-nav .nav-item[href^='#']")];
+    const io = new IntersectionObserver((entries) => {
+      entries.filter((e) => e.isIntersecting).forEach((e) => navLinks.forEach((l) => l.classList.toggle("nav-item-active", l.getAttribute("href") === `#${e.target.id}`)));
+    }, { rootMargin: "-40% 0px -55% 0px" });
+    ["kpis", "kalender", "feed", "ki-panel"].forEach((id) => { const el = document.getElementById(id); if (el) io.observe(el); });
+    document.querySelectorAll("[data-new-booking]").forEach((b) => b.addEventListener("click", () => {
+      $("#kalender").scrollIntoView({ behavior: "smooth", block: "start" });
+      const first = weekData.slots.find((s) => s.kind === "proposed"); if (first) showSlot(first.id);
+    }));
+
     setInterval(() => document.querySelectorAll("#activity-list time").forEach((t) => { t.textContent = relTime(t.getAttribute("datetime")); }), 60000);
   }
-  init().catch((err) => { console.error(err); $("#main").insertAdjacentHTML("afterbegin", '<p class="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">Daten konnten nicht geladen werden.</p>'); });
+  init().catch((err) => { console.error(err); $("#main").insertAdjacentHTML("afterbegin", '<p class="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">Daten konnten nicht geladen werden.</p>'); });
 })();
