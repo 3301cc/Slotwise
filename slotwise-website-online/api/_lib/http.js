@@ -96,6 +96,7 @@ const routes = {
   "GET /api/waitlist/confirm": handler("GET", (wl, i) => wl.confirm(i)),
   "GET /api/waitlist/unsubscribe": handler("GET", (wl, i) => wl.unsubscribe(i)),
   "GET /api/waitlist/export": handler("GET", (wl, i) => wl.exportCsv(i)),
+  "GET /api/waitlist/stats": handler("GET", (wl, i) => wl.stats(i)),
 };
 
 /** Ein einzelner Handler für alle Routen (node:http, Express `app.use(apiHandler)`, Fastify über `fastify-express`). */
