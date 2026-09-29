@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex" />
+    <title>Termin buchen</title>
+    <!-- STW-301: keine externen Ressourcen. Schriften self-hosted, keine Analytics, kein Tag-Manager. -->
+    <link rel="stylesheet" href="/assets/fonts.css" />
+    <link rel="stylesheet" href="/assets/widget.css" />
+  </head>
+  <body>
+    <div id="root" data-embed="1"></div>
+    <!-- Widget-Bundle vom selben Origin. Das Bundle verwendet kein localStorage und setzt kein Cookie. -->
+    <script type="module" src="/assets/widget.js"></script>
+    <!-- Bridge für die Höhenanpassung des Iframes (postMessage, nur ausgehend, mit Origin-Prüfung). -->
+    <script type="module" src="/assets/bridge.js"></script>
+  </body>
+</html>

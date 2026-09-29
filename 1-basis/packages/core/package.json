@@ -1,0 +1,25 @@
+{
+  "name": "@slotwise/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Framework-free domain logic: availability engine, booking rules, voice tool service. No runtime dependencies.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./availability": "./src/availability/engine.ts",
+    "./time": "./src/time.ts",
+    "./booking": "./src/booking/commit.ts",
+    "./voice": "./src/voice/service.ts",
+    "./voice/memory-repo": "./src/voice/memory-repo.ts"
+  },
+  "scripts": {
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@slotwise/config": "workspace:*",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

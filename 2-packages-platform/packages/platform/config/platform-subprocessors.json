@@ -1,0 +1,86 @@
+{
+  "version": "2026-09-29",
+  "processor": {
+    "name": "Slotwise",
+    "legal_entity": "Slotwise GmbH",
+    "address": "Düsseldorf, Deutschland",
+    "dpo_email": "datenschutz@slotwise.de"
+  },
+  "entries": [
+    {
+      "id": "hosting-primary",
+      "scope": "platform",
+      "category": "hosting",
+      "vendor": "IONOS Cloud",
+      "legal_entity": "IONOS SE, Elgendorfer Straße 57, 56410 Montabaur, Deutschland",
+      "owner_country": "DE",
+      "hosting_regions": ["DE"],
+      "tier": 1,
+      "transfer_mechanism": "none_required",
+      "purpose": "Betrieb der Slotwise-Plattform (Anwendungsserver, PostgreSQL, Redis, Objektspeicher für Backups) im Rechenzentrum Frankfurt am Main",
+      "data_categories": ["booker_name", "booker_email", "booker_phone", "appointment_times", "appointment_notes", "host_name", "host_email", "calendar_free_busy", "payment_reference", "call_transcript", "ip_address"],
+      "documentation_url": "https://cloud.ionos.de/compliance/dsgvo",
+      "certifications": ["ISO/IEC 27001", "C5 (BSI)"]
+    },
+    {
+      "id": "transactional-email",
+      "scope": "platform",
+      "category": "messaging",
+      "vendor": "Mailjet",
+      "legal_entity": "Mailjet SAS, 4 rue Jules Lefebvre, 75009 Paris, Frankreich (Konzern: Sinch AB, Schweden)",
+      "owner_country": "FR",
+      "hosting_regions": ["FR", "BE"],
+      "tier": 1,
+      "transfer_mechanism": "none_required",
+      "purpose": "Versand von Buchungsbestätigungen, Erinnerungen und Kontomails",
+      "data_categories": ["booker_name", "booker_email", "appointment_times", "host_name"],
+      "documentation_url": "https://www.mailjet.com/de/legal/dpa/",
+      "certifications": ["ISO/IEC 27001"]
+    },
+    {
+      "id": "sms-gateway",
+      "scope": "feature:smsWorkflows",
+      "category": "messaging",
+      "vendor": "seven.io",
+      "legal_entity": "seven communications GmbH & Co. KG, Willestraße 4-6, 24103 Kiel, Deutschland",
+      "owner_country": "DE",
+      "hosting_regions": ["DE"],
+      "tier": 1,
+      "transfer_mechanism": "none_required",
+      "purpose": "Versand von SMS-Erinnerungen, Buchungslinks und Einmalcodes (OTP)",
+      "data_categories": ["booker_phone", "appointment_times", "host_name"],
+      "documentation_url": "https://www.seven.io/de/datenschutz/",
+      "certifications": []
+    },
+    {
+      "id": "ai-telephony-carrier",
+      "scope": "feature:aiAgent",
+      "category": "ai_telephony",
+      "vendor": "sipgate",
+      "legal_entity": "sipgate GmbH, Gladbacher Straße 74, 40219 Düsseldorf, Deutschland",
+      "owner_country": "DE",
+      "hosting_regions": ["DE"],
+      "tier": 1,
+      "transfer_mechanism": "none_required",
+      "purpose": "Telefonanschluss und Medienstrom (SIP/RTP) für den KI-Telefonagenten",
+      "data_categories": ["booker_phone", "call_audio"],
+      "documentation_url": "https://www.sipgate.de/datenschutz",
+      "certifications": ["ISO/IEC 27001"]
+    },
+    {
+      "id": "ai-speech-llm",
+      "scope": "feature:aiAgent",
+      "category": "ai_telephony",
+      "vendor": "Mistral AI (La Plateforme, EU)",
+      "legal_entity": "Mistral AI SAS, 15 rue des Halles, 75001 Paris, Frankreich",
+      "owner_country": "FR",
+      "hosting_regions": ["FR", "SE"],
+      "tier": 1,
+      "transfer_mechanism": "none_required",
+      "purpose": "Spracherkennung, Sprachmodell und Sprachsynthese für den KI-Telefonagenten; keine Nutzung der Inhalte zum Training",
+      "data_categories": ["call_audio", "call_transcript", "booker_name", "appointment_times"],
+      "documentation_url": "https://mistral.ai/terms#data-processing-agreement",
+      "certifications": []
+    }
+  ]
+}

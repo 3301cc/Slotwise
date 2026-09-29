@@ -1,0 +1,36 @@
+{
+  "name": "slotwise",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Slotwise — website (apps/site), app (apps/web + apps/voice) and platform services (apps/worker) in one monorepo, EU-hosted",
+  "packageManager": "pnpm@10.28.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "turbo run typecheck",
+    "db:up": "docker compose -f infra/docker-compose.yml up -d postgres redis",
+    "db:down": "docker compose -f infra/docker-compose.yml down",
+    "db:migrate": "pnpm --filter @slotwise/web prisma migrate dev && pnpm --filter @slotwise/web db:migrate:constraints",
+    "db:seed": "pnpm --filter @slotwise/web prisma db seed",
+    "db:studio": "pnpm --filter @slotwise/web prisma studio",
+    "platform:generate": "pnpm --filter @slotwise/platform-db generate",
+    "platform:migrate": "pnpm --filter @slotwise/platform-db migrate:deploy",
+    "platform:drift": "pnpm --filter @slotwise/platform-db drift",
+    "worker": "pnpm --filter @slotwise/worker start",
+    "site:dev": "pnpm --filter @slotwise/site dev",
+    "app:dev": "pnpm --filter @slotwise/web dev",
+    "demo:call": "tsx scripts/demo-call.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
+    "tsx": "^4.20.0",
+    "turbo": "^2.5.0",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@slotwise/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zod schemas for the internal voice API (apps/voice ⇄ apps/web) and shared enums. JSON Schema export for the Python side.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./voice": "./src/voice.ts",
+    "./booking-fields": "./src/booking-fields.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "export:jsonschema": "tsx scripts/export-jsonschema.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@slotwise/config": "workspace:*",
+    "@slotwise/core": "workspace:*",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

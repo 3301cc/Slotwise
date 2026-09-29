@@ -1,0 +1,69 @@
+{
+  "version": "2026-09-29",
+  "rules": [
+    "Keine absoluten Aussagen (100 %, nie, keine, garantiert) über Vorgänge, die vom Kunden aktivierte Drittdienste betreffen.",
+    "Jede Aussage über Standort, Zertifizierung oder Löschung nennt den Gegenstand (Slotwise-Plattform, Rechenzentrum, Anbieter), nicht ein pauschales 'wir'.",
+    "Vergleichende Aussagen nur mit Datum und interner Quelle (Fact Sheet), § 6 UWG.",
+    "Preisangaben mit 'zzgl. MwSt.' und Stand-Datum; Inklusivmengen und Overage-Preise verlinken auf die Preisseite."
+  ],
+  "hero": {
+    "badge": "Entwickelt und gehostet in Deutschland · AV-Vertrag inklusive",
+    "headline": "Die DSGVO-konforme Calendly-Alternative.",
+    "subline": "Terminbuchung für Leads, Kunden und Bewerber. Automatisch per Link oder am Telefon durch deinen KI-Agenten. Entwickelt in Düsseldorf, betrieben in Frankfurt am Main.",
+    "proof": [
+      { "title": "Plattform in Deutschland betrieben", "text": "Buchungsdaten liegen in Rechenzentren in Frankfurt am Main. Der AV-Vertrag nach Art. 28 DSGVO liegt in deinem Account." },
+      { "title": "KI-Agent geht ans Telefon", "text": "Nimmt Anrufe entgegen, prüft freie Slots und legt neue Termine an. Änderungen an bestehenden Terminen nur nach Bestätigung per Code oder Link." },
+      { "title": "Team-Routing ohne Ping-Pong", "text": "Round-Robin, Routing-Formulare und Erinnerungen per SMS. Weniger No-Shows, mehr Gespräche." }
+    ],
+    "microcopy": "14 Tage alle Business-Funktionen. Keine Kreditkarte, danach kostenlos weiter."
+  },
+  "trustbar": [
+    { "title": "Plattform vollständig in der EU", "text": "Betrieb, Datenbank und Backups in Deutschland" },
+    { "title": "Subprozessorenliste öffentlich", "text": "Wird aus deinen aktivierten Verbindungen erzeugt" },
+    { "title": "AV-Vertrag nach Art. 28 DSGVO", "text": "Inklusive TOMs, direkt im Account" },
+    { "title": "Support aus Düsseldorf", "text": "Telefon und E-Mail, auf Deutsch" }
+  ],
+  "privacy": {
+    "eyebrow": "Datenschutz",
+    "headline": "Deine Termine, deine Daten.",
+    "intro": "Slotwise speichert und verarbeitet alle Buchungsdaten in Rechenzentren in Frankfurt am Main. Slotwise selbst übermittelt keine personenbezogenen Daten in Länder außerhalb der EU.",
+    "thirdParty": {
+      "title": "Verbundene Dienste",
+      "text": "Wenn du Dienste wie Google Kalender, Microsoft 365, HubSpot oder Zoom verbindest, übermittelt Slotwise die für diese Verbindung notwendigen Daten an den jeweiligen Anbieter, zum Beispiel Datum, Uhrzeit, Name und E-Mail-Adresse der buchenden Person als Kalendereintrag. Das geschieht nur auf deine Veranlassung, und du kannst jede Verbindung jederzeit trennen. Für Anbieter mit Sitz in den USA gelten deren Datenschutzbedingungen; welche das sind, zeigen wir dir vor dem Verbinden und in deiner Subprozessorenliste.",
+      "euMode": "Im EU-Modus bietet Slotwise ausschließlich Anbieter mit Sitz und Hosting in der EU an."
+    },
+    "checklist": [
+      { "title": "Serverstandort Deutschland.", "text": "Produktion und Backups in Frankfurt am Main, Failover innerhalb der EU." },
+      { "title": "Keine Übermittlung durch Slotwise in Drittländer.", "text": "Für verbundene Drittdienste gilt der Abschnitt „Verbundene Dienste“." },
+      { "title": "DSGVO-konform betrieben.", "text": "AV-Vertrag nach Art. 28 DSGVO, TOMs und Subprozessorenliste liegen im Account, Löschkonzept dokumentiert." },
+      { "title": "Verschlüsselt.", "text": "TLS 1.2 oder höher beim Transport, AES-256 auf den Datenträgern, Zugriff auf Produktionsdaten nur im Vier-Augen-Prinzip." }
+    ],
+    "diagram": {
+      "calendarLabel": "Frei/Belegt-Abgleich und Termineintrag",
+      "platformLabel": "Slotwise-Systeme: keine Übermittlung außerhalb der EU",
+      "thirdPartyLabel": "Verbundene Dienste: Stufe im Integrationskatalog (1 = EU, 2 = US-Anbieter mit EU-Rechenzentrum, 3 = US-Hosting)"
+    },
+    "datacenter": "Rechenzentrum Frankfurt am Main, Betreiber und Zertifizierung siehe Subprozessorenliste."
+  },
+  "aiAgent": {
+    "eyebrow": "KI-Telefonagent",
+    "headline": "Dein KI-Agent geht ans Telefon. Und legt neue Termine an.",
+    "transparency": "Anrufer werden zu Gesprächsbeginn darüber informiert, dass sie mit einem digitalen Assistenten sprechen, und können jederzeit einen Menschen verlangen. Sprachverarbeitung und Sprachmodell laufen bei {{aiProviderName}} im Rechenzentrum {{aiProviderLocation}}. Transkripte werden nach 30 Tagen gelöscht. Bestehende Termine werden am Telefon nur nach Bestätigung per SMS-Code oder Link geändert; in der aktuellen Version legt der Agent ausschließlich neue Termine an.",
+    "pricing": "Im Business-Plan sind 100 eingehende und 50 ausgehende Gesprächsminuten pro Monat und Account enthalten. Darüber hinaus 0,19 € pro eingehender und 0,25 € pro ausgehender Minute, sekundengenau erfasst, Mindestlaufzeit 30 Sekunden. Ein Ausgabenlimit schützt vor Überraschungen; ist es erreicht, verweist der Agent auf die Online-Buchung.",
+    "placeholders": { "aiProviderName": "wird nach Vertragsabschluss namentlich eingetragen", "aiProviderLocation": "Frankfurt am Main" }
+  },
+  "comparison": {
+    "allowedClaims": [
+      { "claim": "Support auf Deutsch, aus Düsseldorf", "basis": "Eigene Leistung, kein Vergleich nötig" },
+      { "claim": "Bei US-Anbietern meist nur im Enterprise-Tarif: EU-Datenresidenz, Löschung per API", "basis": "Fact Sheet 09/2026: Calendly Pricing (Data deletion API: Enterprise), Cal.com Pricing (EU-Hosting: Enterprise/Self-Hosting)" }
+    ],
+    "footnote": "Stand: September 2026. Alle Preise zzgl. MwSt. Inklusivmengen und Overage-Preise siehe Preisseite. Vergleichsangaben beziehen sich auf die öffentlichen Preisseiten der genannten Anbieter zum Stand-Datum.",
+    "forbidden": ["100 % DSGVO-konform", "Keine Datenübertragung in die USA", "Nicht bei Calendly (ohne Datum und Beleg)", "ISO-27001-zertifiziert (ohne Nennung des Zertifikatsinhabers)", "Alle Subprozessoren in der EU"]
+  },
+  "pricingTable": {
+    "note": "Alle Preise pro Host und Monat, zzgl. MwSt. Jährliche Zahlung im Voraus, Verbrauch (SMS, KI-Minuten) monatlich nachträglich.",
+    "starterNote": "Für immer kostenlos. Unbegrenzte Kalenderverbindungen, 3 Terminarten, Erinnerung 24 h vorher per E-Mail (100 pro Monat).",
+    "businessNote": "Kollektive Termine mit bis zu 5 Hosts, Round-Robin, Routing-Formulare, Whitelabel, SSO, KI-Agent inklusive.",
+    "enterpriseNote": "Ab 990 € pro Monat und mindestens 25 Hosts: dedizierte Instanz oder On-Premises, SLA 99,9 %, SCIM."
+  }
+}

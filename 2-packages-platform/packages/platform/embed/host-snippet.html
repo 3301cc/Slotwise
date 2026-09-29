@@ -1,0 +1,27 @@
+<!--
+  STW-301 · Einbindung auf der Kundenwebsite (Variante A: Iframe auf Kundendomain).
+  termine.nordlicht.de ist ein CNAME auf embed.slotwise.de. Für den Browser ist
+  das Iframe damit ein Same-Site-Kontext; es werden keine Drittanbieter-Requests
+  ausgelöst und kein Speicherzugriff benötigt.
+-->
+<iframe
+  id="slotwise-embed"
+  src="https://termine.nordlicht.de/jana?embed=1&parent=https%3A%2F%2Fwww.nordlicht.de"
+  title="Termin buchen bei Nordlicht Consulting"
+  loading="lazy"
+  referrerpolicy="no-referrer"
+  sandbox="allow-scripts allow-forms allow-same-origin"
+  style="width:100%;min-height:640px;border:0;border-radius:16px;background:#fff"
+></iframe>
+<script>
+  // Höhenanpassung: nur Nachrichten vom Embed-Origin akzeptieren.
+  (function () {
+    var frame = document.getElementById('slotwise-embed');
+    var origin = 'https://termine.nordlicht.de';
+    window.addEventListener('message', function (e) {
+      if (e.origin !== origin || !e.data || e.data.type !== 'slotwise:resize') return;
+      var h = Number(e.data.height);
+      if (h > 200 && h < 4000) frame.style.height = h + 'px';
+    });
+  })();
+</script>

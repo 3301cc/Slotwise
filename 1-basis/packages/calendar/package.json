@@ -1,0 +1,17 @@
+{
+  "name": "@slotwise/calendar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CalendarProvider interface + Google Calendar / Microsoft Graph adapters (REST via fetch, no SDKs). Tokens are supplied by the host app.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@slotwise/config": "workspace:*",
+    "typescript": "^5.9.0"
+  }
+}

@@ -1,0 +1,52 @@
+# Local infrastructure for the whole monorepo:  pnpm db:up   (= docker compose -f infra/docker-compose.yml up -d postgres redis)
+#
+#   postgres  ONE Postgres 16 for both Prisma schemas:
+#               app       → DATABASE_URL          …/slotwise?schema=public     (apps/web/prisma)
+#               platform  → PLATFORM_DATABASE_URL …/slotwise?schema=platform   (packages/platform-db)
+#             Separate schemas = separate _prisma_migrations histories, no table clashes.
+#   redis     slot lock / free-busy cache / hard-stop / BullMQ for apps/worker (the app itself needs no Redis)
+#   voice     optional: the Python voice worker against the app on the host   docker compose -f infra/docker-compose.yml --profile voice up
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: slotwise-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: slotwise
+      POSTGRES_PASSWORD: slotwise
+      POSTGRES_DB: slotwise
+    ports:
+      - "5432:5432"
+    volumes:
+      - slotwise-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slotwise -d slotwise"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: slotwise-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - slotwise-redis:/data
+
+  voice:
+    profiles: ["voice"]
+    build: ../apps/voice
+    container_name: slotwise-voice
+    env_file: ../.env
+    environment:
+      VOICE_API_BASE_URL: http://host.docker.internal:3000
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  slotwise-pg:
+  slotwise-redis:
