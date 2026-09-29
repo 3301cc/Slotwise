@@ -12,7 +12,10 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 | `website-src/build.py` | setzt beides in `assets/site.js` ein |
 | `slotwise-website-online/assets/site-extra.css` | zusätzliche Utilities und Komponenten-CSS |
 | `slotwise-website-online/site-config.js` | Firmendaten, App-Status, Demo-Telefonnummer (ohne Neubau änderbar) |
-| `slotwise-website-online/api/waitlist/` | Vercel-Funktionen der Warteliste |
+| `slotwise-website-online/api/_lib/core/` | Warteliste – Geschäftslogik, plattformunabhängig (reine Daten rein, reine Daten raus) |
+| `slotwise-website-online/api/_lib/http.js` | HTTP-Adapter: node:http, Express/Fastify, Vercel → Core |
+| `slotwise-website-online/api/waitlist/*.js` | Vercel-Einstiege, je eine Zeile |
+| `slotwise-website-online/server/standalone.js` | eigener Server ohne Vercel (Hetzner, OVH, Docker) |
 
 Nach Änderungen an den `.jsx`-Dateien:
 
@@ -22,6 +25,29 @@ cd slotwise-website-online
 npm test                            # API-Tests
 npm run dev                         # http://localhost:3000, Warteliste speichert in .data/waitlist.json
 ```
+
+## Architektur der Warteliste
+
+```
+api/waitlist/index.js  ──┐                       (Vercel: eine Zeile je Route)
+server/standalone.js   ──┼─▶ api/_lib/http.js ─▶ api/_lib/core/waitlist.js ─▶ core/store.js   (Redis-REST | Datei | Memory)
+Express: app.use(apiHandler) ┘   (Adapter)         (Geschäftslogik)          ├─▶ core/mailer.js  (Mailjet | Console)
+                                                                            └─▶ core/tokens.js  (HMAC-Links)
+```
+
+Nur `api/_lib/http.js` kennt Plattform-Eigenheiten (Vercels vorgeparstes `req.body`/`req.query`, Streams bei node:http).
+Nur `core/config.js` liest `process.env`. Die Geschäftslogik bekommt `{ body, query, headers, ip, baseUrl }` und liefert
+`{ status, body, headers, redirect }` – so läuft sie in Tests ohne Netz und auf jedem Host ohne Umbau.
+
+**Ohne Vercel betreiben (z. B. Hetzner):**
+
+```bash
+PORT=3000 WAITLIST_SECRET=… MAILJET_API_KEY=… MAILJET_API_SECRET=… WAITLIST_FROM_EMAIL=… SITE_URL=https://slotwise.app \
+  KV_REST_API_URL=… KV_REST_API_TOKEN=…   node server/standalone.js
+```
+
+Statt Upstash geht jeder Redis mit REST-Schnittstelle; für einen Einzelserver reicht `WAITLIST_DATA_FILE=/var/lib/slotwise/waitlist.json`.
+Ein klassischer Redis über TCP braucht eine weitere Store-Klasse in `core/store.js` (gleiche fünf Methoden). Beispiel für Express: `server/express-example.js`.
 
 ## Warteliste einrichten (einmalig)
 

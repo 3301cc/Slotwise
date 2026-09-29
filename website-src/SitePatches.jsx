@@ -60,7 +60,6 @@ const SW_WL_ERRORS = {
   invalid_email: "Bitte gib eine gültige E-Mail-Adresse ein.",
   consent_required: "Bitte bestätige, dass wir dich per E-Mail informieren dürfen.",
   rate_limited: "Zu viele Versuche. Bitte versuch es in ein paar Minuten noch einmal.",
-  not_configured: "Die Warteliste ist gerade nicht erreichbar. Bitte versuch es später noch einmal.",
   default: "Das hat nicht geklappt. Bitte prüf deine Verbindung und versuch es noch einmal.",
 };
 
@@ -77,7 +76,7 @@ function SwWaitlistForm({ source, initialEmail = "", onDone, autoFocus = false }
   const [consent, setConsent] = (0, cn.useState)(false);
   const [trap, setTrap] = (0, cn.useState)("");
   const [touched, setTouched] = (0, cn.useState)(false);
-  const [status, setStatus] = (0, cn.useState)("idle"); // idle | sending | pending | error
+  const [status, setStatus] = (0, cn.useState)("idle"); // idle | sending | pending | maintenance | error
   const [error, setError] = (0, cn.useState)(null);
   const [devLink, setDevLink] = (0, cn.useState)(null);
   const emailBad = touched && !swValidEmail(email);
@@ -102,12 +101,37 @@ function SwWaitlistForm({ source, initialEmail = "", onDone, autoFocus = false }
         onDone && onDone();
         return;
       }
+      if (res.status === 503 || data.error === "not_configured") {
+        setStatus("maintenance");
+        return;
+      }
       setStatus("error");
       setError(SW_WL_ERRORS[data.error] || SW_WL_ERRORS.default);
     } catch {
       setStatus("error");
       setError(SW_WL_ERRORS.default);
     }
+  }
+
+  if (status === "maintenance") {
+    return (
+      <div role="status" aria-live="polite" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+        <p className="flex items-center gap-2 font-semibold">
+          <span className="rounded bg-amber-950 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-50">Entwurfsmodus</span>
+          Die Warteliste ist noch nicht freigeschaltet.
+        </p>
+        <p className="mt-2 text-amber-900">
+          Diese Seite läuft gerade im sicheren Wartungs- und Entwurfsmodus: Der Versand von Bestätigungsmails ist noch nicht
+          eingerichtet, deshalb nimmt das System bewusst keine Adressen an. Deine Eingabe wurde <span className="font-semibold">nicht</span> gespeichert.
+        </p>
+        <p className="mt-2 text-amber-900">
+          Die Registrierung wird in Kürze freigeschaltet. Bis dahin erreichst du uns über die Kontaktangaben im{" "}
+          <SwLink to="/impressum" className="font-medium underline underline-offset-2">Impressum</SwLink>.
+        </p>
+        <button type="button" onClick={() => setStatus("idle")}
+          className="mt-3 text-xs font-medium text-amber-950 underline underline-offset-2">Noch einmal versuchen</button>
+      </div>
+    );
   }
 
   if (status === "pending") {
@@ -609,27 +633,34 @@ function ur({ className }) {
           )}
 
           {step === "details" && start && (
-            <form noValidate onSubmit={book} className="mt-4 space-y-3 border-t border-slate-100 pt-4" aria-label="Kontaktdaten für die Buchung">
+            <form noValidate onSubmit={book} className="mt-4 space-y-3 border-t border-slate-100 pt-4" aria-label="Vorschau der Buchung mit Testdaten" aria-describedby="demo-preview-note">
               <p className="text-xs text-slate-600">
                 <span className="font-semibold text-slate-900">{dateText}</span>, {start}–{end} Uhr
               </p>
-              <SwField id="demo-name" label="Name" error={nameBad ? "Bitte gib deinen Namen ein." : null}>
-                <input ref={nameRef} id="demo-name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)}
-                  aria-invalid={nameBad} aria-describedby={nameBad ? "demo-name-error" : undefined} required
+              <div id="demo-preview-note" role="note"
+                className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-950">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" className="mt-0.5 flex-none">
+                  <circle cx="12" cy="12" r="9" /><path d="M12 8h.01M11 12h1v4h1" />
+                </svg>
+                <span>
+                  <span className="font-semibold">Interaktive Vorschau.</span> Bitte gib nur Testdaten ein. Es findet keine Speicherung oder Verarbeitung statt.
+                </span>
+              </div>
+              <SwField id="demo-name" label="Name (Testdaten)" error={nameBad ? "Bitte gib einen Namen ein, z. B. „Test Person“." : null}>
+                <input ref={nameRef} id="demo-name" autoComplete="off" placeholder="z. B. Test Person" value={name}
+                  onChange={(e) => setName(e.target.value)} aria-invalid={nameBad} required
+                  aria-describedby={nameBad ? "demo-name-error demo-preview-note" : "demo-preview-note"}
                   className={`${SW_INPUT} ${swInputState(nameBad)}`} />
               </SwField>
-              <SwField id="demo-email" label="E-Mail" error={emailBad ? "Bitte gib eine gültige E-Mail-Adresse ein." : null}>
-                <input id="demo-email" type="email" inputMode="email" autoComplete="email" value={email}
+              <SwField id="demo-email" label="E-Mail (Testdaten)" error={emailBad ? "Bitte gib eine gültige Adresse ein, z. B. test@firma.de." : null}>
+                <input id="demo-email" type="email" inputMode="email" autoComplete="off" placeholder="z. B. test@firma.de" value={email}
                   onChange={(e) => setEmail(e.target.value)} aria-invalid={emailBad} required
-                  aria-describedby={emailBad ? "demo-email-error" : undefined}
+                  aria-describedby={emailBad ? "demo-email-error demo-preview-note" : "demo-preview-note"}
                   className={`${SW_INPUT} ${swInputState(emailBad)}`} />
               </SwField>
-              <p className="text-[11px] leading-relaxed text-slate-500">
-                Demo: Eingaben bleiben in deinem Browser und werden nicht gesendet oder gespeichert.
-              </p>
               <button type="submit"
                 className="sw-press flex w-full flex-col items-center justify-center gap-0.5 rounded-lg bg-emerald-700 px-4 py-2.5 text-center text-sm font-semibold leading-snug text-white shadow-sm hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2">
-                <span>Termin verbindlich buchen</span>
+                <span>Termin verbindlich buchen (Vorschau)</span>
                 <span className="tabular text-xs font-medium text-emerald-50">{start}–{end} Uhr</span>
               </button>
               <button type="button" onClick={() => { setSlot(null); setStep("pick"); }}
