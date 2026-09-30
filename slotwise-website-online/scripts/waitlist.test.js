@@ -112,6 +112,9 @@ test("confirm → gespeichert; doppelt idempotent; unsubscribe löscht; export a
   const expired = createWaitlist(prodConfig(), { store: memoryStore(), mailer, log: quiet, now: () => 1_700_000_000_000 + 73 * 3600 * 1000 });
   assert.strictEqual((await expired.confirm({ query: { t } })).redirect, "/?warteliste=abgelaufen");
 
+  const stats = await w.stats({ headers: { authorization: "Bearer admin-secret" } });
+  assert.deepStrictEqual(stats.body, { confirmed: 1 });
+  assert.strictEqual((await w.stats({ headers: {} })).status, 401);
   const csv = await w.exportCsv({ headers: { authorization: "Bearer admin-secret" } });
   assert.strictEqual(csv.status, 200);
   assert.strictEqual(csv.body, 'email,source,confirmed_at\n"c@d.de","demo","2023-11-14T22:13:20.000Z"\n');

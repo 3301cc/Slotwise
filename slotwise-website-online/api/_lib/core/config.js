@@ -24,6 +24,22 @@ function fromEnv(env = process.env) {
     adminToken: env.WAITLIST_ADMIN_TOKEN || (deployed ? "" : "local-admin"),
     tokenTtlMs: 72 * 60 * 60 * 1000,
     rateLimit: { max: 5, windowSec: 600 },
+
+    // KI-Agent (Telefon + E-Mail)
+    agent: {
+      model: env.AGENT_MODEL || "",                                    // "fake" = deterministisches Testmodell ohne AWS
+      modelId: env.BEDROCK_MODEL_ID || "eu.anthropic.claude-3-5-haiku-20241022-v1:0",
+      aws: env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY
+        ? { accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY, sessionToken: env.AWS_SESSION_TOKEN || "", region: env.AWS_REGION || "eu-central-1" }
+        : null,
+      twilio: env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_FROM_NUMBER
+        ? { accountSid: env.TWILIO_ACCOUNT_SID, authToken: env.TWILIO_AUTH_TOKEN, from: env.TWILIO_FROM_NUMBER }
+        : null,
+      company: env.AGENT_COMPANY || "Slotwise",
+      hostName: env.AGENT_HOST_NAME || "der Host",
+      timezone: env.AGENT_TIMEZONE || "Europe/Berlin",
+      escalationPhone: env.AGENT_ESCALATION_PHONE || "",
+    },
   };
 }
 
