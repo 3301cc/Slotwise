@@ -28,3 +28,21 @@
   .range::-moz-range-thumb { @apply h-5 w-5 rounded-full border-2 border-white bg-indigo-600 shadow; }
   .range:focus-visible { @apply outline-none ring-2 ring-indigo-600 ring-offset-2; }
 }
+
+/* Animiertes CalenSync-Logo (Vorlage: 1-basis/docs/design/logo/Calensync Logo animiert.html) */
+@keyframes csPop { 0% { transform: scale(0); opacity: 0; } 70% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes csSlot { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes csDraw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+@keyframes csWord { from { opacity: 0; transform: translateX(-12px); clip-path: inset(-20% 100% -30% 0); } to { opacity: 1; transform: none; clip-path: inset(-20% 0 -30% 0); } }
+.cs-mark { flex: none; overflow: visible; }
+.cs-mark rect { transform-box: fill-box; }
+.cs-pop1, .cs-pop2 { transform-origin: center; animation: csPop .4s cubic-bezier(.2,.8,.2,1) both; }
+.cs-pop2 { animation-delay: .15s; }
+.cs-slot1, .cs-slot2 { transform-origin: left center; animation: csSlot .3s cubic-bezier(.2,.8,.2,1) .9s both; }
+.cs-slot2 { animation-delay: 1s; }
+.cs-draw1, .cs-draw2 { stroke-dasharray: 100; animation: csDraw .45s cubic-bezier(.6,0,.2,1) .4s both; }
+.cs-draw2 { animation-delay: .55s; }
+.cs-word { display: inline-block; animation: csWord .7s cubic-bezier(.2,.8,.2,1) .45s both; }
+@media (prefers-reduced-motion: reduce) {
+  .cs-mark *, .cs-word { animation: none; }
+}
