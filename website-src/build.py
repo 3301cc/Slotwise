@@ -136,6 +136,14 @@ def main():
         sys.exit("KI-Agent-Seite (fr) nicht gefunden")
     s = s[:start] + ";".join(compile_jsx(n) for n in SOURCES) + ";" + s[end:]
 
+    # 4b) Startseite: Dashboard-Sektion zwischen Hero und Live-Feed (SwDashboardSection aus SitePatches.jsx)
+    s = replace_once(
+        s,
+        'function cr(){return(0,fa.jsxs)(fa.Fragment,{children:[(0,fa.jsx)(ir,{}),(0,fa.jsx)(vu,{})]})}',
+        'function cr(){return(0,fa.jsxs)(fa.Fragment,{children:[(0,fa.jsx)(ir,{}),(0,fa.jsx)(SwDashboardSection,{}),(0,fa.jsx)(vu,{})]})}',
+        "Startseite (cr)",
+    )
+
     # 5) Texte
     s = replace_once(
         s,
