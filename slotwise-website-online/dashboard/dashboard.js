@@ -1,4 +1,4 @@
-/* Slotwise Dashboard – Darstellung. Daten kommen ausschließlich aus SlotwiseAPI (dashboard-data.js). */
+/* CalenSync Dashboard – Darstellung. Daten kommen ausschließlich aus SlotwiseAPI (dashboard-data.js). */
 (function () {
   "use strict";
   const API = window.SlotwiseAPI;
@@ -28,8 +28,8 @@
   const icon = (name, cls = "h-5 w-5") =>
     `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
   const TONE = {
-    emerald: "border-emerald-100 bg-emerald-50 text-emerald-700",
-    indigo: "border-indigo-100 bg-indigo-50 text-indigo-700",
+    emerald: "border-indigo-100 bg-indigo-50 text-indigo-700",
+    indigo: "border-violet-100 bg-violet-50 text-violet-700",
     slate: "border-slate-200 bg-slate-50 text-slate-700",
   };
 
@@ -48,16 +48,16 @@
         </div>
         <p class="tabular mt-3 font-display text-3xl font-extrabold tracking-tight text-slate-900">${fmtValue(m)}</p>
         <p class="mt-1 text-xs text-slate-500">
-          ${m.delta != null ? `<span class="font-semibold ${m.delta >= 0 ? "text-emerald-700" : "text-red-700"}">${m.delta >= 0 ? "+" : ""}${m.delta.toLocaleString("de-DE")}${m.unit === "percent" ? " Pkt." : m.unit === "hours" ? " Std" : ""}</span> ` : ""}${esc(m.deltaLabel || "")}
+          ${m.delta != null ? `<span class="font-semibold ${m.delta >= 0 ? "text-indigo-700" : "text-red-700"}">${m.delta >= 0 ? "+" : ""}${m.delta.toLocaleString("de-DE")}${m.unit === "percent" ? " Pkt." : m.unit === "hours" ? " Std" : ""}</span> ` : ""}${esc(m.deltaLabel || "")}
         </p>
       </article>`).join("");
   }
 
   // ---------- 2 · Aktivität ----------
   const KIND = {
-    proposed: { dot: "bg-indigo-500", ring: "ring-indigo-100", label: "Vorschlag" },
-    booked: { dot: "bg-emerald-500", ring: "ring-emerald-100", label: "Gebucht" },
-    buffer: { dot: "bg-indigo-500", ring: "ring-indigo-100", label: "Puffer" },
+    proposed: { dot: "bg-violet-500", ring: "ring-violet-100", label: "Vorschlag" },
+    booked: { dot: "bg-indigo-500", ring: "ring-indigo-100", label: "Gebucht" },
+    buffer: { dot: "bg-violet-500", ring: "ring-violet-100", label: "Puffer" },
     conflict: { dot: "bg-red-500", ring: "ring-red-100", label: "Konflikt verhindert" },
     info: { dot: "bg-slate-400", ring: "ring-slate-100", label: "Info" },
   };
@@ -87,8 +87,8 @@
   // ---------- 3 · Wochenkalender ----------
   const DAY_START = 8, DAY_END = 18, PX_PER_HOUR = 48;
   const KIND_SLOT = {
-    booked: "bg-emerald-600 text-white border-emerald-700",
-    proposed: "bg-indigo-50 text-indigo-900 border-dashed border-indigo-400",
+    booked: "bg-indigo-600 text-white border-indigo-700",
+    proposed: "bg-violet-50 text-violet-900 border-dashed border-violet-400",
     blocked: "bg-slate-100 text-slate-600 border-slate-300",
   };
   const SOURCE = { manual: "manuell", ai: "KI-Agent", google: "Google Kalender", icloud: "iCloud", microsoft: "Microsoft 365" };
@@ -130,7 +130,7 @@
       <div class="grid grid-cols-[52px_repeat(5,minmax(0,1fr))] border-b border-slate-100 text-center text-xs" role="row">
         <div></div>${days.map((d, i) => `<div class="py-2 ${i === todayIdx ? "text-slate-900" : "text-slate-500"}" role="columnheader">
           <span class="block font-medium">${esc(new Intl.DateTimeFormat("de-DE", { timeZone: TZ, weekday: "short" }).format(d))}</span>
-          <span class="tabular inline-grid h-6 w-6 place-items-center rounded-full ${i === todayIdx ? "bg-emerald-600 font-bold text-white" : ""}">${d.getDate()}</span></div>`).join("")}
+          <span class="tabular inline-grid h-6 w-6 place-items-center rounded-full ${i === todayIdx ? "bg-indigo-600 font-bold text-white" : ""}">${d.getDate()}</span></div>`).join("")}
       </div>
       <div class="grid grid-cols-[52px_repeat(5,minmax(0,1fr))]" role="grid" aria-label="Wochenkalender">
         <div class="relative" style="height:${height}px" aria-hidden="true">${hours.map((h, k) => `<span class="tabular absolute right-2 -translate-y-1/2 text-[11px] text-slate-500" style="top:${k * PX_PER_HOUR}px">${String(h).padStart(2, "0")}:00</span>`).join("")}</div>
@@ -180,8 +180,8 @@
     const status = await API.status();
     const mode = $("#mode-note");
     if (API.live) {
-      mode.innerHTML = `<span class="rounded bg-emerald-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-50">Live</span>Feed, Kalender und Einstellungen kommen vom Agenten${status && status.model ? ` (Modell: ${esc(status.model)})` : ""}.`;
-      mode.className = "inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900";
+      mode.innerHTML = `<span class="rounded bg-indigo-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-50">Live</span>Feed, Kalender und Einstellungen kommen vom Agenten${status && status.model ? ` (Modell: ${esc(status.model)})` : ""}.`;
+      mode.className = "inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900";
     } else if (status && !status.ready) {
       mode.innerHTML = `<span class="rounded bg-amber-900 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-50">Demo</span>Agent noch nicht eingerichtet (fehlt: ${esc(status.missing.join(", "))}). Beispieldaten.`;
     }

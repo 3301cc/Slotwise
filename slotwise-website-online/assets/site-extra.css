@@ -1,4 +1,4 @@
-/* Slotwise – Ergänzungen zu site.css (Tailwind v3-kompatible Utilities + eigene Komponenten).
+/* CalenSync – Ergänzungen zu site.css (Tailwind v3-kompatible Utilities + eigene Komponenten).
    Wird in index.html nach site.css geladen. Quellen: website-src/*.jsx */
 
 /* Layout & Abstände */
@@ -17,15 +17,15 @@
 
 /* Farben */
 .bg-amber-100{background-color:#fef3c7}.bg-amber-500{background-color:#f59e0b}.bg-amber-950{background-color:#451a03}
-.bg-emerald-700{background-color:#047857}.bg-red-50{background-color:#fef2f2}
+.bg-indigo-700{background-color:#4338ca}.bg-red-50{background-color:#fef2f2}
 .bg-slate-200{background-color:#e2e8f0}.bg-slate-300{background-color:#cbd5e1}.bg-slate-500{background-color:#64748b}
-.border-amber-300{border-color:#fcd34d}.border-emerald-100{border-color:#d1fae5}.border-red-200{border-color:#fecaca}.border-red-400{border-color:#f87171}.border-slate-300{border-color:#cbd5e1}
+.border-amber-300{border-color:#fcd34d}.border-indigo-100{border-color:#e0e7ff}.border-red-200{border-color:#fecaca}.border-red-400{border-color:#f87171}.border-slate-300{border-color:#cbd5e1}
 .text-amber-50{color:#fffbeb}.text-amber-900{color:#78350f}.text-amber-950{color:#451a03}
-.text-emerald-50{color:#ecfdf5}.text-emerald-900{color:#064e3b}.text-emerald-950{color:#022c22}
+.text-indigo-50{color:#eef2ff}.text-indigo-900{color:#312e81}.text-indigo-950{color:#1e1b4b}
 .text-red-700{color:#b91c1c}.text-red-800{color:#991b1b}.text-slate-800{color:#1e293b}
-.accent-emerald-700{accent-color:#047857}
+.accent-indigo-700{accent-color:#4338ca}
 .placeholder\:text-slate-400::placeholder{color:#94a3b8}
-.hover\:bg-emerald-800:hover{background-color:#065f46}
+.hover\:bg-indigo-800:hover{background-color:#3730a3}
 
 /* Schatten */
 .shadow-\[0_4px_6px_-1px_rgba\(15\2c 23\2c 42\2c 0\.05\)\2c 0_2px_4px_-2px_rgba\(15\2c 23\2c 42\2c 0\.05\)\]{--tw-shadow:0 4px 6px -1px rgba(15,23,42,.05),0 2px 4px -2px rgba(15,23,42,.05);box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}
@@ -33,7 +33,7 @@
 /* Fokus & Zustände */
 .focus\:outline-none:focus,.focus-visible\:outline-none:focus-visible{outline:2px solid transparent;outline-offset:2px}
 .focus\:ring-2:focus,.focus-visible\:ring-2:focus-visible{--tw-ring-offset-shadow:var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);--tw-ring-shadow:var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);box-shadow:var(--tw-ring-offset-shadow),var(--tw-ring-shadow),var(--tw-shadow,0 0 #0000)}
-.focus\:ring-emerald-600:focus,.focus-visible\:ring-emerald-600:focus-visible{--tw-ring-opacity:1;--tw-ring-color:rgb(5 150 105/var(--tw-ring-opacity))}
+.focus\:ring-indigo-600:focus,.focus-visible\:ring-indigo-600:focus-visible{--tw-ring-opacity:1;--tw-ring-color:rgb(79 70 229/var(--tw-ring-opacity))}
 .focus\:ring-offset-1:focus{--tw-ring-offset-width:1px}.focus-visible\:ring-offset-2:focus-visible{--tw-ring-offset-width:2px}
 .disabled\:cursor-not-allowed:disabled{cursor:not-allowed}.disabled\:opacity-30:disabled{opacity:.3}.disabled\:hover\:bg-transparent:hover:disabled{background-color:transparent}
 

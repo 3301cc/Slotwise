@@ -1,5 +1,5 @@
 /*
- * Slotwise Marketing-Website · Ergänzungen zum ausgelieferten Bundle (assets/site.js)
+ * CalenSync Marketing-Website · Ergänzungen zum ausgelieferten Bundle (assets/site.js)
  *
  * Wird mit esbuild kompiliert und von scripts/apply-patches.py hinter die KI-Agent-Seite gesetzt.
  * Ersetzt im Bundle: ur (Demo-Widget), dr (/anmelden), nr (Layout), $h (Datenschutzerklärung).
@@ -27,7 +27,7 @@ function swValidEmail(v) {
 }
 
 const SW_INPUT =
-  "block w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-600 focus:ring-offset-1";
+  "block w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:ring-offset-1";
 const swInputState = (bad) => (bad ? "border-red-400" : "border-slate-200 hover:border-slate-300");
 
 function SwField({ id, label, error, hint, children }) {
@@ -64,7 +64,7 @@ const SW_WL_ERRORS = {
 };
 
 const SW_WL_RETURN = {
-  bestaetigt: { tone: "ok", title: "Du stehst auf der Warteliste.", text: "Danke für die Bestätigung. Wir melden uns, sobald Slotwise startet." },
+  bestaetigt: { tone: "ok", title: "Du stehst auf der Warteliste.", text: "Danke für die Bestätigung. Wir melden uns, sobald CalenSync startet." },
   abgemeldet: { tone: "ok", title: "Du bist ausgetragen.", text: "Deine E-Mail-Adresse wurde von der Warteliste gelöscht." },
   abgelaufen: { tone: "warn", title: "Der Bestätigungslink ist abgelaufen.", text: "Trag dich einfach noch einmal ein, dann schicken wir dir einen neuen Link." },
   ungueltig: { tone: "warn", title: "Der Link ist ungültig.", text: "Bitte trag dich noch einmal ein." },
@@ -136,14 +136,14 @@ function SwWaitlistForm({ source, initialEmail = "", onDone, autoFocus = false }
 
   if (status === "pending") {
     return (
-      <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+      <div role="status" className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
         <p className="font-semibold">Fast geschafft. Bitte schau in dein Postfach.</p>
-        <p className="mt-1 text-emerald-800">
+        <p className="mt-1 text-indigo-800">
           Wir haben dir einen Bestätigungslink an <span className="font-medium">{email.trim()}</span> geschickt.
           Erst nach dem Klick stehst du auf der Warteliste. Der Link gilt 72 Stunden.
         </p>
         {devLink && (
-          <p className="mt-3 break-all text-xs text-emerald-800">
+          <p className="mt-3 break-all text-xs text-indigo-800">
             Lokaler Test ohne Mailversand: <a className="font-semibold underline" href={devLink}>Bestätigungslink öffnen</a>
           </p>
         )}
@@ -168,9 +168,9 @@ function SwWaitlistForm({ source, initialEmail = "", onDone, autoFocus = false }
         <label className="flex items-start gap-2.5 text-sm leading-relaxed text-slate-600">
           <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)}
             aria-invalid={consentBad} aria-describedby={consentBad ? "wl-consent-error" : undefined}
-            className="mt-1 h-4 w-4 flex-none rounded border-slate-300 accent-emerald-700" />
+            className="mt-1 h-4 w-4 flex-none rounded border-slate-300 accent-indigo-700" />
           <span>
-            Ja, informiert mich per E-Mail, sobald Slotwise startet. Die Einwilligung kann ich jederzeit widerrufen.
+            Ja, informiert mich per E-Mail, sobald CalenSync startet. Die Einwilligung kann ich jederzeit widerrufen.
             Details in der <SwLink to="/datenschutz" className="font-medium text-slate-900 underline underline-offset-2">Datenschutzerklärung</SwLink>.
           </span>
         </label>
@@ -249,13 +249,13 @@ function SwWaitlistDialog() {
           <div className="p-6 sm:p-7">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-emerald-700">Early Access</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">Early Access</p>
                 <h2 id="wl-title" className="mt-1 font-display text-xl font-bold text-slate-900">
-                  {ctx.demo ? "Echte Demo: Warteliste" : "Slotwise startet bald"}
+                  {ctx.demo ? "Echte Demo: Warteliste" : "CalenSync startet bald"}
                 </h2>
               </div>
               <button type="button" onClick={() => setOpen(false)} aria-label="Schließen"
-                className="grid h-9 w-9 flex-none place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600">
+                className="grid h-9 w-9 flex-none place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
               </button>
             </div>
@@ -273,8 +273,8 @@ function SwWaitlistDialog() {
 
       {notice && (
         <div role="status" aria-live="polite" className="fixed inset-x-4 bottom-4 z-[70] mx-auto max-w-md">
-          <div className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-ambient ${notice.tone === "ok" ? "border-emerald-200" : "border-amber-200"}`}>
-            <span className={`mt-0.5 h-2.5 w-2.5 flex-none rounded-full ${notice.tone === "ok" ? "bg-emerald-600" : "bg-amber-500"}`} aria-hidden="true" />
+          <div className={`flex items-start gap-3 rounded-xl border bg-white p-4 shadow-ambient ${notice.tone === "ok" ? "border-indigo-200" : "border-amber-200"}`}>
+            <span className={`mt-0.5 h-2.5 w-2.5 flex-none rounded-full ${notice.tone === "ok" ? "bg-indigo-600" : "bg-amber-500"}`} aria-hidden="true" />
             <div className="min-w-0 flex-1 text-sm">
               <p className="font-semibold text-slate-900">{notice.title}</p>
               <p className="mt-0.5 text-slate-600">{notice.text}</p>
@@ -366,7 +366,7 @@ function dr() {
   return (
     <SwSection spacing="loose">
       <SwCard padding="lg" className="mx-auto w-full max-w-md">
-        <p className="text-sm text-slate-500">Slotwise App</p>
+        <p className="text-sm text-slate-500">CalenSync App</p>
         <h1 className="mt-1 font-display text-2xl font-bold text-slate-900">Anmelden</h1>
 
         <div className="mt-6 grid gap-2.5">
@@ -401,7 +401,7 @@ function dr() {
 
         {notice && (
           <div role="status" className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
-            <p className="font-semibold">Die Slotwise-App ist noch nicht freigeschaltet.</p>
+            <p className="font-semibold">Die CalenSync-App ist noch nicht freigeschaltet.</p>
             <p className="mt-1 text-amber-900">
               Konten werden zum Start eröffnet{notice === "email" ? "" : `, dann auch mit ${notice === "google" ? "Google" : "Microsoft"}`}.
               Trag dich in die Warteliste ein, und wir melden uns, sobald du loslegen kannst.
@@ -561,10 +561,10 @@ function ur({ className }) {
                   aria-label={`${uc[swWeekday(view.y, view.m, d)]} ${d}. ${SW_MONTHS[view.m]}${open ? "" : ", nicht verfügbar"}`}
                   onClick={() => pickDay(d)}
                   className={H(
-                    "sw-press tabular aspect-square rounded-lg text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-1",
-                    selected && "bg-emerald-700 font-bold text-white shadow-sm",
+                    "sw-press tabular aspect-square rounded-lg text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-1",
+                    selected && "bg-indigo-700 font-bold text-white shadow-sm",
                     !selected && !open && "cursor-not-allowed font-medium text-slate-300",
-                    !selected && open && "bg-slate-50 font-medium text-slate-900 hover:bg-emerald-50 hover:text-emerald-800",
+                    !selected && open && "bg-slate-50 font-medium text-slate-900 hover:bg-indigo-50 hover:text-indigo-800",
                     isToday && !selected && "ring-1 ring-inset ring-slate-300",
                   )}>
                   {d}
@@ -611,14 +611,14 @@ function ur({ className }) {
                   <li key={`${day.y}-${day.m}-${day.d}-${t}`}>
                     <button type="button" disabled={st !== "free"} aria-pressed={active} onClick={() => pickSlot(i)}
                       className={H(
-                        "sw-press group tabular flex w-full items-center justify-between rounded-lg border px-3 py-2 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-1",
+                        "sw-press group tabular flex w-full items-center justify-between rounded-lg border px-3 py-2 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-1",
                         st !== "free" && "cursor-not-allowed border-dashed border-slate-200 text-slate-400",
                         st === "busy" && "line-through",
-                        st === "free" && !active && "border-slate-200 bg-white text-slate-900 hover:border-emerald-300 hover:bg-emerald-50",
-                        active && "border-emerald-700 bg-emerald-700 text-white shadow-sm",
+                        st === "free" && !active && "border-slate-200 bg-white text-slate-900 hover:border-indigo-300 hover:bg-indigo-50",
+                        active && "border-indigo-700 bg-indigo-700 text-white shadow-sm",
                       )}>
                       <span>{t}</span>
-                      <span className={H("text-[11px]", active ? "text-emerald-50" : st === "free" ? "text-slate-500" : "no-underline")}>
+                      <span className={H("text-[11px]", active ? "text-indigo-50" : st === "free" ? "text-slate-500" : "no-underline")}>
                         {st === "busy" ? "belegt" : st === "past" ? "vorbei" : qh(t, duration)}
                       </span>
                     </button>
@@ -659,9 +659,9 @@ function ur({ className }) {
                   className={`${SW_INPUT} ${swInputState(emailBad)}`} />
               </SwField>
               <button type="submit"
-                className="sw-press flex w-full flex-col items-center justify-center gap-0.5 rounded-lg bg-emerald-700 px-4 py-2.5 text-center text-sm font-semibold leading-snug text-white shadow-sm hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2">
+                className="sw-press flex w-full flex-col items-center justify-center gap-0.5 rounded-lg bg-indigo-700 px-4 py-2.5 text-center text-sm font-semibold leading-snug text-white shadow-sm hover:bg-indigo-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2">
                 <span>Termin verbindlich buchen (Vorschau)</span>
-                <span className="tabular text-xs font-medium text-emerald-50">{start}–{end} Uhr</span>
+                <span className="tabular text-xs font-medium text-indigo-50">{start}–{end} Uhr</span>
               </button>
               <button type="button" onClick={() => { setSlot(null); setStep("pick"); }}
                 className="w-full text-center text-xs font-medium text-slate-500 hover:text-slate-900">
@@ -671,18 +671,18 @@ function ur({ className }) {
           )}
 
           {step === "done" && start && (
-            <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
-              <p className="flex items-center gap-2 font-semibold"><SwCheck size={16} className="text-emerald-700" />Termin gebucht</p>
-              <p className="tabular mt-1.5 text-emerald-900">{dateText}<br />{start}–{end} Uhr · {ca.location}</p>
-              <p className="mt-1.5 text-emerald-900">für {name.trim()} ({email.trim()})</p>
-              <p className="mt-3 border-t border-emerald-200 pt-3 text-xs text-emerald-900">
-                So sieht die Bestätigung in Slotwise aus. In dieser Demo wird keine E-Mail verschickt und nichts gespeichert.
+            <div role="status" className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-950">
+              <p className="flex items-center gap-2 font-semibold"><SwCheck size={16} className="text-indigo-700" />Termin gebucht</p>
+              <p className="tabular mt-1.5 text-indigo-900">{dateText}<br />{start}–{end} Uhr · {ca.location}</p>
+              <p className="mt-1.5 text-indigo-900">für {name.trim()} ({email.trim()})</p>
+              <p className="mt-3 border-t border-indigo-200 pt-3 text-xs text-indigo-900">
+                So sieht die Bestätigung in CalenSync aus. In dieser Demo wird keine E-Mail verschickt und nichts gespeichert.
               </p>
               <div className="mt-3 flex flex-col gap-2">
-                <a href={_t} className="rounded-lg bg-emerald-700 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-emerald-800">
+                <a href={_t} className="rounded-lg bg-indigo-700 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-indigo-800">
                   {SW_APP_LIVE ? "Echten Demo-Termin buchen" : "Für den Start vormerken"}
                 </a>
-                <button type="button" onClick={reset} className="text-xs font-medium text-emerald-900 underline underline-offset-2">Neue Demo-Buchung</button>
+                <button type="button" onClick={reset} className="text-xs font-medium text-indigo-900 underline underline-offset-2">Neue Demo-Buchung</button>
               </div>
             </div>
           )}
@@ -690,7 +690,7 @@ function ur({ className }) {
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/80 px-5 py-3 text-xs text-slate-500 sm:px-6">
-        <span className="flex items-center gap-2"><SwLock size={13} className="text-emerald-700" />Plattform in Deutschland betrieben · Rechenzentrum Frankfurt am Main</span>
+        <span className="flex items-center gap-2"><SwLock size={13} className="text-indigo-700" />Plattform in Deutschland betrieben · Rechenzentrum Frankfurt am Main</span>
         <a href={_t} className="font-medium text-slate-700 underline-offset-2 hover:underline">{SW_APP_LIVE ? "Live-Buchungsseite" : "Warteliste"}</a>
       </div>
     </SwCard>
@@ -734,8 +734,8 @@ function $h() {
           die EU-Standardvertragsklauseln.
         </p>
         <p>
-          Die Aussage oben, dass Slotwise keine personenbezogenen Daten in Drittländer übermittelt, bezieht sich auf die
-          Slotwise-Plattform mit den Buchungsdaten. Für diese Website gilt dieser Abschnitt.
+          Die Aussage oben, dass CalenSync keine personenbezogenen Daten in Drittländer übermittelt, bezieht sich auf die
+          CalenSync-Plattform mit den Buchungsdaten. Für diese Website gilt dieser Abschnitt.
         </p>
         <p>Cookies, Tracking- oder Analysedienste setzen wir auf dieser Website nicht ein. Schriften werden von unserem eigenen Server geladen.</p>
       </SwPrivacySection>
@@ -743,7 +743,7 @@ function $h() {
       <SwPrivacySection title="Warteliste">
         <p>
           Wenn du dich in die Warteliste einträgst, verarbeiten wir deine E-Mail-Adresse und die Seite, von der aus du dich eingetragen
-          hast, um dich über den Start von Slotwise zu informieren. Rechtsgrundlage ist deine Einwilligung nach Art. 6 Abs. 1 lit. a DSGVO.
+          hast, um dich über den Start von CalenSync zu informieren. Rechtsgrundlage ist deine Einwilligung nach Art. 6 Abs. 1 lit. a DSGVO.
         </p>
         <p>
           Wir nutzen das Double-Opt-in-Verfahren: Du erhältst eine E-Mail mit einem Bestätigungslink, der 72 Stunden gilt. Solange du nicht
@@ -757,12 +757,12 @@ function $h() {
         </p>
         <p>
           Du kannst deine Einwilligung jederzeit widerrufen: über den Austragen-Link in jeder E-Mail von uns oder per Nachricht an {ht.email}.
-          Wir löschen deine Daten nach dem Widerruf, spätestens wenn die Warteliste nach dem Start von Slotwise aufgelöst wird.
+          Wir löschen deine Daten nach dem Widerruf, spätestens wenn die Warteliste nach dem Start von CalenSync aufgelöst wird.
         </p>
       </SwPrivacySection>
 
       <section>
-        <Ie>Verarbeitung auf der Slotwise-Plattform</Ie>
+        <Ie>Verarbeitung auf der CalenSync-Plattform</Ie>
         <ul className="mt-2 list-disc space-y-2 pl-5">
           {e.checklist.map((t) => (<li key={t.title}><span className="font-semibold text-slate-900">{t.title}</span> {t.text}</li>))}
         </ul>
@@ -780,9 +780,9 @@ function $h() {
       <section>
         <Ie>Buchungsdaten von Terminen</Ie>
         <p className="mt-2">
-          Wer über eine Slotwise-Buchungsseite oder per Telefon einen Termin bucht, gibt Name, E-Mail-Adresse und/oder Telefonnummer sowie die
+          Wer über eine CalenSync-Buchungsseite oder per Telefon einen Termin bucht, gibt Name, E-Mail-Adresse und/oder Telefonnummer sowie die
           vom jeweiligen Unternehmen hinterlegten Fragen an. Verantwortlich für diese Daten ist das Unternehmen, bei dem der Termin gebucht wird;
-          Slotwise verarbeitet sie als Auftragsverarbeiter nach Art. 28 DSGVO. Kontaktdaten aus Buchungen werden nach 90 Tagen pseudonymisiert,
+          CalenSync verarbeitet sie als Auftragsverarbeiter nach Art. 28 DSGVO. Kontaktdaten aus Buchungen werden nach 90 Tagen pseudonymisiert,
           Gesprächszusammenfassungen des Telefonagenten nach der vom Unternehmen gewählten Frist (Standard 30 Tage) gelöscht. Das Demo-Widget
           auf dieser Website sendet und speichert keine Eingaben.
         </p>
