@@ -18,7 +18,7 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 | `slotwise-website-online/server/standalone.js` | eigener Server ohne Vercel (Hetzner, OVH, Docker) |
 | `slotwise-website-online/api/_lib/core/agent/` | KI-Agent: Regelwerk (portiert aus `2-packages-platform`), Bedrock-Client, Twilio, Kalender, Aktivität, Orchestrator |
 | `slotwise-website-online/api/agent/*.js` | Vercel-Einstiege des Agenten, je eine Zeile |
-| `slotwise-website-online/dashboard/` | Dashboard-Vorschau (`/dashboard`): Markup, Darstellung (`dashboard.js`), Datenschicht (`dashboard-data.js`), gebautes CSS |
+| `slotwise-website-online/dashboard/` | Dashboard-Vorschau (`/dashboard`): Markup, Darstellung (`dashboard.js`), Datenschicht (`dashboard-data.js`), Erklär-Tour (`tour.js`, eigenes CSS, kein Build nötig), gebautes CSS |
 | `website-src/dashboard/` | Tailwind-Quelle und -Konfiguration des Dashboards |
 
 Nach Änderungen an den `.jsx`-Dateien oder am Dashboard-CSS:
