@@ -85,13 +85,13 @@ function createWaitlist(config, deps = {}) {
         }
         await mailer.send({
           to: email,
-          subject: "Bitte bestätige deine Anmeldung zur Slotwise-Warteliste",
-          text: ["Hallo,", "", "du hast dich für die Warteliste von Slotwise eingetragen. Bitte bestätige deine E-Mail-Adresse:", url, "",
-            "Der Link gilt 72 Stunden. Warst du das nicht, ignoriere diese Mail einfach – dann speichern wir nichts.", "", "Slotwise", `${baseUrl}/datenschutz`].join("\n"),
-          html: `<p>Hallo,</p><p>du hast dich für die Warteliste von Slotwise eingetragen. Bitte bestätige deine E-Mail-Adresse:</p>
-<p><a href="${escapeHtml(url)}" style="display:inline-block;background:#059669;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Anmeldung bestätigen</a></p>
+          subject: "Bitte bestätige deine Anmeldung zur CalenSync-Warteliste",
+          text: ["Hallo,", "", "du hast dich für die Warteliste von CalenSync eingetragen. Bitte bestätige deine E-Mail-Adresse:", url, "",
+            "Der Link gilt 72 Stunden. Warst du das nicht, ignoriere diese Mail einfach – dann speichern wir nichts.", "", "CalenSync", `${baseUrl}/datenschutz`].join("\n"),
+          html: `<p>Hallo,</p><p>du hast dich für die Warteliste von CalenSync eingetragen. Bitte bestätige deine E-Mail-Adresse:</p>
+<p><a href="${escapeHtml(url)}" style="display:inline-block;background:#4f46e5;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600">Anmeldung bestätigen</a></p>
 <p style="color:#64748b;font-size:13px">Der Link gilt 72 Stunden. Warst du das nicht, ignoriere diese Mail einfach – dann speichern wir nichts.</p>
-<p style="color:#64748b;font-size:13px">Slotwise · <a href="${escapeHtml(baseUrl)}/datenschutz">Datenschutz</a></p>`,
+<p style="color:#64748b;font-size:13px">CalenSync · <a href="${escapeHtml(baseUrl)}/datenschutz">Datenschutz</a></p>`,
         });
         return json(202, { status: "pending" });
       } catch (err) {

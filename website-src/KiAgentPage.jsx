@@ -1,5 +1,5 @@
 /*
- * Slotwise · /ki-agent
+ * CalenSync · /ki-agent
  * Quelle für die Seite „KI-Agent“. Wird mit esbuild in assets/site.js eingesetzt
  * (ersetzt dort die Funktion fr). Verwendete Bundle-Bezeichner:
  *   w  = react/jsx-runtime, cn = React
@@ -108,11 +108,11 @@ function SwAudioDemo() {
     <div className={`${SW_CARD} overflow-hidden`}>
       <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-wider text-emerald-700">Hörprobe</p>
-          <h2 className="mt-0.5 font-display text-base font-bold text-slate-900">Slotwise Live-Demo anhören</h2>
+          <p className="text-xs font-medium uppercase tracking-wider text-indigo-700">Hörprobe</p>
+          <h2 className="mt-0.5 font-display text-base font-bold text-slate-900">CalenSync Live-Demo anhören</h2>
         </div>
         <span className="inline-flex flex-none items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600">
-          <span className={`h-1.5 w-1.5 rounded-full ${playing ? "bg-emerald-500 animate-pulse" : "bg-slate-300"}`} aria-hidden="true" />
+          <span className={`h-1.5 w-1.5 rounded-full ${playing ? "bg-indigo-500 animate-pulse" : "bg-slate-300"}`} aria-hidden="true" />
           {playing ? "Anruf läuft" : done ? "Beendet" : "Bereit"}
         </span>
       </div>
@@ -120,7 +120,7 @@ function SwAudioDemo() {
       <div className="flex items-center gap-4 px-5 pt-5">
         <button type="button" onClick={toggle}
           aria-label={playing ? "Demo pausieren" : done ? "Demo erneut abspielen" : "Demo abspielen"}
-          className="grid h-12 w-12 flex-none place-items-center rounded-full bg-emerald-600 text-white shadow-sm transition-colors hover:bg-emerald-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2">
+          className="grid h-12 w-12 flex-none place-items-center rounded-full bg-indigo-600 text-white shadow-sm transition-colors hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2">
           <SwIcon d={playing ? SW_ICON_PAUSE : done ? SW_ICON_REPLAY : SW_ICON_PLAY} size={20}
             className={playing || done ? "" : "translate-x-[1px]"} />
         </button>
@@ -129,7 +129,7 @@ function SwAudioDemo() {
             {SW_BARS.map((h, i) => {
               const past = i / SW_BARS.length <= progress;
               const color = !past ? "bg-slate-200"
-                : speaking?.who === "kunde" ? "bg-slate-500" : "bg-emerald-500";
+                : speaking?.who === "kunde" ? "bg-slate-500" : "bg-indigo-500";
               return (
                 <span key={i}
                   className={`sw-bar w-full rounded-full ${color} ${playing ? "sw-bar-live" : ""}`}
@@ -154,7 +154,7 @@ function SwAudioDemo() {
         {visible.map((m) =>
           m.who === "sys" ? (
             <li key={m.t} className="flex justify-center">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-800">
                 <SwIcon d={["M5 12l4 4 10-10"]} size={12} />{m.text}
               </span>
             </li>
@@ -163,7 +163,7 @@ function SwAudioDemo() {
               <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${m.who === "ki"
                 ? "rounded-tl-md border border-slate-100 bg-white text-slate-800"
                 : "rounded-tr-md bg-slate-900 text-white"}`}>
-                <span className={`block text-[11px] font-semibold uppercase tracking-wider ${m.who === "ki" ? "text-emerald-700" : "text-slate-300"}`}>
+                <span className={`block text-[11px] font-semibold uppercase tracking-wider ${m.who === "ki" ? "text-indigo-700" : "text-slate-300"}`}>
                   {m.who === "ki" ? "KI-Agent" : "Kunde"}
                 </span>
                 {m.text}
@@ -200,7 +200,7 @@ function SwTrustGrid() {
     <ul className="grid gap-4 md:grid-cols-3" aria-label="Datenschutz und Sicherheit">
       {SW_TRUST.map((b) => (
         <li key={b.title} className={`${SW_CARD} p-6`}>
-          <span className="grid h-11 w-11 place-items-center rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-700">
+          <span className="grid h-11 w-11 place-items-center rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700">
             <SwIcon d={b.icon} />
           </span>
           <h3 className="mt-4 font-semibold text-slate-900">{b.title}</h3>
@@ -223,7 +223,7 @@ function fr() {
             <h1 className="mt-4 font-display text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">{e.headline}</h1>
             <p className="mt-4 text-lg leading-relaxed text-slate-600">{Y.hero.proof[1].text}</p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <P as="a" href={ot} variant="success" size="lg" className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2">
+              <P as="a" href={ot} variant="success" size="lg" className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2">
                 Kostenlos starten<SwArrow size={14} />
               </P>
               {Pi ? (
@@ -265,9 +265,9 @@ function fr() {
             <h2 className="font-display text-xl font-bold text-slate-900">Preis</h2>
             <p className="mt-3 text-sm leading-relaxed text-slate-600">{e.pricing}</p>
             <ul className="mt-4 space-y-2 text-sm text-slate-700">
-              <li className="flex gap-2"><Ot size={14} className="mt-1 flex-none text-emerald-600" />
+              <li className="flex gap-2"><Ot size={14} className="mt-1 flex-none text-indigo-600" />
                 <span>Im {t.name}-Plan enthalten: {t.limits.aiMinutesInIncluded} Minuten eingehend, {t.limits.aiMinutesOutIncluded} ausgehend pro Monat</span></li>
-              <li className="flex gap-2"><Ot size={14} className="mt-1 flex-none text-emerald-600" />
+              <li className="flex gap-2"><Ot size={14} className="mt-1 flex-none text-indigo-600" />
                 <span>In Starter und Professional als Add-on buchbar (Minutenpakete auf der{" "}
                 <Ve to="/preise" className="font-medium underline-offset-2 hover:underline">Preisseite</Ve>)</span></li>
             </ul>

@@ -76,7 +76,7 @@ class ToolRouter {
     if (sends > OTP_MAX_SENDS_PER_CALL) return { kind: "handover", reason: "verification_failed" };
     const code = String(randomInt(0, 1000000)).padStart(6, "0");
     await this.deps.otp.put(this.otpKey(session, phone), { code, expiresAt: this.now() + OTP_TTL_MS, attempts: 0 }, OTP_TTL_MS);
-    await this.deps.sendSms(phone, `Ihr Slotwise-Bestätigungscode: ${code}. Gültig 5 Minuten. Nicht weitergeben.`);
+    await this.deps.sendSms(phone, `Ihr CalenSync-Bestätigungscode: ${code}. Gültig 5 Minuten. Nicht weitergeben.`);
     await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: "otp:sent", outcome: "executed", at: new Date(this.now()).toISOString() });
     return { kind: "execute", name: "send_otp", arguments: { phone_e164: phone, sent: true } };
   }

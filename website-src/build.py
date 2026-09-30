@@ -54,6 +54,51 @@ def cut_function(src, name, end_marker, label):
     return src[:start] + src[end:]
 
 
+# Emerald → Indigo (Tailwind-Palette), für Klassen, Hex- und RGB-Werte
+EMERALD_TO_INDIGO = {
+    "#ecfdf5": "#eef2ff", "#d1fae5": "#e0e7ff", "#a7f3d0": "#c7d2fe", "#6ee7b7": "#a5b4fc",
+    "#34d399": "#818cf8", "#10b981": "#6366f1", "#059669": "#4f46e5", "#047857": "#4338ca",
+    "#065f46": "#3730a3", "#064e3b": "#312e81", "#022c22": "#1e1b4b",
+}
+
+
+def to_indigo(s):
+    import re
+    s = re.sub(r"\bemerald-", "indigo-", s)
+    for em, ind in EMERALD_TO_INDIGO.items():
+        s = re.sub(re.escape(em), ind, s, flags=re.I)
+        a = tuple(int(em[i:i + 2], 16) for i in (1, 3, 5))
+        b = tuple(int(ind[i:i + 2], 16) for i in (1, 3, 5))
+        s = s.replace("rgb(%d %d %d" % a, "rgb(%d %d %d" % b)
+        s = re.sub(r"(rgba?\()%d, ?%d, ?%d" % a, lambda m: m.group(1) + "%d,%d,%d" % b, s)
+    return s
+
+
+LOGO_MARK = (
+    'Ji={light:{a:"#4f46e5",b:"#a5b4fc",c:"#fff",ink:"#1e293b"},dark:{a:"#818cf8",b:"#3730a3",c:"#0b1020",ink:"#f8fafc"}},'
+    'ip=(e,t,l,a,n="cubic-bezier(.2,.8,.2,1)")=>({animation:`${e} ${t}s ${n} ${l}s both`,transformBox:"fill-box",transformOrigin:a});'
+    'function cp({size:e=32,tone:t="light",animate:l=!1,className:a}){let n=Ji[t]??Ji.light,u=(i,c,s,o,v)=>l?ip(i,c,s,o,v):void 0;'
+    'return(0,we.jsxs)("svg",{width:e,height:e,viewBox:"0 0 64 64",className:H("flex-none overflow-visible",a),"aria-hidden":"true",focusable:"false",children:['
+    '(0,we.jsx)("path",{d:"M30 17H40a7 7 0 0 1 7 7V34",fill:"none",stroke:n.a,strokeWidth:"4",strokeLinecap:"round",style:u("swBar",.4,.7,"left center")}),'
+    '(0,we.jsx)("path",{d:"M34 47H24a7 7 0 0 1-7-7V30",fill:"none",stroke:n.b,strokeWidth:"4",strokeLinecap:"round",style:u("swBar",.4,.9,"right center")}),'
+    '(0,we.jsx)("rect",{x:"4",y:"4",width:"26",height:"26",rx:"8",fill:n.b,style:u("swCard",.5,0,"center")}),'
+    '(0,we.jsx)("rect",{x:"34",y:"34",width:"26",height:"26",rx:"8",fill:n.a,style:u("swCard",.5,.3,"center")}),'
+    '(0,we.jsx)("rect",{x:"10",y:"14",width:"14",height:"6",rx:"3",fill:n.a,style:u("swSlot",.4,1.1,"left center")}),'
+    '(0,we.jsx)("rect",{x:"40",y:"44",width:"14",height:"6",rx:"3",fill:n.c,style:u("swSlot",.4,1.3,"left center")})]})}'
+)
+
+
+def rebrand(s):
+    start = s.find("Ji={light:")
+    end = s.find("function sp(", start)
+    if start < 0 or end < 0 or s.count("Ji={light:") != 1:
+        sys.exit("Logo-Komponente (Ji/cp) nicht gefunden")
+    s = s[:start] + LOGO_MARK + s[end:]
+    s = replace_once(s, 'children:"slotwise"})}function ru', 'children:"calensync"})}function ru', "Wortmarke")
+    s = s.replace("Slotwise", "CalenSync")
+    return to_indigo(s)
+
+
 def main():
     s = (HERE / "vendor" / "site.original.js").read_text(encoding="utf-8")
 
@@ -99,6 +144,9 @@ def main():
         '"Anbieterangaben werden vor dem Livegang erg\\xE4nzt (",(0,x.jsx)("code",{className:"rounded bg-white px-1",children:"VITE_COMPANY_*"})," in ",(0,x.jsx)("code",{className:"rounded bg-white px-1",children:"site-config.js"}),")."',
         "Firmendaten-Hinweis",
     )
+
+    # 6) Branding CalenSync: Sync-Symbol, Wortmarke, Produktname, Primärfarbe Indigo
+    s = rebrand(s)
 
     OUT.write_text(s, encoding="utf-8")
     subprocess.run(["node", "--check", str(OUT)], check=True)
