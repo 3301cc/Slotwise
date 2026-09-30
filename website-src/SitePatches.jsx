@@ -797,3 +797,162 @@ function $h() {
     </SwLegalPage>
   );
 }
+
+// =====================================================================
+// Startseite: Dashboard-Sektion (kompakte Nachbildung von /dashboard)
+// =====================================================================
+const SW_DASH_KPIS = [
+  { label: "Buchungs-Conversion", value: "14,2 %", delta: "+3,1 Pkt.", note: "seit KI-Agent aktiv" },
+  { label: "KI-gesparte Zeit", value: "4,5 Std", delta: "+0,8 Std", note: "diese Woche" },
+  { label: "Aktive Event-Typen", value: "3", delta: "", note: "Erstgespräch · Strategie · Demo" },
+  { label: "Verifizierte Leads", value: "27", delta: "+5", note: "Warteliste, Double-Opt-in" },
+];
+const SW_DASH_DAYS = ["Mo", "Di", "Mi", "Do", "Fr"];
+const SW_DASH_HOURS = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00"];
+// [Tag 0–4, Startzeile 0–5 (09:00 = 0), Dauer in Zeilen, Titel, Art]
+const SW_DASH_EVENTS = [
+  [0, 1, 1, "Erstgespräch", "booked"],
+  [1, 2, 1.5, "Strategie-Session", "booked"],
+  [2, 0, 1, "Demo-Termin", "booked"],
+  [3, 2, 1, "Erstgespräch", "ai"],
+  [4, 1, 1, "Strategie-Session", "ai"],
+  [4, 3.5, 1, "Puffer (KI)", "blocked"],
+];
+const SW_DASH_POINTS = [
+  { title: "Wochenkalender mit KI-Vorschlägen", text: "Gebuchte Termine, offene Vorschläge des Agenten und Puffer auf einen Blick — in deiner Zeitzone." },
+  { title: "Freigaben per Klick", text: "Der Agent bereitet Antwort und Slot vor, du gibst frei. Oder er bucht selbstständig innerhalb deiner Regeln." },
+  { title: "Live-Feed und Kennzahlen", text: "Jeder Anruf, jede Buchung, jede Absage — protokolliert, mit Conversion und gesparter Zeit." },
+];
+
+function SwDashEvent({ ev }) {
+  const [day, start, len, title, kind] = ev;
+  const tone = kind === "booked"
+    ? "bg-indigo-600 text-white"
+    : kind === "ai"
+      ? "border border-dashed border-violet-400 bg-violet-50 text-violet-800"
+      : "border border-slate-300 bg-slate-100 text-slate-500";
+  return (
+    <div className={`sw-dash-ev absolute rounded-md px-1.5 py-1 text-[10px] font-medium leading-tight ${tone}`}
+      style={{ left: `calc(${(day / 5) * 100}% + 2px)`, width: "calc(20% - 4px)", top: `calc(${(start / 6) * 100}% + 2px)`, height: `calc(${(len / 6) * 100}% - 4px)` }}>
+      <span className="block truncate">{title}</span>
+    </div>
+  );
+}
+
+function SwDashboardMock() {
+  return (
+    <div className="sw-dash overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card-hover" aria-hidden="true">
+      {/* Kopfzeile */}
+      <div className="flex h-11 items-center gap-2 border-b border-slate-100 bg-slate-50 px-4">
+        <span className="h-2.5 w-2.5 rounded-full bg-slate-300" /><span className="h-2.5 w-2.5 rounded-full bg-slate-300" /><span className="h-2.5 w-2.5 rounded-full bg-slate-300" />
+        <span className="ml-3 hidden rounded-md bg-white px-2 py-0.5 text-[11px] text-slate-500 sm:inline">app.calensync.de/dashboard</span>
+        <span className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />KI-Agent online
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-[150px_1fr]">
+        {/* Seitenleiste */}
+        <aside className="hidden border-r border-slate-100 bg-white px-3 py-4 md:block">
+          <div className="flex items-center gap-2 px-1">
+            <svg width="20" height="20" viewBox="0 0 64 64" aria-hidden="true"><path d="M30 17H40a7 7 0 0 1 7 7V34" fill="none" stroke="#4f46e5" strokeWidth="4" strokeLinecap="round" /><path d="M34 47H24a7 7 0 0 1-7-7V30" fill="none" stroke="#a5b4fc" strokeWidth="4" strokeLinecap="round" /><rect x="4" y="4" width="26" height="26" rx="8" fill="#a5b4fc" /><rect x="34" y="34" width="26" height="26" rx="8" fill="#4f46e5" /><rect x="10" y="14" width="14" height="6" rx="3" fill="#4f46e5" /><rect x="40" y="44" width="14" height="6" rx="3" fill="#fff" /></svg>
+            <span className="font-display text-sm font-bold text-slate-900">calensync</span>
+          </div>
+          <div className="mt-4 rounded-lg bg-indigo-600 px-3 py-1.5 text-center text-[11px] font-medium text-white">+ Neuer Termin</div>
+          <ul className="mt-4 space-y-1 text-[11px] font-medium text-slate-600">
+            <li className="rounded-md bg-indigo-50 px-2 py-1.5 text-indigo-800">Dashboard</li>
+            <li className="px-2 py-1.5">Buchungen</li>
+            <li className="px-2 py-1.5">KI-Agent</li>
+            <li className="px-2 py-1.5 text-slate-400">Kunden</li>
+            <li className="px-2 py-1.5 text-slate-400">Berichte</li>
+            <li className="px-2 py-1.5">Einstellungen</li>
+          </ul>
+        </aside>
+        {/* Inhalt */}
+        <div className="bg-slate-50 p-4 sm:p-5">
+          <p className="text-[11px] text-slate-500">Mittwoch, 30. September</p>
+          <p className="font-display text-base font-bold tracking-tight text-slate-900 sm:text-lg">Hallo Jana, dein Agent hat übernommen.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+            {SW_DASH_KPIS.map((k) => (
+              <div key={k.label} className="rounded-xl border border-slate-100 bg-white p-3">
+                <p className="truncate text-[11px] text-slate-500">{k.label}</p>
+                <p className="mt-1 font-display text-lg font-bold text-slate-900">{k.value}</p>
+                <p className="mt-0.5 truncate text-[10px] text-slate-500">{k.delta && <span className="font-semibold text-indigo-700">{k.delta} </span>}{k.note}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[1.6fr_1fr]">
+            {/* Wochenkalender */}
+            <div className="rounded-xl border border-slate-100 bg-white p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold text-slate-900">Diese Woche</p>
+                <div className="flex gap-3 text-[10px] text-slate-500">
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-indigo-600" />Gebucht</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm border border-dashed border-violet-400 bg-violet-50" />KI-Vorschlag</span>
+                  <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-slate-200" />Blockiert</span>
+                </div>
+              </div>
+              <div className="mt-2 grid grid-cols-[32px_1fr]">
+                <div />
+                <div className="grid grid-cols-5 text-center text-[10px] font-medium text-slate-500">
+                  {SW_DASH_DAYS.map((d, i) => <span key={d} className={i === 2 ? "text-indigo-700" : ""}>{d}</span>)}
+                </div>
+                <div className="grid text-[9px] text-slate-400" style={{ gridTemplateRows: "repeat(6, 26px)" }}>
+                  {SW_DASH_HOURS.map((h) => <span key={h} className="-mt-1.5">{h}</span>)}
+                </div>
+                <div className="relative sw-dash-grid" style={{ height: 156 }}>
+                  {SW_DASH_EVENTS.map((ev, i) => <SwDashEvent key={i} ev={ev} />)}
+                </div>
+              </div>
+            </div>
+            {/* KI-Panel */}
+            <div className="rounded-xl border border-slate-100 bg-white p-3">
+              <p className="text-xs font-semibold text-slate-900">KI-Assistent steuern</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">Du entscheidest, wie viel der Agent allein macht.</p>
+              <div className="mt-2 rounded-lg border border-indigo-600 bg-indigo-50 px-3 py-2">
+                <p className="text-[11px] font-semibold text-slate-900">Erst Entwurf zur Freigabe vorlegen</p>
+                <p className="text-[10px] text-slate-600">Antwort und Slot vorbereiten, du gibst frei.</p>
+              </div>
+              <div className="mt-1.5 rounded-lg border border-slate-200 px-3 py-2">
+                <p className="text-[11px] font-semibold text-slate-900">Automatisch antworten und buchen</p>
+                <p className="text-[10px] text-slate-600">Innerhalb deiner Regeln, du wirst informiert.</p>
+              </div>
+              <div className="mt-3 flex items-center justify-between text-[11px] font-medium text-slate-900">
+                <span>Maximale Termine pro Tag</span><span className="rounded bg-slate-100 px-1.5">4</span>
+              </div>
+              <div className="relative mt-2 h-1.5 rounded-full bg-slate-200">
+                <div className="h-full w-1/3 rounded-full bg-indigo-600" />
+                <span className="absolute -top-1 left-1/3 h-3.5 w-3.5 -translate-x-1/2 rounded-full border-2 border-white bg-indigo-600 shadow" />
+              </div>
+              <div className="mt-3 flex gap-2">
+                <span className="flex-1 rounded-lg bg-indigo-600 py-1.5 text-center text-[11px] font-medium text-white">Freigeben</span>
+                <span className="flex-1 rounded-lg border border-slate-200 py-1.5 text-center text-[11px] font-medium text-slate-700">Ablehnen</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SwDashboardSection() {
+  return (
+    <SwSection tone="white" aria-labelledby="dash-title">
+      <SwHeading
+        eyebrow={<SwBadge tone="neutral">Dashboard</SwBadge>}
+        title={<span id="dash-title">Dein Cockpit: Termine, KI-Agent und Freigaben auf einen Blick.</span>}
+        description="Das Dashboard zeigt, was dein Agent übernommen hat, welche Vorschläge auf Freigabe warten und wie sich Buchungen entwickeln — ohne Tabellen-Chaos."
+        actions={<SwButton as="a" href="/dashboard/" variant="secondary">Dashboard-Vorschau öffnen<SwArrow size={16} /></SwButton>}
+      />
+      <div className="mt-10"><SwDashboardMock /></div>
+      <ul className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-3">
+        {SW_DASH_POINTS.map((p) => (
+          <li key={p.title} className="flex gap-3">
+            <span className="mt-0.5 grid h-5 w-5 flex-none place-items-center rounded-full bg-indigo-50 text-indigo-600 ring-1 ring-inset ring-indigo-200"><SwCheck size={11} /></span>
+            <p className="text-sm leading-relaxed text-slate-600"><span className="font-semibold text-slate-900">{p.title}. </span>{p.text}</p>
+          </li>
+        ))}
+      </ul>
+    </SwSection>
+  );
+}

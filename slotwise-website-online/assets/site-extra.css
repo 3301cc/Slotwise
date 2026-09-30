@@ -56,3 +56,18 @@
 @keyframes csDraw{0%{stroke-dashoffset:100}to{stroke-dashoffset:0}}
 @keyframes csWord{0%{opacity:0;transform:translateX(-12px);clip-path:inset(-20% 100% -30% 0)}to{opacity:1;transform:none;clip-path:inset(-20% 0 -30% 0)}}
 @media (prefers-reduced-motion:reduce){.cs-anim,.cs-anim *{animation-delay:0s!important}}
+
+/* Startseite: Dashboard-Sektion (SwDashboardSection in SitePatches.jsx) */
+.absolute{position:absolute}.-top-1{top:-.25rem}.left-1\/3{left:33.333333%}.-translate-x-1\/2{--tw-translate-x:-50%;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}
+.-mt-1\.5{margin-top:-.375rem}.ml-3{margin-left:.75rem}.ml-auto{margin-left:auto}.py-1\.5{padding-top:.375rem;padding-bottom:.375rem}
+.h-3\.5{height:.875rem}.w-3\.5{width:.875rem}.w-1\/3{width:33.333333%}
+.grid-cols-5{grid-template-columns:repeat(5,minmax(0,1fr))}.grid-cols-\[32px_1fr\]{grid-template-columns:32px 1fr}
+.border-2{border-width:2px}.border-r{border-right-width:1px}.border-white{border-color:#fff}.border-violet-400{border-color:#a78bfa}.bg-violet-50{background-color:#f5f3ff}.text-violet-800{color:#5b21b6}
+.rounded-sm{border-radius:.125rem}.text-\[9px\]{font-size:9px}.text-\[10px\]{font-size:10px}.text-\[11px\]{font-size:11px}
+.shadow-card-hover{--tw-shadow:0 2px 4px rgba(15,23,42,.04),0 12px 24px -12px rgba(15,23,42,.1);--tw-shadow-colored:0 2px 4px var(--tw-shadow-color),0 12px 24px -12px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}
+.sw-dash-grid{background-image:linear-gradient(to right,#f1f5f9 1px,transparent 1px),linear-gradient(to bottom,#f1f5f9 1px,transparent 1px);background-size:20% 100%,100% 16.6667%;border-left:1px solid #f1f5f9;border-top:1px solid #f1f5f9}
+.sw-dash-ev{box-sizing:border-box;overflow:hidden}
+@media (min-width:640px){.sm\:inline{display:inline}.sm\:p-5{padding:1.25rem}.sm\:text-lg{font-size:1.125rem;line-height:1.75rem}}
+@media (min-width:768px){.md\:block{display:block}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.md\:grid-cols-\[150px_1fr\]{grid-template-columns:150px 1fr}}
+@media (min-width:1024px){.lg\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.lg\:grid-cols-\[1\.6fr_1fr\]{grid-template-columns:1.6fr 1fr}}
+
