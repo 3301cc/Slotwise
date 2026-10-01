@@ -11,7 +11,7 @@
  *   POST /api/agent/decision        { id, action:"approve"|"reject" } – Vorschlag freigeben/ablehnen (Bearer)
  *   GET  /api/agent/status          Bereitschaft (welche Variablen fehlen) – ohne Werte
  *   GET  /api/agent/tasks           Praxismodus: offene Aufgaben (Rezept, Überweisung, Rückruf, Terminänderung) (Bearer)
- *   POST /api/agent/task-done       { id } – Aufgabe erledigt (Bearer)
+ *   POST /api/agent/tasks           { id } – Aufgabe erledigt (Bearer)
  */
 const crypto = require("node:crypto");
 const { twiml, validSignature } = require("./twilio");

@@ -319,13 +319,13 @@
     },
 
     // ---------- Praxismodus: Aufgaben fürs Team ----------
-    // Live: GET /api/agent/tasks · POST /api/agent/task-done { id }   (api/_lib/core/agent/api.js)
+    // Live: GET /api/agent/tasks · POST /api/agent/tasks { id }  (eine Funktion, Vercel-Hobby: max. 12)   (api/_lib/core/agent/api.js)
     async getTasks() {
       if (this.live) return (await this.http("/api/agent/tasks")).items;
       return delay(this._local(TASKS_KEY, PRAXIS.tasks).filter((t) => !t.done));
     },
     async taskDone(id) {
-      if (this.live) return this.http("/api/agent/task-done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      if (this.live) return this.http("/api/agent/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
       this._store(TASKS_KEY, this._local(TASKS_KEY, PRAXIS.tasks).map((t) => (t.id === id ? { ...t, done: true } : t)));
       return delay({ ok: true }, 100);
     },

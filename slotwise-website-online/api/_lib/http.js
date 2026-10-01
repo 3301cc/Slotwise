@@ -152,7 +152,7 @@ const routes = {
   "POST /api/agent/decision": agentRoute("POST", "token", (a, c, i) => agentApi.decision(a, c, i)),
   "GET /api/agent/status": handler("GET", (wl, i) => agentApi.status(getAgent(null), wl.config, i)),
   "GET /api/agent/tasks": agentRoute("GET", "token", (a, c, i) => agentApi.tasks(a, c, i)),
-  "POST /api/agent/task-done": agentRoute("POST", "token", (a, c, i) => agentApi.taskDone(a, c, i)),
+  "POST /api/agent/tasks": agentRoute("POST", "token", (a, c, i) => agentApi.taskDone(a, c, i)),
 };
 
 /** Ein einzelner Handler für alle Routen (node:http, Express `app.use(apiHandler)`, Fastify über `fastify-express`). */
