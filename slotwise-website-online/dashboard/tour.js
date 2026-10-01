@@ -38,6 +38,12 @@
       action: "Einstellen, Speichern – gilt sofort für Telefon, E-Mail und Buchungsseite.",
     },
     {
+      target: "#side-nav, [data-tour-nav]",
+      title: "Kunden, Event-Typen, Berichte",
+      body: "Links findest du alle Kontakte mit Historie, deine buchbaren Event-Typen mit eigenem Link und Berichte, die zeigen, was der Agent dir bringt.",
+      action: "Jeder Bereich hat oben rechts seine wichtigste Aktion, z. B. „Neuer Event-Typ“.",
+    },
+    {
       target: "[data-new-booking]",
       title: "Selbst einen Termin anlegen",
       body: "Wenn jemand dich direkt anspricht, trägst du den Termin hier von Hand ein. Der Agent sieht ihn sofort und bucht nichts doppelt.",

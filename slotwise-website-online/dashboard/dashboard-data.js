@@ -13,7 +13,8 @@
  *   POST /api/agent/decision { id, action }       → Vorschlag freigeben/ablehnen
  *   GET  /api/waitlist/stats                      → { confirmed }          ← Zähler „Verifizierte Leads“
  * Ohne Token: Beispieldaten (MOCK) – die Formen sind identisch.
- * Noch Mock (kein Endpunkt): Metriken Conversion / gesparte Zeit / Event-Typen.
+ * Noch Mock (kein Endpunkt): Metriken Conversion / gesparte Zeit, Kunden, Event-Typen, Berichte
+ * (Änderungen landen im localStorage dieses Browsers; geplante Endpunkte stehen bei getContacts() ff.).
  */
 (function (global) {
   "use strict";
@@ -21,11 +22,15 @@
   const TZ = "Europe/Berlin";
   const now = new Date();
   const minutesAgo = (m) => new Date(now.getTime() - m * 60000).toISOString();
+  const daysAgo = (d) => new Date(now.getTime() - d * 86400000).toISOString();
 
   /** @typedef {{ id:string, label:string, value:number, unit:"percent"|"hours"|"count", delta?:number, deltaLabel?:string, icon:"trend"|"clock"|"layers"|"shield", tone:"emerald"|"indigo"|"slate" }} Metric */
   /** @typedef {{ id:string, kind:"proposed"|"buffer"|"conflict"|"booked"|"info", text:string, at:string, ref?:{type:"booking"|"contact"|"slot", id:string} }} Activity */
   /** @typedef {{ id:string, start:string, end:string, kind:"booked"|"blocked"|"proposed", title:string, with?:string, source?:"manual"|"ai"|"google"|"icloud"|"microsoft" }} Slot */
   /** @typedef {{ autonomy:"auto"|"draft", maxPerDay:number, instructions:string, updatedAt:string }} AgentSettings */
+  /** @typedef {{ id:string, name:string, email:string, phone:string, company:string, tag:"new"|"regular"|"lead", source:"phone"|"page"|"mail"|"manual", bookings:number, noShows:number, lastAt:string|null, nextAt:string|null, nextTitle:string|null, smsConsent:boolean, notes:string, createdAt:string }} Contact */
+  /** @typedef {{ id:string, name:string, slug:string, duration:number, color:"indigo"|"violet"|"sky"|"amber"|"emerald"|"rose", location:"meet"|"teams"|"phone"|"onsite", bufferBefore:number, bufferAfter:number, minNoticeHours:number, active:boolean, aiBookable:boolean, description:string, bookings30d:number }} EventType */
+  /** @typedef {{ days:number, totals:{ bookings:number, prevBookings:number, noShowRate:number, prevNoShowRate:number, leadTimeDays:number, aiShare:number }, series:{ label:string, ai:number, manual:number }[], channels:{ id:string, label:string, value:number }[], byType:{ name:string, color:string, value:number }[], heatmap:number[][] }} Report */
 
   // Montag der aktuellen Woche (Berlin) als Datum ohne Zeit
   function mondayOf(d) {
@@ -69,6 +74,28 @@
       { id: "s9", start: at(4, 9, 30), end: at(4, 10, 30), kind: "proposed", title: "Strategie-Session", with: "kontakt@nordlicht.de", source: "ai" },
       { id: "s10", start: at(4, 11, 0), end: at(4, 11, 30), kind: "booked", title: "Erstgespräch", with: "Jonas Weber", source: "ai" },
     ],
+    /** @type {Contact[]} */
+    contacts: [
+      { id: "c1", name: "Lena Krüger", email: "lena.krueger@kanzlei-krueger.de", phone: "+49 211 5550 1201", company: "Kanzlei Krüger", tag: "regular", source: "manual", bookings: 7, noShows: 0, lastAt: at(0, 9, 0), nextAt: null, nextTitle: null, smsConsent: true, notes: "Bevorzugt Termine am Vormittag.", createdAt: daysAgo(210) },
+      { id: "c2", name: "Anna Schmidt", email: "anna.schmidt@schmidt-design.de", phone: "+49 211 5550 1877", company: "Schmidt Design", tag: "regular", source: "phone", bookings: 5, noShows: 0, lastAt: at(1, 10, 0), nextAt: null, nextTitle: null, smsConsent: true, notes: "Strategie-Sessions immer mit 15 Min Puffer danach.", createdAt: daysAgo(150) },
+      { id: "c3", name: "Lea Hoffmann", email: "lea@hoffmann-it.de", phone: "+49 172 5550 334", company: "Hoffmann IT", tag: "new", source: "page", bookings: 1, noShows: 0, lastAt: null, nextAt: at(2, 14, 0), nextTitle: "Demo-Termin", smsConsent: true, notes: "", createdAt: daysAgo(6) },
+      { id: "c4", name: "Jonas Weber", email: "j.weber@weber-bau.de", phone: "+49 211 5550 9020", company: "Weber Bau GmbH", tag: "new", source: "phone", bookings: 1, noShows: 0, lastAt: null, nextAt: at(4, 11, 0), nextTitle: "Erstgespräch", smsConsent: true, notes: "Hat über den KI-Agenten am Telefon gebucht.", createdAt: daysAgo(1) },
+      { id: "c5", name: "Max Berger", email: "max@firma.de", phone: "", company: "Berger & Partner", tag: "lead", source: "mail", bookings: 0, noShows: 0, lastAt: null, nextAt: at(3, 10, 0), nextTitle: "Erstgespräch (Vorschlag)", smsConsent: false, notes: "Anfrage per Mail, Slot-Vorschlag wartet auf Freigabe.", createdAt: daysAgo(0) },
+      { id: "c6", name: "Tobias Lange", email: "kontakt@nordlicht.de", phone: "+49 211 5550 4410", company: "Nordlicht GmbH", tag: "regular", source: "page", bookings: 4, noShows: 1, lastAt: daysAgo(12), nextAt: at(4, 9, 30), nextTitle: "Strategie-Session (Verschiebung)", smsConsent: true, notes: "Möchte den Freitagstermin verschieben.", createdAt: daysAgo(95) },
+      { id: "c7", name: "Sophie Wagner", email: "s.wagner@praxis-wagner.de", phone: "+49 176 5550 812", company: "Praxis Wagner", tag: "regular", source: "phone", bookings: 9, noShows: 0, lastAt: daysAgo(3), nextAt: null, nextTitle: null, smsConsent: true, notes: "", createdAt: daysAgo(320) },
+      { id: "c8", name: "Mehmet Yılmaz", email: "mehmet@yilmaz-logistik.de", phone: "+49 211 5550 7788", company: "Yılmaz Logistik", tag: "lead", source: "page", bookings: 0, noShows: 0, lastAt: null, nextAt: null, nextTitle: null, smsConsent: false, notes: "Hat die Buchungsseite zweimal geöffnet, noch nicht gebucht.", createdAt: daysAgo(2) },
+      { id: "c9", name: "Clara Neumann", email: "clara.neumann@studio-neumann.de", phone: "+49 160 5550 290", company: "Studio Neumann", tag: "regular", source: "manual", bookings: 3, noShows: 1, lastAt: daysAgo(20), nextAt: null, nextTitle: null, smsConsent: false, notes: "Erinnerung lieber per Mail statt SMS.", createdAt: daysAgo(180) },
+      { id: "c10", name: "Felix Becker", email: "felix@becker-immo.de", phone: "+49 211 5550 3301", company: "Becker Immobilien", tag: "new", source: "phone", bookings: 1, noShows: 0, lastAt: daysAgo(4), nextAt: null, nextTitle: null, smsConsent: true, notes: "", createdAt: daysAgo(9) },
+      { id: "c11", name: "Miriam Hartmann", email: "m.hartmann@hartmann-steuer.de", phone: "+49 211 5550 6612", company: "Hartmann Steuerberatung", tag: "regular", source: "page", bookings: 6, noShows: 0, lastAt: daysAgo(8), nextAt: null, nextTitle: null, smsConsent: true, notes: "Quartalsgespräch, immer im ersten Monat des Quartals.", createdAt: daysAgo(400) },
+      { id: "c12", name: "David Schulz", email: "david.schulz@schulz-events.de", phone: "", company: "Schulz Events", tag: "lead", source: "mail", bookings: 0, noShows: 0, lastAt: null, nextAt: null, nextTitle: null, smsConsent: false, notes: "", createdAt: daysAgo(5) },
+    ],
+    /** @type {EventType[]} */
+    eventTypes: [
+      { id: "e1", name: "Erstgespräch", slug: "erstgespraech", duration: 30, color: "indigo", location: "meet", bufferBefore: 0, bufferAfter: 10, minNoticeHours: 4, active: true, aiBookable: true, description: "Kennenlernen und Bedarf klären. Kostenlos und unverbindlich.", bookings30d: 18 },
+      { id: "e2", name: "Strategie-Session", slug: "strategie", duration: 60, color: "violet", location: "meet", bufferBefore: 0, bufferAfter: 15, minNoticeHours: 24, active: true, aiBookable: true, description: "Tiefer Einstieg in dein Projekt. Mit Vorbereitung und Protokoll.", bookings30d: 9 },
+      { id: "e3", name: "Demo-Termin", slug: "demo", duration: 30, color: "sky", location: "teams", bufferBefore: 5, bufferAfter: 5, minNoticeHours: 2, active: true, aiBookable: true, description: "Live-Vorführung des Produkts mit Fragen am Ende.", bookings30d: 11 },
+      { id: "e4", name: "Vor-Ort-Termin", slug: "vor-ort", duration: 90, color: "amber", location: "onsite", bufferBefore: 30, bufferAfter: 30, minNoticeHours: 48, active: false, aiBookable: false, description: "Termin bei dir vor Ort in Düsseldorf und Umgebung.", bookings30d: 0 },
+    ],
     /** @type {AgentSettings} */
     settings: {
       autonomy: "draft",
@@ -80,6 +107,14 @@
 
   const delay = (v, ms = 120) => new Promise((r) => setTimeout(() => r(structuredClone(v)), ms));
   const SETTINGS_KEY = "slotwise.dashboard.agentSettings";
+  const CONTACTS_KEY = "slotwise.dashboard.contacts";
+  const EVENTS_KEY = "slotwise.dashboard.eventTypes";
+  function isoWeek(d) {
+    const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    const day = t.getUTCDay() || 7;
+    t.setUTCDate(t.getUTCDate() + 4 - day);
+    return Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
+  }
 
   const SlotwiseAPI = {
     baseUrl: "",
@@ -95,7 +130,10 @@
     async status() { try { return await fetch(this.baseUrl + "/api/agent/status").then((r) => (r.ok ? r.json() : null)); } catch { return null; } },
 
     async getMetrics() {
-      const m = await delay(MOCK.metrics); // Conversion/Zeit/Event-Typen: noch ohne Endpunkt
+      const m = await delay(MOCK.metrics); // Conversion/Zeit: noch ohne Endpunkt
+      const active = this._local(EVENTS_KEY, MOCK.eventTypes).filter((t) => t.active);
+      const et = m.find((x) => x.id === "eventTypes");
+      if (et) { et.value = active.length; et.deltaLabel = active.map((t) => t.name).join(" · ") || "keiner aktiv"; }
       // Zähler „Verifizierte Leads“ aus der Warteliste: GET /api/waitlist/stats braucht den Admin-Token.
       // Bis die App eine Anmeldung hat: Token einmalig im Browser hinterlegen →
       //   localStorage.setItem("slotwise.adminToken", "<WAITLIST_ADMIN_TOKEN>")
@@ -127,6 +165,81 @@
       try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch { /* ignorieren */ }
       return delay(next, 250);
     },
+    // ---------- Kunden, Event-Typen, Berichte ----------
+    // Noch ohne Endpunkt: Demo-Daten, Änderungen bleiben nur in diesem Browser (localStorage).
+    // Geplante Endpunkte (gleiche Formen): GET/POST /api/contacts · DELETE /api/contacts/:id (DSGVO, Art. 17)
+    //   GET/PUT /api/event-types · GET /api/reports?days=
+    _local(key, fallback) { try { const v = localStorage.getItem(key); if (v) return JSON.parse(v); } catch { /* privat/blockiert */ } return structuredClone(fallback); },
+    _store(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignorieren */ } },
+
+    /** @returns {Promise<Contact[]>} */
+    async getContacts() { return delay(this._local(CONTACTS_KEY, MOCK.contacts)); },
+    /** Neuer Kontakt (Demo: lokal). */
+    async saveContact(c) {
+      const list = this._local(CONTACTS_KEY, MOCK.contacts);
+      const next = { id: c.id || `c${Date.now()}`, tag: "new", source: "manual", bookings: 0, noShows: 0, lastAt: null, nextAt: null, nextTitle: null, smsConsent: false, notes: "", phone: "", company: "", createdAt: new Date().toISOString(), ...c };
+      const i = list.findIndex((x) => x.id === next.id);
+      if (i >= 0) list[i] = next; else list.unshift(next);
+      this._store(CONTACTS_KEY, list);
+      return delay(next, 150);
+    },
+    /** Kontakt samt Buchungshistorie endgültig löschen (DSGVO Art. 17). Demo: lokal. */
+    async deleteContact(id) {
+      this._store(CONTACTS_KEY, this._local(CONTACTS_KEY, MOCK.contacts).filter((x) => x.id !== id));
+      return delay({ ok: true }, 150);
+    },
+
+    /** @returns {Promise<EventType[]>} */
+    async getEventTypes() { return delay(this._local(EVENTS_KEY, MOCK.eventTypes)); },
+    async saveEventType(e) {
+      const list = this._local(EVENTS_KEY, MOCK.eventTypes);
+      const next = { id: e.id || `e${Date.now()}`, bookings30d: 0, ...e };
+      const i = list.findIndex((x) => x.id === next.id);
+      if (i >= 0) list[i] = { ...list[i], ...next }; else list.push(next);
+      this._store(EVENTS_KEY, list);
+      return delay(next, 150);
+    },
+    async deleteEventType(id) {
+      this._store(EVENTS_KEY, this._local(EVENTS_KEY, MOCK.eventTypes).filter((x) => x.id !== id));
+      return delay({ ok: true }, 120);
+    },
+
+    /** Auswertung für die letzten `days` Tage (7, 30, 90). Demo: deterministisch erzeugt. @returns {Promise<Report>} */
+    async getReport(days = 30) {
+      let seed = days * 7919;
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      const buckets = days <= 7 ? 7 : days <= 30 ? 30 / 7 | 0 : 13;
+      const per = days / buckets;
+      const series = Array.from({ length: buckets }, (_, k) => {
+        const d = new Date(now.getTime() - (buckets - 1 - k) * per * 86400000);
+        const label = days <= 7 ? new Intl.DateTimeFormat("de-DE", { timeZone: TZ, weekday: "short" }).format(d) : `KW ${isoWeek(d)}`;
+        const base = per * (1.1 + k / buckets);
+        return { label, ai: Math.round(base * (0.55 + rnd() * 0.25)), manual: Math.round(base * (0.25 + rnd() * 0.2)) };
+      });
+      const bookings = series.reduce((s, x) => s + x.ai + x.manual, 0);
+      const ai = series.reduce((s, x) => s + x.ai, 0);
+      const types = this._local(EVENTS_KEY, MOCK.eventTypes).filter((t) => t.active);
+      const weights = [0.46, 0.24, 0.3, 0.1];
+      const wsum = types.reduce((s, _, i) => s + (weights[i] || 0.1), 0);
+      const heatmap = Array.from({ length: 5 }, (_, d) => Array.from({ length: 10 }, (_, h) => {
+        const peak = (h === 2 || h === 3 ? 1 : h === 6 || h === 7 ? 0.8 : 0.35) * (d === 4 ? 0.6 : 1);
+        return Math.round((days / 30) * 6 * peak * (0.6 + rnd() * 0.6));
+      }));
+      return delay({
+        days,
+        totals: { bookings, prevBookings: Math.round(bookings * 0.82), noShowRate: 2.4 + rnd(), prevNoShowRate: 7.8 + rnd(), leadTimeDays: 3.1 + rnd() * 1.5, aiShare: Math.round((ai / Math.max(1, bookings)) * 100) },
+        series,
+        channels: [
+          { id: "phone", label: "Telefon (KI-Agent)", value: Math.round(bookings * 0.41) },
+          { id: "page", label: "Buchungsseite", value: Math.round(bookings * 0.34) },
+          { id: "mail", label: "E-Mail (KI-Agent)", value: Math.round(bookings * 0.15) },
+          { id: "manual", label: "Manuell eingetragen", value: Math.round(bookings * 0.1) },
+        ],
+        byType: types.map((t, i) => ({ name: t.name, color: t.color, value: Math.round((bookings * (weights[i] || 0.1)) / wsum) })),
+        heatmap,
+      }, 160);
+    },
+
     /** Vorschlag freigeben/ablehnen. Live: Server; Demo: nur lokal. */
     async decide(id, action) {
       if (this.live) return this.http("/api/agent/decision", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, action }) });

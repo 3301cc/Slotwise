@@ -1,6 +1,6 @@
 /** Tailwind-Konfiguration für das Dashboard – Tokens wie auf der Website (Inter, Plus Jakarta Sans, Indigo). */
 module.exports = {
-  content: ["../../slotwise-website-online/dashboard/index.html", "../../slotwise-website-online/dashboard/dashboard.js"],
+  content: ["../../slotwise-website-online/dashboard/index.html", "../../slotwise-website-online/dashboard/dashboard.js", "../../slotwise-website-online/dashboard/views.js"],
   theme: {
     extend: {
       fontFamily: {
