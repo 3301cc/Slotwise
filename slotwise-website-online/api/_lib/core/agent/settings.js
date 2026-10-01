@@ -3,7 +3,7 @@
  * Einstellungen aus dem Dashboard-Panel „KI-Assistent steuern“. Liegen im Store (agent:settings) und fließen
  * bei jedem Modellaufruf als dynamischer Block in den System-Prompt (systemPrompt.js) – Änderungen gelten sofort.
  */
-const DEFAULTS = { autonomy: "draft", maxPerDay: 4, instructions: "", industry: "business" };
+const DEFAULTS = { autonomy: "draft", maxPerDay: 4, instructions: "", industry: "business", praxisBooking: "proposal" };
 const KEY = "agent:settings";
 
 function sanitize(input) {
@@ -14,6 +14,7 @@ function sanitize(input) {
     if (Number.isInteger(n) && n >= 1 && n <= 12) s.maxPerDay = n;
     if (typeof input.instructions === "string") s.instructions = input.instructions.trim().slice(0, 600);
     if (input.industry === "praxis" || input.industry === "business") s.industry = input.industry; // Praxismodus: siehe praxis.js
+    if (input.praxisBooking === "proposal" || input.praxisBooking === "off") s.praxisBooking = input.praxisBooking; // off = Rückruf-Modus
   }
   return s;
 }

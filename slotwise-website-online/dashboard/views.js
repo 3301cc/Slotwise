@@ -184,8 +184,8 @@
         ${PX() ? statCard("Recall fällig", num(recalls), "in den nächsten 7 Tagen") : statCard("Offene Leads", num(n("lead")), "noch ohne Termin")}
       </div>
       ${PX() && recalls ? `<div class="mb-6 flex flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <p class="text-sm text-sky-950"><span class="font-semibold">${num(recalls)} Patienten</span> sind für Prophylaxe oder Vorsorge fällig. Der Agent kann sie per SMS erinnern und freie Termine anbieten.</p>
-        <div class="flex gap-2"><button type="button" class="btn-ghost h-9" data-k-filter="recall">Anzeigen</button><button type="button" class="btn-primary h-9" data-k-recall-all>Alle erinnern</button></div>
+        <p class="text-sm text-sky-950"><span class="font-semibold">${num(recalls)} Patienten</span> sind für Prophylaxe oder Vorsorge fällig. Der automatische Versand von Erinnerungen ist in Vorbereitung – bis dahin rufen Sie an und haken hier ab.</p>
+        <div class="flex gap-2"><button type="button" class="btn-ghost h-9" data-k-filter="recall">Anzeigen</button><button type="button" class="btn-primary h-9" data-k-recall-all>Alle als erinnert markieren</button></div>
       </div>` : ""}
       <div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div class="card min-w-0">
@@ -278,7 +278,7 @@
         ${PX() ? `<div>
           <p class="mb-1.5 text-xs font-medium uppercase tracking-wider text-slate-500">Recall</p>
           ${c.recallDue ? `<p class="${recallDue(c) ? "font-medium text-sky-800" : "text-slate-700"}">${recallDue(c) ? "Fällig seit" : "Fällig ab"} ${esc(fmtDate.format(new Date(c.recallDue)))}</p>
-            <button type="button" class="mt-2 inline-flex h-9 items-center rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-medium text-sky-900 hover:bg-sky-100" data-k-recall>${c.smsConsent ? "Per SMS erinnern" : "Per E-Mail erinnern"}</button>`
+            <button type="button" class="mt-2 inline-flex h-9 items-center rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-medium text-sky-900 hover:bg-sky-100" data-k-recall>Als erinnert markieren</button>`
             : '<p class="text-slate-500">Kein Recall geplant.</p>'}
         </div>` : ""}
         <div>
@@ -354,12 +354,12 @@
       if (t("[data-k-recall]")) {
         const c = K.list.find((x) => x.id === K.selected);
         c.recallDue = null; await API.saveContact(c);
-        renderKunden(); return toast(`Recall-Erinnerung an ${c.name} vorgemerkt`);
+        renderKunden(); return toast(`${c.name} als erinnert markiert`);
       }
       if (t("[data-k-recall-all]")) {
         const due = K.list.filter(recallDue);
         for (const c of due) { c.recallDue = null; await API.saveContact(c); }
-        K.filter = "all"; renderKunden(); return toast(`${due.length} Recall-Erinnerungen vorgemerkt`);
+        K.filter = "all"; renderKunden(); return toast(`${due.length} Patienten als erinnert markiert`);
       }
       if (t("[data-k-delete]")) { K.confirmDelete = true; return renderKundenDetail(); }
       if (t("[data-k-delete-cancel]")) { K.confirmDelete = false; return renderKundenDetail(); }

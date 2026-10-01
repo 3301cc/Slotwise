@@ -101,6 +101,7 @@
       autonomy: "draft",
       maxPerDay: 4,
       instructions: "Sei besonders höflich und biete freitags keine Termine nach 14 Uhr an.",
+      praxisBooking: "off",
       updatedAt: minutesAgo(3000),
     },
   };

@@ -26,7 +26,7 @@ function twiml({ say, gather, hangup, dial, language = "de-DE", voice = "Polly.V
   const parts = [];
   const sayXml = (t) => `<Say language="${language}" voice="${voice}">${esc(t)}</Say>`;
   if (gather) {
-    parts.push(`<Gather input="speech" language="${language}" speechTimeout="auto" actionOnEmptyResult="true" action="${esc(actionUrl)}" method="POST">`);
+    parts.push(`<Gather input="speech dtmf" numDigits="1" language="${language}" speechTimeout="auto" actionOnEmptyResult="true" action="${esc(actionUrl)}" method="POST">`);
     if (say) parts.push(sayXml(say));
     parts.push("</Gather>");
     parts.push(sayXml(language.startsWith("de") ? "Ich habe Sie leider nicht verstanden. Auf Wiederhören." : "Sorry, I did not catch that. Goodbye."));

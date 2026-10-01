@@ -116,7 +116,7 @@ test("Twilio-Signatur: Referenzvektor aus der Twilio-Doku, TwiML-Aufbau", () => 
   assert.ok(ok);
   assert.ok(!validSignature({ authToken: "12345", url: "https://mycompany.com/myapp.php?foo=1&bar=2", params: { CallSid: "X" }, signature: "0/KCTR6DLpKmkAf8muzZqo1nDgQ=" }));
   const x = twiml({ say: 'Hallo & "Welt"', gather: true, actionUrl: "https://x/api/agent/voice-webhook" });
-  assert.match(x, /<Gather input="speech" language="de-DE"/); assert.match(x, /Hallo &amp; &quot;Welt&quot;/);
+  assert.match(x, /<Gather input="speech dtmf" numDigits="1" language="de-DE"/); assert.match(x, /Hallo &amp; &quot;Welt&quot;/);
   assert.match(twiml({ say: "Tschüss", hangup: true }), /<Hangup\/>/);
   assert.match(twiml({ say: "Moment", dial: "+49301" }), /<Dial>\+49301<\/Dial>/);
 });
@@ -223,7 +223,7 @@ test("Praxis: Rezeptwunsch → Aufgabe mit Geburtsdatum, Feed-Eintrag, erledigt 
 
 test("Praxis: Begrüßung mit Notruf-Hinweis, Prompt mit Praxisregeln, Einstellungen behalten industry", async () => {
   const { agent } = await buildPraxis();
-  assert.match(await agent.disclosure(), /Praxis Nordlicht.*112/s);
+  assert.match(await agent.disclosure(), /von Nordlicht.*112/s);
   await agent.settings.save({ autonomy: "auto", maxPerDay: 6, instructions: "" }); // KI-Panel speichert ohne industry
   assert.strictEqual((await agent.settings.get()).industry, "praxis");
   const p = buildSystemPrompt({ company: "X", hostName: "Y", timezone: "Europe/Berlin", language: "de", nowIso: "2026-10-01T08:00:00Z", settings: await agent.settings.get() });
@@ -231,4 +231,51 @@ test("Praxis: Begrüßung mit Notruf-Hinweis, Prompt mit Praxisregeln, Einstellu
   const { agent: biz } = build();
   assert.doesNotMatch(buildSystemPrompt({ company: "X", hostName: "Y", timezone: "Europe/Berlin", language: "de", nowIso: "2026-10-01T08:00:00Z", settings: await biz.settings.get() }), /Praxismodus/);
   assert.strictEqual((await biz.turn({ sessionId: "B1", utterance: "Ich möchte meinen Termin am Montag verschieben." })).say, REFUSAL_MODIFY_DE);
+});
+
+test("Praxis: erweiterte Notfall-Erkennung, Verneinung, Englisch/Türkisch", () => {
+  for (const u of ["Mir ist schwindelig und ich sehe doppelt", "Ich hab mich verletzt, alles voller Blut", "Mein Kind hat 40 Grad Fieber", "Mein Sohn hat 39,5 Fieber", "Ich habe Herzrasen", "my chest hurts", "Benim kalbim ağrıyor", "Kein Notfall, aber mein Vater hat Brustschmerzen"]) assert.ok(detectEmergency(u), u);
+  for (const u of ["Es ist kein Notfall, ich brauche nur ein Rezept", "Ist nicht dringend, nur eine Kontrolle", "Ich habe 38 Grad Fieber und brauche eine Krankschreibung"]) assert.ok(!detectEmergency(u), u);
+});
+
+test("Praxis: Modell erkennt unklaren Notfall (zweite Stufe) → 112-Text und Übergabe", async () => {
+  const { agent } = await buildPraxis();
+  const r = await agent.turn({ sessionId: "P9", utterance: "Mein Mann fühlt sich ganz komisch an" });
+  assert.strictEqual(r.say, EMERGENCY_DE); assert.ok(r.done && r.handover);
+  assert.ok((await agent.activity.list()).some((e) => e.kind === "conflict" && /Möglicher Notfall/.test(e.text)));
+});
+
+test("Praxis: Buchung ohne SMS-Code und E-Mail, immer nur Vorschlag (auch bei Autonomie auto)", async () => {
+  const { agent, sms } = await buildPraxis();
+  await agent.settings.save({ autonomy: "auto" });
+  const t = (u) => agent.turn({ sessionId: "P10", from: "+4915112345678", utterance: u });
+  await t("Ich hätte gern einen Termin zur Kontrolle nächste Woche.");
+  const r = await t("Der erste passt. Mein Name ist Maria Lindner, geboren 30.11.1967, 0151 12345678");
+  assert.ok(r.done); assert.match(r.say, /vorgemerkt/);
+  assert.strictEqual(sms.length, 0, "kein OTP, keine Bestätigung vor Freigabe");
+  const week = await agent.calendar.week(new Date(Date.now() - 86400000).toISOString(), new Date(Date.now() + 14 * 86400000).toISOString());
+  assert.ok(week.some((s) => s.kind === "proposed" && s.with === "Maria Lindner" && s.title === "Kontrolle"));
+  const prompt = buildSystemPrompt({ company: "X", hostName: "Y", timezone: "Europe/Berlin", language: "de", nowIso: "2026-10-01T08:00:00Z", settings: await agent.settings.get() });
+  assert.match(prompt, /nie nach E-Mail-Adresse oder Bestätigungscodes/);
+});
+
+test("Praxis: Rückruf-Modus bietet keine Kalenderwerkzeuge an, Router lehnt sie ab", async () => {
+  assert.deepStrictEqual(toolsFor(L0_TOOLS, "praxis", "off").map((t) => t.name), ["send_booking_link_sms", "handover_to_human", "create_task"]);
+  const r = new ToolRouter({ otp: { async put() {}, async get() { return null; }, async del() {}, async incr() { return 1; } }, audit: { async write() {} }, hmacSecret: SECRET, async sendSms() {} });
+  const s = { callSid: "CA1", tenantId: "t", hostId: "h", callerCli: null, language: "de", industry: "praxis", toolNames: toolsFor(L0_TOOLS, "praxis", "off").map((t) => t.name) };
+  assert.strictEqual((await r.route(s, { name: "find_availability", arguments: {} })).kind, "refuse");
+  assert.strictEqual((await r.route(s, { name: "create_booking", arguments: {} })).kind, "refuse");
+  const { agent } = await buildPraxis();
+  await agent.settings.save({ praxisBooking: "off" });
+  const p = buildSystemPrompt({ company: "X", hostName: "Y", timezone: "Europe/Berlin", language: "de", nowIso: "2026-10-01T08:00:00Z", settings: await agent.settings.get() });
+  assert.match(p, /Rückruf-Modus/);
+});
+
+test("Taste 0: sofort zum Team, im Praxismodus mit Rückrufwunsch", async () => {
+  const { agent, config } = await buildPraxis();
+  const res = await api.voiceWebhook(agent, config, { body: { CallSid: "CA7", From: "+4915112345678", Digits: "0" }, headers: {}, fullUrl: "http://l/api/agent/voice-webhook", baseUrl: "http://l" });
+  assert.match(res.body, /rufen Sie zurück/); assert.match(res.body, /<Hangup\/>/);
+  const [task] = await agent.tasks.list();
+  assert.strictEqual(task.type, "callback"); assert.strictEqual(task.phone, "+4915112345678");
+  assert.match(await agent.disclosure(), /Taste 0/);
 });

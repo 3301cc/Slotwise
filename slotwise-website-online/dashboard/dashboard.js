@@ -167,13 +167,15 @@
     f.maxPerDay.value = s.maxPerDay;
     f.instructions.value = s.instructions || "";
     f.industry.value = s.industry === "praxis" ? "praxis" : "business";
+    f.praxisBooking.value = s.praxisBooking === "off" ? "off" : "proposal";
+    $("#praxis-booking").hidden = f.industry.value !== "praxis";
     syncRange(); syncCount();
   }
   function syncRange() { $("#maxPerDayValue").textContent = $("#maxPerDay").value; }
   function syncCount() { $("#instructionsCount").textContent = `${$("#instructions").value.length} / 600`; }
   function readSettings() {
     const f = $("#agent-form");
-    return { autonomy: f.autonomy.value, maxPerDay: Number(f.maxPerDay.value), instructions: f.instructions.value.trim(), industry: f.industry.value || "business" };
+    return { autonomy: f.autonomy.value, maxPerDay: Number(f.maxPerDay.value), instructions: f.instructions.value.trim(), industry: f.industry.value || "business", praxisBooking: f.praxisBooking.value || "proposal" };
   }
 
   // ---------- Praxismodus ----------
@@ -256,6 +258,7 @@
     });
 
     $("#maxPerDay").addEventListener("input", syncRange);
+    $("#agent-form").addEventListener("change", (e) => { if (e.target.name === "industry") $("#praxis-booking").hidden = e.target.value !== "praxis"; });
     $("#instructions").addEventListener("input", syncCount);
     $("#agent-form").addEventListener("submit", async (e) => {
       e.preventDefault();

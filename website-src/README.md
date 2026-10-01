@@ -9,6 +9,7 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 | `website-src/vendor/site.original.js` | ursprünglicher Vite-Build (keine Quellen im Repo) |
 | `website-src/KiAgentPage.jsx` | Seite `/ki-agent` |
 | `website-src/PraxenPage.jsx` | Seite `/praxen` für Arzt- und Zahnarztpraxen (Sie-Form, Pilotangebot, Praxis-Plan); Warteliste mit Quelle `praxen` |
+| `slotwise-website-online/api/_lib/core/tenants.js` | Mandanten: mehrere Praxen/Unternehmen über `TENANTS_JSON` (eigener Datenraum, eigener Token, Zuordnung über angerufene Nummer). Ohne Variable: Einzelbetrieb wie bisher |
 | `slotwise-website-online/api/_lib/core/agent/praxis.js` | Praxismodus des Agenten: Notfall-Gate (112/116 117), Medizin-Gate, Aufgaben (Rezept, Überweisung, Rückruf, Terminänderung) |
 | `website-src/SitePatches.jsx` | Warteliste, `/anmelden`, Demo-Widget, Layout mit Entwurfs-Banner, Datenschutzerklärung |
 | `website-src/build.py` | setzt beides in `assets/site.js` ein |
@@ -142,3 +143,14 @@ Export: `curl -H "Authorization: Bearer $WAITLIST_ADMIN_TOKEN" https://…/api/w
 - Firmendaten in `site-config.js` eintragen → Entwurfs-Banner und `noindex` verschwinden automatisch.
 - Datenschutzerklärung rechtlich prüfen lassen (Abschnitte „Hosting dieser Website (Vercel)“ und „Warteliste“ nennen Vercel, Mailjet und Upstash).
 - Sobald `app.slotwise.app` läuft: `VITE_APP_LIVE: "1"` in `site-config.js`.
+
+## Mehrere Praxen (Mandanten)
+
+```bash
+TENANTS_JSON='[{"id":"praxis-berger","company":"Praxis Dr. Berger","hostName":"Dr. Berger",
+  "adminToken":"<mindestens 24 zufällige Zeichen>","phoneNumbers":["+4921112345678"],"escalationPhone":"+492119876543"}]'
+```
+
+- Dashboard: Token der Praxis einmalig im Browser hinterlegen (`localStorage.setItem("slotwise.adminToken", "<adminToken>")`).
+- Twilio: jede Praxisnummer zeigt auf dieselbe Webhook-URL; die angerufene Nummer (`To`) bestimmt die Praxis.
+- Grenze: Token statt Benutzerkonten. Für Teams mit mehreren Mitarbeitenden fehlen noch Konten, Rollen und Protokoll.

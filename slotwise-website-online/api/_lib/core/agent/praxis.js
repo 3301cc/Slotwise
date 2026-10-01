@@ -27,21 +27,35 @@ const MODIFY_PRAXIS_DE =
   "Ich nehme Ihren Wunsch aber für das Praxisteam auf, es meldet sich bei Ihnen. Wie ist Ihr Name und unter welcher Nummer erreichen wir Sie?";
 
 const DISCLOSURE_PRAXIS_DE =
-  "Guten Tag, Sie sprechen mit dem digitalen Assistenten der Praxis {{company}}. Das Gespräch wird zur Terminvereinbarung verarbeitet. " +
-  "Bei einem Notfall rufen Sie bitte die 112 an. Wie kann ich Ihnen helfen?";
+  "Guten Tag, Sie sprechen mit dem digitalen Assistenten von {{company}}. Das Gespräch wird zur Terminvereinbarung verarbeitet. " +
+  "Bei einem Notfall rufen Sie bitte die 112 an. Mit der Taste 0 erreichen Sie das Praxisteam. Wie kann ich Ihnen helfen?";
 
 // Bewusst breit: lieber einmal zu oft auf die 112 verweisen als einmal zu wenig.
+// Grenze: Spracherkennung läuft auf Deutsch; andere Sprachen kommen oft verstümmelt an. Darum zusätzlich ein paar
+// englische und türkische Schlüsselwörter, die Twilio meist korrekt transkribiert, und die Modellprüfung als zweite Stufe.
 const EMERGENCY_PATTERNS = [
   /\bnotfall\b/i,
   /\b(brust|herz)\w*\s*(schmerz|stech|druck|enge)/i,
-  /\b(atemnot|keine luft|krieg\w* (kaum |keine )?luft|kann nicht (mehr )?atmen|ersticke)/i,
-  /\b(bewusstlos|ohnmächtig|ohnmaechtig|kollabiert|zusammengebrochen|krampfanfall|krampft)/i,
-  /\b(schlaganfall|herzinfarkt|lähmung|laehmung|gelähmt|gelaehmt|sprachstörung|gesicht hängt)/i,
-  /\b(blutet stark|starke blutung|hört nicht auf zu bluten|viel blut)/i,
-  /\b(suizid|selbstmord|umbringen|nicht mehr leben|mir etwas antun)/i,
-  /\b(vergiftung|vergiftet|überdosis|ueberdosis|allergischer schock|anaphyla)/i,
-  /\b(unfall|gestürzt|gestuerzt).{0,30}\b(kopf|bewusst|blut)/i,
+  /\bherzrasen\b/i,
+  /\b(atemnot|keine luft|krieg\w* (kaum |keine )?luft|kann nicht (mehr )?atmen|ersticke|erstickt)/i,
+  /\b(bewusstlos|ohnmächtig|ohnmaechtig|kollabiert|zusammengebrochen|krampfanfall|krampft|nicht ansprechbar|reagiert nicht)/i,
+  /\b(schlaganfall|herzinfarkt|lähmung|laehmung|gelähmt|gelaehmt|sprachstörung|kann nicht (mehr )?(richtig )?sprechen|gesicht hängt|hängender mundwinkel)/i,
+  /\b(sehe doppelt|doppelt sehen|doppelbilder|plötzlich (nichts|schlecht|verschwommen) (mehr )?sehen|plötzlich blind)/i,
+  /\b(plötzlich|ploetzlich)\b.{0,30}\b(verwirrt|taub|schwach|schwindel|kopfschmerz)/i,
+  /\b(blutet stark|starke blutung|hört nicht auf zu bluten|viel blut|voller blut|blutet (sehr|immer noch|weiter)|blut erbrochen|blut gehustet)/i,
+  /\b(kind|baby|säugling|saeugling|tochter|sohn)\b.{0,40}\b(fieber|grad)\b.{0,15}\b(39|40|41|42)/i,
+  /\b(40|41|42) ?grad\b/i,
+  /\b(kind|baby|säugling|saeugling|tochter|sohn)\b.{0,40}\b(39|40|41|42)([,.]\d)? ?(grad)? ?fieber/i,
+  /\b(suizid|selbstmord|umbringen|nicht mehr leben|mir etwas antun|mir was antun|ich kann nicht mehr)/i,
+  /\b(vergiftung|vergiftet|überdosis|ueberdosis|tabletten geschluckt|allergischer schock|anaphyla|zunge schwillt|hals schwillt zu)/i,
+  /\b(unfall|gestürzt|gestuerzt|hingefallen).{0,30}\b(kopf|bewusst|blut)/i,
+  // Englisch / Türkisch (Grundschutz)
+  /\b(emergency|chest (pain|hurts)|heart attack|can'?t breathe|cannot breathe|unconscious|stroke|bleeding)\b/i,
+  /\b(acil|nefes alamıyorum|nefes alamiyorum|kalbim|bayıldı|bayildi|kanıyor|kaniyor)\b/i,
 ];
+// Verneinte Notfälle („kein Notfall“, „nicht dringend“) lösen nicht aus – andere Stichworte im selben Satz schon.
+const NEGATED = /\b(kein(en)?|nicht (um )?(einen )?|ist nicht)\s*(notfall|dringend)\b/gi;
+
 const MEDICAL_PATTERNS = [
   /\bist (das|es) (gefährlich|gefaehrlich|schlimm|normal|ansteckend)\b/i,
   /\bsoll(te)? ich\b.{0,40}\b(nehmen|absetzen|einnehmen|kühlen|kuehlen|warten|ins krankenhaus)\b/i,
@@ -50,9 +64,14 @@ const MEDICAL_PATTERNS = [
   /\b(laborwert|blutwert|befund|röntgenbild|roentgenbild|mrt)\w*\b.{0,30}\b(sagen|erklären|erklaeren|vorlesen|durchgeben)\b/i,
   /\bhabe ich\b.{0,30}\b(krankheit|infektion|entzündung|entzuendung|krebs|corona)\b/i,
   /\b(welches|was für ein) (medikament|mittel|antibiotikum)\b/i,
+  /\bdarf ich\b.{0,40}\b(nehmen|essen|trinken|sport|arbeiten)\b/i,
+  /\bkann ich (mit|trotz)\b.{0,30}\b(ibuprofen|paracetamol|aspirin|tablette|medikament|fieber)\b/i,
 ];
 
-const detectEmergency = (u) => EMERGENCY_PATTERNS.some((re) => re.test(String(u || "")));
+function detectEmergency(u) {
+  const text = String(u || "").replace(NEGATED, " ");
+  return EMERGENCY_PATTERNS.some((re) => re.test(text));
+}
 const detectMedicalQuestion = (u) => MEDICAL_PATTERNS.some((re) => re.test(String(u || "")));
 
 const TASK_TYPES = { prescription: "Rezeptwunsch", referral: "Überweisungswunsch", callback: "Rückrufwunsch", change_request: "Terminänderung", other: "Anliegen" };
@@ -77,21 +96,65 @@ const PRAXIS_TOOLS = [
   },
 ];
 
-const PRAXIS_PROMPT = `
+// Buchung im Praxismodus: ohne SMS-Code und ohne E-Mail (für ältere Patienten am Festnetz zu umständlich).
+// Ausgleich: Das Ergebnis ist IMMER nur ein Vorschlag, den das Praxisteam freigibt – unabhängig von der Autonomie-Einstellung.
+const PRAXIS_BOOKING_TOOL = {
+  name: "create_booking",
+  description: "Praxismodus: merkt einen NEUEN Termin als Vorschlag vor. Das Praxisteam prüft und bestätigt per SMS oder Rückruf. Name, Geburtsdatum und Rückrufnummer vorher einmal wiederholen.",
+  minTrust: "L0",
+  parameters: {
+    type: "object", additionalProperties: false,
+    required: ["start", "duration_minutes", "name", "date_of_birth", "phone_e164", "appointment_type"],
+    properties: {
+      start: { type: "string", format: "date-time" },
+      duration_minutes: { type: "integer", enum: [15, 30, 45, 60] },
+      name: { type: "string", minLength: 2, maxLength: 120 },
+      date_of_birth: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+      phone_e164: { type: "string", pattern: "^\\+[1-9][0-9]{6,14}$" },
+      appointment_type: { type: "string", maxLength: 60, description: "Terminart, z. B. Kontrolle, Prophylaxe, Vorsorge. Keine Symptome." },
+    },
+  },
+};
+
+const PRAXIS_PROMPT_BASE = `
 ## Praxismodus (Arzt- oder Zahnarztpraxis)
 - Sprich die Anrufer mit "Sie" an. Du bist der Assistent der Praxis, nicht der Arzt.
 - Du beurteilst nichts Medizinisches: keine Einschätzung von Beschwerden, keine Dringlichkeit, keine Auskunft zu Befunden, Werten oder Medikamenten.
   Bei solchen Fragen antworte wörtlich: "${MEDICAL_REFUSAL_DE}"
-- Notfall-Stichworte (z. B. Brustschmerz, Atemnot, Bewusstlosigkeit, starke Blutung): antworte wörtlich "${EMERGENCY_DE}" und rufe handover_to_human auf.
+- Notfall-Stichworte (z. B. Brustschmerz, Atemnot, Bewusstlosigkeit, starke Blutung): antworte wörtlich "${EMERGENCY_DE}" und rufe handover_to_human mit reason "possible_emergency" auf.
+- WICHTIG: Wenn du auch nur unsicher bist, ob es ein Notfall sein könnte (plötzliche starke Beschwerden, Verwirrtheit, ein Kind mit hohem Fieber, Gedanken, sich etwas anzutun, eine Sprache, die du nicht sicher verstehst), handle genauso: Notfalltext sagen und handover_to_human mit reason "possible_emergency". Lieber einmal zu oft.
 - Rezept-, Überweisungs- und Rückrufwünsche sowie Wünsche, einen bestehenden Termin zu ändern oder abzusagen:
   Name, Geburtsdatum und Rückrufnummer erfragen, einmal wiederholen, dann create_task aufrufen.
   Sage, dass das Praxisteam den Wunsch prüft und sich meldet. Versprich nie, dass ein Rezept ausgestellt wird.
-- In die Notiz von create_task gehören keine Symptome oder Diagnosen, nur das Nötigste (z. B. Medikamentenname beim Folgerezept).
-- Neue Termine buchst du wie gewohnt. Termine für akute Beschwerden nur in Zeitfenster, die die Praxis dafür freigegeben hat.
-`.trim();
+- In die Notizen gehören keine Symptome oder Diagnosen, nur das Nötigste (z. B. Medikamentenname beim Folgerezept).
+- Du fragst nie nach E-Mail-Adresse oder Bestätigungscodes.`.trim();
 
-function toolsFor(baseTools, industry) {
-  return industry === "praxis" ? [...baseTools, ...PRAXIS_TOOLS] : baseTools;
+const PRAXIS_PROMPT_BOOKING = `
+- Neue Termine: Terminart und Wunschzeitraum erfragen, mit find_availability höchstens drei Vorschläge nennen, dann Name, Geburtsdatum und Rückrufnummer erfragen und wiederholen, dann create_booking.
+  Sage danach: Der Termin ist vorgemerkt, die Praxis bestätigt ihn per SMS oder Rückruf. Nenne ihn nie als fest.
+- Termine für akute Beschwerden buchst du nicht selbst, sondern nimmst einen Rückrufwunsch auf (create_task, type "callback").`.trim();
+
+const PRAXIS_PROMPT_CALLBACK_ONLY = `
+- Rückruf-Modus: Du buchst KEINE Termine. Für jeden Terminwunsch nimmst du einen Rückrufwunsch auf (create_task, type "callback") mit gewünschter Terminart und Wunschzeitraum in der Notiz.
+  Sage: Das Praxisteam ruft zurück und vereinbart den Termin mit Ihnen.`.trim();
+
+/** Praxis-Block für den System-Prompt, je nach Buchungsmodus. */
+function praxisPrompt(praxisBooking = "proposal") {
+  return `${PRAXIS_PROMPT_BASE}\n${praxisBooking === "off" ? PRAXIS_PROMPT_CALLBACK_ONLY : PRAXIS_PROMPT_BOOKING}`;
+}
+const PRAXIS_PROMPT = praxisPrompt("proposal");
+
+/**
+ * Tools je Modus.
+ *  business:          L0 unverändert (OTP-Pflicht für Buchungen).
+ *  praxis/proposal:   find_availability, create_booking (Praxis-Variante ohne OTP, nur Vorschlag), create_task, Link-SMS, Übergabe.
+ *  praxis/off:        nur create_task, Link-SMS, Übergabe – keine Kalenderwerkzeuge (Rückruf-Modus zum Einstieg).
+ */
+function toolsFor(baseTools, industry, praxisBooking = "proposal") {
+  if (industry !== "praxis") return baseTools;
+  const drop = new Set(["send_otp", "verify_otp", "create_booking", ...(praxisBooking === "off" ? ["find_availability"] : [])]);
+  const keep = baseTools.filter((t) => !drop.has(t.name));
+  return [...keep, ...(praxisBooking === "off" ? [] : [PRAXIS_BOOKING_TOOL]), ...PRAXIS_TOOLS];
 }
 
 /** Aufgaben fürs Praxisteam. Liste im Store, neueste zuerst, höchstens 200, Ablauf nach 30 Tagen. */
@@ -130,6 +193,6 @@ function createTasks(store, now = () => Date.now()) {
 }
 
 module.exports = {
-  EMERGENCY_DE, MEDICAL_REFUSAL_DE, MODIFY_PRAXIS_DE, DISCLOSURE_PRAXIS_DE, PRAXIS_PROMPT, PRAXIS_TOOLS, TASK_TYPES,
+  EMERGENCY_DE, MEDICAL_REFUSAL_DE, MODIFY_PRAXIS_DE, DISCLOSURE_PRAXIS_DE, PRAXIS_PROMPT, PRAXIS_TOOLS, PRAXIS_BOOKING_TOOL, TASK_TYPES, praxisPrompt,
   detectEmergency, detectMedicalQuestion, toolsFor, createTasks,
 };

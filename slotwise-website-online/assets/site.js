@@ -939,60 +939,62 @@ const SW_PX_CALL = [
     { who: "ki", text: "Gern. Ich nehme Ihren Wunsch auf, das Praxisteam prüft ihn. Wie ist Ihr Name und Ihr Geburtsdatum?" },
     { who: "sys", text: "Aufgabe für das Team angelegt · Rezeptwunsch" },
     { who: "kunde", text: "Und ich bräuchte noch einen Termin zur Kontrolle." },
-    { who: "ki", text: "Donnerstag um 8:30 Uhr ist frei. Soll ich den für Sie eintragen?" },
-    { who: "sys", text: "Termin gebucht · SMS-Bestätigung versendet" },
+    { who: "ki", text: "Donnerstag um 8:30 Uhr ist frei. Ich merke ihn vor, die Praxis bestätigt ihn Ihnen noch." },
+    { who: "sys", text: "Termin vorgemerkt · wartet auf Freigabe durch das Team" },
 ];
 const SW_PX_PAINS = [
     { icon: "phone", title: "Morgens ist die Leitung dicht", text: "Zwischen acht und zehn klingelt es ununterbrochen. Wer nicht durchkommt, ruft später an – oder bei der nächsten Praxis." },
     { icon: "task", title: "Die Anmeldung macht Telefondienst", text: "Rezeptwünsche, Überweisungen, Terminverschiebungen: Jede Minute am Telefon fehlt am Tresen und bei den Patienten vor Ort." },
-    { icon: "calendar", title: "Leere Stühle durch No-Shows", text: "Vergessene Termine kosten Behandlungszeit. Erinnerungen per SMS und eine einfache Absage per Anruf geben die Zeit zurück." },
+    { icon: "calendar", title: "Leere Stühle durch No-Shows", text: "Wer absagen will, kommt oft nicht durch. Beim Assistenten landet die Absage sofort als Aufgabe bei Ihrem Team – der Termin wird wieder frei." },
 ];
 const SW_PX_STEPS = [
     { icon: "ear", title: "Annehmen", text: "Der Agent geht sofort ran, auch wenn alle Leitungen belegt sind, und sagt gleich zu Beginn, dass hier eine KI spricht." },
     { icon: "message", title: "Anliegen verstehen", text: "Termin, Absage, Verschiebung, Rezept- oder Überweisungswunsch – der Agent fragt nach, bis klar ist, worum es geht." },
-    { icon: "calendar", title: "Erledigen", text: "Freie Slots bucht er direkt nach Ihren Regeln. Alles, was das Team prüfen muss, landet als Aufgabe im Dashboard." },
-    { icon: "task", title: "Bestätigen", text: "Der Patient bekommt eine SMS. Sie sehen jeden Anruf mit Zusammenfassung – und können jederzeit übernehmen." },
+    { icon: "calendar", title: "Aufnehmen", text: "Zum Start nimmt er Rückruf-, Rezept- und Überweisungswünsche auf. Später merkt er auch Termine vor – Ihr Team gibt jeden frei." },
+    { icon: "task", title: "Übergeben", text: "Alles landet als Aufgabe im Dashboard. Mit der Taste 0 kommt der Anrufer jederzeit direkt zu Ihrem Team." },
 ];
 const SW_PX_NEVER = [
     "keine medizinische Einschätzung, keine Diagnose, keine Dringlichkeitsbewertung",
     "keine Auskunft zu Befunden, Laborwerten oder Medikamenten",
     "bei Notfall-Stichworten sofort der Hinweis auf 112 und den ärztlichen Bereitschaftsdienst 116 117",
-    "auf Wunsch jederzeit Weiterleitung an einen Menschen im Team",
+    "keine Abfrage von E-Mail-Adressen oder Bestätigungscodes – Name, Geburtsdatum und Rückrufnummer reichen",
+    "auf Wunsch jederzeit Weiterleitung an einen Menschen im Team, auch per Taste 0",
 ];
 const SW_PX_SPECIALTIES = [
     {
         icon: "steth",
         title: "Für Arztpraxen",
         text: "Allgemeinmedizin, Innere, Kinder- und Facharztpraxen.",
-        items: ["Akutsprechstunde nach Ihren festen Slots", "Vorsorge und Check-up", "Impftermine", "Rezept- und Überweisungswünsche als Aufgabe", "Befundbesprechung (nur Termin, keine Auskunft)"],
+        items: ["Akute Beschwerden: Rückrufwunsch statt Selbstbuchung", "Vorsorge und Check-up", "Impftermine", "Rezept- und Überweisungswünsche als Aufgabe", "Befundbesprechung (nur Termin, keine Auskunft)"],
     },
     {
         icon: "tooth",
         title: "Für Zahnarztpraxen",
         text: "Einzelpraxen, Gemeinschaftspraxen und Praxen mit Prophylaxe-Team.",
-        items: ["Prophylaxe und PZR mit automatischem Recall", "Kontrolltermine", "Schmerzpatienten in reservierte Zeitfenster", "Beratung Zahnersatz und Implantate", "Kinderprophylaxe"],
+        items: ["Prophylaxe und PZR mit Recall-Liste im Dashboard", "Kontrolltermine", "Schmerzpatienten: Rückrufwunsch mit Vorrang", "Beratung Zahnersatz und Implantate", "Kinderprophylaxe"],
     },
 ];
 const SW_PX_TRUST = [
-    { icon: "server", title: "Gehostet in Frankfurt am Main", text: "Buchungsdaten, Anrufprotokolle und KI-Verarbeitung bleiben in Rechenzentren in Deutschland bzw. der EU." },
+    { icon: "server", title: "Gehostet in Frankfurt am Main", text: "Anwendung, Datenbank und KI-Verarbeitung laufen in Frankfurt. Den Telefonie-Anbieter und seinen Standort nennen wir Ihnen vor Vertragsschluss." },
     { icon: "lock", title: "AV-Vertrag mit Schweigepflicht", text: "Auftragsverarbeitung nach Art. 28 DSGVO, dazu die Verpflichtung auf Verschwiegenheit nach § 203 StGB für alle Beteiligten." },
-    { icon: "shield", title: "Datensparsam by Design", text: "Gespeichert wird, was für den Termin nötig ist. Keine Befunde, keine Diagnosen, feste Löschfristen für Anrufprotokolle." },
+    { icon: "shield", title: "Datensparsam by Design", text: "Gespeichert wird, was für den Termin nötig ist. Keine Befunde, keine Diagnosen, keine Tonaufnahmen. Aufgaben werden nach 30 Tagen gelöscht." },
     { icon: "bot", title: "Transparente KI", text: "Anrufer erfahren zu Beginn, dass sie mit einem digitalen Assistenten sprechen, und können jederzeit einen Menschen verlangen." },
 ];
 const SW_PX_PLAN = [
     "Bis zu 3 Behandlerkalender pro Standort",
     "KI-Telefonagent mit 400 Minuten pro Monat",
-    "500 SMS-Erinnerungen pro Monat",
-    "Praxis-Vorlagen und Recall für Prophylaxe und Vorsorge",
+    "500 SMS pro Monat",
+    "Praxis-Vorlagen und Recall-Liste",
     "Rezept- und Überweisungswünsche als Aufgaben",
     "AV-Vertrag mit § 203-Verpflichtung",
 ];
 const SW_PX_FAQ = [
+    { q: "Was kann CalenSync heute – und was kommt noch?", a: "Heute: Anrufe annehmen, Rückruf-, Rezept-, Überweisungs- und Absagewünsche als Aufgabe aufnehmen, Termine zur Freigabe vormerken, Notfall-Hinweis und Weiterleitung, Dashboard für Ihr Team. In Vorbereitung: SMS-Erinnerungen und automatischer Recall, Schnittstellen zu Praxisverwaltungssystemen, Benutzerkonten mit Rollen. Was davon zuerst kommt, entscheiden die Pilotpraxen mit." },
     { q: "Funktioniert das mit unserer Praxissoftware?", a: "Heute arbeitet CalenSync mit Google- und Microsoft-Kalendern und eigenem Kalender im Dashboard. Schnittstellen zu gängigen Praxisverwaltungssystemen sind in Vorbereitung – mit den Pilotpraxen legen wir fest, welche zuerst kommen." },
     { q: "Wir nutzen schon ein Online-Buchungstool. Geht das parallel?", a: "Ja. Viele Praxen nutzen CalenSync zuerst nur als Telefonassistent für die Stoßzeiten. Welche Termine der Agent selbst bucht, legen Sie pro Terminart fest." },
-    { q: "Was passiert bei einem Notfall?", a: "Der Agent bewertet keine Beschwerden. Fallen Notfall-Stichworte, verweist er sofort auf die 112 bzw. den ärztlichen Bereitschaftsdienst 116 117 und gibt den Anruf an Ihr Team weiter." },
+    { q: "Was passiert bei einem Notfall?", a: "Der Agent bewertet keine Beschwerden. Die Begrüßung nennt die 112, mit der Taste 0 kommt man sofort zum Team. Fallen Notfall-Stichworte – oder ist der Assistent unsicher –, verweist er auf die 112 bzw. den ärztlichen Bereitschaftsdienst 116 117 und gibt den Anruf weiter. Das ersetzt keine Notrufleitung und wird mit jeder Pilotpraxis an echten Anrufen geprüft." },
     { q: "Können Patienten mit einem Menschen sprechen?", a: "Jederzeit. Auf Wunsch leitet der Agent weiter oder nimmt einen Rückrufwunsch auf, der als Aufgabe im Dashboard erscheint." },
-    { q: "Wo werden die Daten verarbeitet?", a: "In Frankfurt am Main. Sie bekommen einen AV-Vertrag nach Art. 28 DSGVO mit Verschwiegenheitsverpflichtung nach § 203 StGB. Die Liste der Unterauftragsverarbeiter steht im Vertrag." },
+    { q: "Wo werden die Daten verarbeitet?", a: "Anwendung, Datenbank und KI-Verarbeitung laufen in Frankfurt am Main. Sie bekommen vorab einen AV-Vertrag nach Art. 28 DSGVO mit Verschwiegenheitsverpflichtung nach § 203 StGB und die vollständige Liste der Unterauftragsverarbeiter, einschließlich Telefonie-Anbieter und Standort." },
     { q: "Was kostet es nach der Pilotphase?", a: "Der Praxis-Plan kostet 89 € pro Standort und Monat bei jährlicher Zahlung. Pilotpraxen zahlen im ersten Jahr nach der Pilotphase die Hälfte. Kündigen können Sie zum Ende der Pilotphase ohne Kosten." },
 ];
 function SwPxCallCard() {
@@ -1104,7 +1106,7 @@ function SwPraxenPage() {
                     swH("ul", { className: "mt-6 space-y-2.5" }, SW_PX_PLAN.map((t) => swH(SwPxCheckItem, { key: t }, t))),
                     swH("div", { className: "mt-6 rounded-xl bg-indigo-50 p-4 text-sm text-indigo-950" },
                         swH("p", { className: "font-semibold" }, "Angebot f\u00FCr Pilotpraxen"),
-                        swH("p", { className: "mt-1 text-indigo-900" }, "3 Monate kostenlos, danach 50 % im ersten Jahr. Daf\u00FCr: ehrliches Feedback und ein kurzes Gespr\u00E4ch nach 4 Wochen. K\u00FCndigung zum Ende der Pilotphase ohne Kosten.")),
+                        swH("p", { className: "mt-1 text-indigo-900" }, "3 Monate kostenlos, danach 50 % im ersten Jahr. Wir starten im R\u00FCckruf-Modus und schalten das Vormerken von Terminen erst frei, wenn Sie es wollen. Daf\u00FCr: ehrliches Feedback und ein kurzes Gespr\u00E4ch nach 4 Wochen. K\u00FCndigung zum Ende der Pilotphase ohne Kosten.")),
                     swH(SwButton, { variant: "success", size: "lg", className: "mt-6 w-full", onClick: swPilot }, "Als Pilotpraxis bewerben")),
                 swH("div", { className: "grid gap-6" },
                     swH("article", { className: `${SW_PX_CARD} p-7` },

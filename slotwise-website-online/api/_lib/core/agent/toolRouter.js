@@ -71,13 +71,15 @@ class ToolRouter {
   async route(session, call) {
     const at = new Date(this.now()).toISOString();
     const praxisTool = this.praxisOnly.has(call.name) && session.industry === "praxis";
-    if (!this.allowed.has(call.name) && !praxisTool) {
+    // Pro Gespräch angebotene Tools (Modus): alles andere wird abgelehnt, auch wenn es sonst erlaubt wäre
+    const offered = !session.toolNames || session.toolNames.includes(call.name);
+    if ((!this.allowed.has(call.name) && !praxisTool) || !offered) {
       await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: `tool:${call.name}`, outcome: "refused", reason: "not in L0 allow-list", at });
       return { kind: "refuse", say: session.language === "de" ? REFUSAL_MODIFY_DE : REFUSAL_MODIFY_EN, reason: "tool_not_allowed" };
     }
     if (call.name === "send_otp") return this.sendOtp(session, String(call.arguments.phone_e164));
     if (call.name === "verify_otp") return this.verifyOtp(session, String(call.arguments.phone_e164), String(call.arguments.code));
-    if (call.name === "create_booking") {
+    if (call.name === "create_booking" && session.industry !== "praxis") { // Praxismodus: nur Vorschläge, daher ohne OTP (siehe praxis.js)
       const ok = this.checkOtpToken(session, String(call.arguments.phone_e164), String(call.arguments.otp_token));
       if (!ok) {
         await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: "tool:create_booking", outcome: "refused", reason: "otp_token invalid", at });

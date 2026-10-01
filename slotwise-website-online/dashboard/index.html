@@ -169,6 +169,14 @@
               </div>
             </fieldset>
 
+            <fieldset id="praxis-booking" hidden>
+              <legend class="mb-2 text-sm font-medium text-slate-800">Termine am Telefon</legend>
+              <div class="grid grid-cols-1 gap-2" role="radiogroup">
+                <label class="autonomy-option"><input type="radio" name="praxisBooking" value="off" class="peer sr-only" /><span class="option-body"><span class="option-title">Nur Rückrufwünsche aufnehmen</span><span class="option-text">Empfohlen zum Start: Der Assistent bucht nichts, Ihr Team ruft zurück.</span></span></label>
+                <label class="autonomy-option"><input type="radio" name="praxisBooking" value="proposal" class="peer sr-only" /><span class="option-body"><span class="option-title">Termine vormerken</span><span class="option-text">Ohne Code und ohne E-Mail. Jeder Termin ist nur ein Vorschlag, das Team gibt frei.</span></span></label>
+              </div>
+            </fieldset>
+
             <div>
               <div class="mb-2 flex items-center justify-between">
                 <label for="maxPerDay" class="text-sm font-medium text-slate-800">Maximale Termine pro Tag</label>

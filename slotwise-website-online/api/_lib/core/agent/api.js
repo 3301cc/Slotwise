@@ -50,6 +50,11 @@ module.exports = {
       await agent.activity.log({ kind: "info", text: `Eingehender Anruf von ${from ? from.replace(/(\+\d{2,3})\d+(\d{2})$/, "$1…$2") : "unbekannt"} angenommen – Assistent stellt sich vor`, channel: "phone" });
       return xml(twiml({ say: await agent.disclosure(), gather: true, actionUrl }));
     }
+    // Taste 0: sofort zum Team (Notausgang, unabhängig vom Modell)
+    if (String(p.Digits || "") === "0") {
+      const h = await agent.keyHandover({ sessionId: callSid, from });
+      return xml(h.escalationPhone ? twiml({ say: h.say, dial: h.escalationPhone }) : twiml({ say: h.say, hangup: true }));
+    }
     const r = await agent.turn({ sessionId: callSid, channel: "phone", from, utterance: String(p.SpeechResult || p.Digits || "") });
     if (r.handover && r.escalationPhone) return xml(twiml({ say: r.say, dial: r.escalationPhone }));
     if (r.done) return xml(twiml({ say: r.say, hangup: true }));
