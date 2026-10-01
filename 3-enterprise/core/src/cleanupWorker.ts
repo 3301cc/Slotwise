@@ -16,6 +16,8 @@
  *      gespeichert (Zuordnung gelöscht) – ein Abbruch setzt beim nächsten Lauf fort.
  *      Google-Ziele (target_provider google): DELETE calendars/primary/events/{id} im impersonierten Postfach
  *      (404/410 = schon weg); unbestätigte Anlagen haben ihre deterministische ID. Auch archivierte Zuordnungen.
+ *      Trägt ein Termin nicht unsere Markierung, wird er übersprungen (Alarm), nie gelöscht. Ist das Google-Konto
+ *      gelöscht (Token-Tausch invalid_grant UND Directory 404), gelten die Termine als weg → erledigt.
  *   4. Erledigt: restliche Zuordnungen weg, Zielpostfach + Delta-Link genullt, cleanup_done_at gesetzt.
  *
  * Bewusst KEINE "Inhaber aktiv"-Prüfung (die verhindert Schreiben; hier wird nur gelöscht). Vor jedem Aufruf wird
@@ -29,7 +31,8 @@
 import { classifyGraphError, type GraphFailure } from "./errorHandler.js";
 import type { GraphTokenSource } from "./appToken.js";
 import type { GoogleTokenSource } from "./googleAuth.js";
-import { createGoogleCaller, GoogleCalendarWriter } from "./googleCalendar.js";
+import { createGoogleCaller, GoogleCalendarWriter, googleAccountDeleted } from "./googleCalendar.js";
+import { ForeignEventError, GoogleAuthError } from "./syncErrors.js";
 import type { DelayedJobQueue, Job } from "./retryQueue.js";
 import { googleWorkspaceFor, recheckTargetForCleanup, type StoredTarget, type SyncAllowlist } from "./syncTargets.js";
 import { classifyProviderError, createGraphCaller, GraphCalendarWriter, GraphCallError, RunAborted, sourceRef, type SyncRepo, type TargetWriter } from "./syncWorker.js";
@@ -151,6 +154,8 @@ export class TargetCleanupWorker {
     }
 
     let deleted = 0;
+    let googleCall: ReturnType<typeof createGoogleCaller> | null = null;
+    const workspace = googleWorkspaceFor(this.d.allowlist, ctx.target);
     try {
       if (ctx.target.kind !== "account" && ctx.target.kind !== "team") {
         // Buchungsseite / Altbestand: es gibt nichts beim Provider, nur Zuordnungen
@@ -160,7 +165,6 @@ export class TargetCleanupWorker {
         return "cleaned";
       }
       const allowed = recheckTargetForCleanup(this.d.allowlist, ctx.target);
-      const workspace = googleWorkspaceFor(this.d.allowlist, ctx.target);
       if (allowed.ok && ctx.target.provider === "google" && (!workspace || !this.d.googleTokens)) {
         const reason = "cleanup_google_not_configured";
         await queue.fail(job.id, workerId, reason);
@@ -185,15 +189,22 @@ export class TargetCleanupWorker {
       };
       const timeout = this.d.requestTimeoutMs ?? 20_000;
       // Nur DELETE (und bei Graph das Wiederfinden per GET) – nie POST/PATCH
-      const writer: TargetWriter = workspace
-        ? new GoogleCalendarWriter(createGoogleCaller(this.d.googleTokens as GoogleTokenSource, this.d.fetchFn, workspace.serviceAccountEmail, timeout, checkpoint), ctx.target.mailbox ?? "")
+      if (workspace) googleCall = createGoogleCaller(this.d.googleTokens as GoogleTokenSource, this.d.fetchFn, workspace.serviceAccountEmail, timeout, checkpoint);
+      const writer: TargetWriter = googleCall
+        ? new GoogleCalendarWriter(googleCall, ctx.target.mailbox ?? "")
         : new GraphCalendarWriter(createGraphCaller(this.d.tokens, this.d.fetchFn, tenantId, timeout, checkpoint), ctx.target.mailbox ?? "", ctx.target.entraTenantId);
       const deadline = this.now().getTime() + (this.d.runBudgetMs ?? 8 * 60_000);
 
       for (const row of await repo.listMappings(pipelineId)) {
         if (this.now().getTime() > deadline) throw new BudgetExceeded();
         const id = row.targetEventId ?? (await writer.findByRef(sourceRef(pipelineId, row.sourceEventId)));
-        if (id) await writer.delete(id); // 404 = schon weg
+        try {
+          if (id) await writer.delete(id); // 404 = schon weg
+        } catch (err) {
+          if (!(err instanceof ForeignEventError)) throw err;
+          // fremder Termin unter dieser ID: nie löschen, Zuordnung vergessen, Admin informieren
+          await this.d.alert({ kind: "target_cleanup_failed", tenantId, pipelineId, category: "foreign_event", reason: "cleanup_foreign_event" });
+        }
         await repo.deleteMapping(pipelineId, row.sourceEventId);
         deleted += 1;
       }
@@ -205,6 +216,29 @@ export class TargetCleanupWorker {
       if (err instanceof CleanupStopped) {
         await queue.complete(job.id, workerId);
         return "dropped";
+      }
+      // Google-Konto gelöscht: Token-Tausch meldet invalid_grant; nur wenn die Directory das Konto NICHT mehr kennt (404),
+      // gibt es den Kalender samt unseren Terminen nicht mehr → erledigt. Gesperrt/vorhanden → normale Fehlerbehandlung.
+      if (err instanceof GoogleAuthError && err.stage === "oauth" && err.code === "invalid_grant" && googleCall && workspace) {
+        let gone = false;
+        try {
+          gone = await googleAccountDeleted(googleCall, ctx.target.mailbox ?? "", workspace.directoryAdminSubject ?? null);
+        } catch (e) {
+          if (e instanceof CleanupStopped) {
+            await queue.complete(job.id, workerId);
+            return "dropped";
+          }
+          if (e instanceof ShuttingDown) {
+            await this.reschedule(job, 5_000, payload, "worker_shutdown");
+            return "rescheduled";
+          }
+        }
+        if (gone) {
+          await repo.completeCleanup(tenantId, pipelineId);
+          await queue.complete(job.id, workerId);
+          this.d.log?.({ level: "info", msg: "target_cleanup_done", pipelineId, target: ctx.target.kind, provider: "google", deleted, reason: "google_account_deleted" });
+          return "cleaned";
+        }
       }
       if (err instanceof ShuttingDown || err instanceof BudgetExceeded) {
         // Fortschritt ist gespeichert (Zuordnungen je Termin gelöscht) → bald fortsetzen, kein Fehlversuch

@@ -586,6 +586,12 @@ Hashes aus Pipeline + Quelltermin) und `extendedProperties.private.calensyncRef`
 Absturz nach dem Einfügen → nächster Lauf PATCHt dieselbe ID; `409` beim Einfügen (ID existiert, auch gelöscht) →
 PATCH mit `status: "confirmed"`; `404`/`410` beim Löschen = erledigt. Die Bereinigung löscht alle Zieltermine
 (auch archivierte und unbestätigte Anlagen) mit genau diesen IDs, nur per DELETE.
+Vor jedem PATCH/DELETE einer ID, die nicht im selben Lauf angelegt wurde (gespeicherte ID, `409`), liest CalenSync
+den Termin: er muss `calensyncRef` = erwarteter Hash tragen, sonst wird er **nie** geändert oder gelöscht
+(Abgleich: `event_rejected` + Alarm `foreign_event`; Bereinigung: übersprungen + Alarm). Ein PATCH setzt die jeweils
+andere Zeitart ausdrücklich auf `null` (Google führt `start`/`end` beim PATCH zusammen; sonst `400` beim Wechsel
+ganztägig ↔ mit Uhrzeit). Bereinigung bei gelöschtem Google-Konto: Token-Tausch `invalid_grant` **und** Directory
+`404` → Termine gelten als weg, erledigt; gesperrtes Konto bleibt ein Fehler (`blocked_scope` + Alarm).
 
 Sicherheitsregeln wie bei Microsoft: Allowlist in API **und** Worker (Workspace + Domain), Prüfung „dieselbe Person“
 bei der Anlage und spätestens alle 24 h im Worker, Pipeline-Status vor **jedem** Google-Aufruf (auch vor jedem Schritt

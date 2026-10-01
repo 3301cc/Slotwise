@@ -30,3 +30,14 @@ export class GoogleAuthError extends GoogleCallError {
     this.message = `google_${stage} HTTP ${status}${code ? ` ${code}` : ""}`;
   }
 }
+
+/**
+ * Der Termin unter dieser ID trägt NICHT unsere Markierung (extendedProperties.private.calensyncRef) – fremder
+ * Termin, nie ändern oder löschen. Status 400: im Abgleich wie ein einzeln abgelehnter Termin (event_rejected).
+ */
+export class ForeignEventError extends GoogleCallError {
+  constructor() {
+    super(400, JSON.stringify({ error: { errors: [{ reason: "calensyncRefMismatch" }] } }), null);
+    this.message = "google foreign_event";
+  }
+}

@@ -39,7 +39,7 @@
  */
 import { createHash } from "node:crypto";
 import { classifyGoogleError, classifyGraphError, type ErrorDecision, type FailureCategory, type GraphFailure } from "./errorHandler.js";
-import { GoogleAuthError, GoogleCallError, GraphCallError, RunAborted } from "./syncErrors.js";
+import { ForeignEventError, GoogleAuthError, GoogleCallError, GraphCallError, RunAborted } from "./syncErrors.js";
 import type { GraphTokenSource } from "./appToken.js";
 import type { DelayedJobQueue, Job } from "./retryQueue.js";
 import { fullModeAllowed, googleWorkspaceFor, recheckStoredTarget, type ResolvedTarget, type StoredTarget, type SyncAllowlist } from "./syncTargets.js";
@@ -125,7 +125,7 @@ const TERMINAL_STATUS: Record<string, "blocked_scope" | "config_error" | "error"
 export interface SyncAlert {
   tenantId: string;
   pipelineId: string;
-  category: FailureCategory | "target_not_allowed" | "identity_unverified";
+  category: FailureCategory | "target_not_allowed" | "identity_unverified" | "foreign_event";
   reason: string;
 }
 
@@ -178,7 +178,7 @@ export type SyncOutcome = "synced" | "dropped" | "stopped" | "busy" | "reschedul
 
 // GraphCallError (unerwarteter Provider-Status; body nur klassifiziert, nie gespeichert/geloggt) und RunAborted
 // (Checkpoint-Abbruch) liegen in syncErrors.ts und werden hier re-exportiert.
-export { GraphCallError, GoogleCallError, GoogleAuthError, RunAborted } from "./syncErrors.js";
+export { GraphCallError, GoogleCallError, GoogleAuthError, ForeignEventError, RunAborted } from "./syncErrors.js";
 /** Pipeline nicht mehr aktiv / Ziel geändert – sofort aufhören, nichts mehr aufrufen */
 class PipelineStopped extends RunAborted {}
 class RunBudgetExceeded extends RunAborted {}
@@ -408,6 +408,8 @@ export interface SyncStats {
   pruned: number;
   archived: number;
   resets: number;
+  /** Google: Termin unter unserer bzw. gespeicherter ID trägt nicht unsere Markierung – nie angefasst */
+  foreign: number;
 }
 
 interface Run {
@@ -540,13 +542,17 @@ export class SyncWorker {
       writer: target.kind === "booking" ? new BookingWriter()
         : workspace ? new GoogleCalendarWriter(this.googleCaller(job.tenantId, pipelineId, ctx, target, workspace.serviceAccountEmail), target.mailbox ?? "")
         : new GraphCalendarWriter(this.caller(job.tenantId, pipelineId, ctx, target), target.mailbox ?? "", target.entraTenantId),
-      stats: { pages: 0, created: 0, updated: 0, deleted: 0, unchanged: 0, loopSkipped: 0, rejected: 0, pruned: 0, archived: 0, resets: 0 },
+      stats: { pages: 0, created: 0, updated: 0, deleted: 0, unchanged: 0, loopSkipped: 0, rejected: 0, pruned: 0, archived: 0, resets: 0, foreign: 0 },
       deadline: this.now().getTime() + this.o.runBudgetMs,
     };
     try {
       if (target.kind === "account") await this.ensureIdentity(run);
       await this.sync(run, payload.full);
       await queue.complete(job.id, workerId);
+      if (run.stats.foreign > 0) {
+        // Fremder Termin unter einer CalenSync-ID: nichts geändert/gelöscht, aber ein Admin soll es sich ansehen
+        await this.d.alert({ tenantId: job.tenantId, pipelineId, category: "foreign_event", reason: `foreign_event:${run.stats.foreign}` });
+      }
       this.d.log?.({ level: "info", msg: "sync_done", pipelineId, target: target.kind, provider: target.provider ?? "microsoft", full: payload.full, ...run.stats });
       return "synced";
     } catch (err) {
@@ -775,7 +781,14 @@ export class SyncWorker {
   private async removeBlock(run: Run, sourceEventId: string, row: MapRow): Promise<void> {
     if (run.writer.kind !== "booking") {
       const id = row.targetEventId ?? (await run.writer.findByRef(sourceRef(run.pipelineId, sourceEventId)));
-      if (id) await run.writer.delete(id);
+      try {
+        if (id) await run.writer.delete(id);
+      } catch (err) {
+        if (!(err instanceof ForeignEventError)) throw err;
+        // nie einen fremden Termin löschen; Zuordnung vergessen (event_rejected + Alarm am Ende des Laufs)
+        run.stats.rejected += 1;
+        run.stats.foreign += 1;
+      }
     }
     await this.d.repo.deleteMapping(run.pipelineId, sourceEventId);
     run.stats.deleted += 1;
@@ -819,8 +832,10 @@ export class SyncWorker {
       run.stats.created += 1;
     } catch (err) {
       // Ein einzelner vom Ziel abgelehnter Termin (400/422) blockiert nicht die ganze Pipeline
-      if (err instanceof GraphCallError && (err.status === 400 || err.status === 422)) {
+      // (nicht die Token-Kette: deren 400 – z. B. invalid_grant – betrifft die ganze Pipeline, nicht einen Termin)
+      if (err instanceof GraphCallError && !(err instanceof GoogleAuthError) && (err.status === 400 || err.status === 422)) {
         run.stats.rejected += 1;
+        if (err instanceof ForeignEventError) run.stats.foreign += 1;
         // abgelehnte Anlage: nichts angelegt → Markierung entfernen (nächste Änderung versucht es erneut)
         if (creating) await repo.deleteMapping(run.pipelineId, sourceEventId);
         return;

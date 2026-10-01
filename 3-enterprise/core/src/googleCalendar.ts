@@ -19,7 +19,7 @@
  * zu den Admin-Feldern und ist in der öffentlichen Domänenansicht nicht zuverlässig enthalten. Minimal ist deshalb
  * ein eigener Workspace-Nutzer mit einer benutzerdefinierten Admin-Rolle, die NUR "Nutzer → Lesen" erlaubt.
  */
-import { GoogleCallError, RunAborted } from "./syncErrors.js";
+import { ForeignEventError, GoogleCallError, RunAborted } from "./syncErrors.js";
 import { SCOPE_CALENDAR_EVENTS, SCOPE_DIRECTORY_USER_READONLY, type GoogleTokenSource } from "./googleAuth.js";
 import { parseGoogleError } from "./errorHandler.js";
 import type { IdentityVerdict } from "./identity.js";
@@ -84,11 +84,32 @@ export function googleEventIdFromRef(ref: string): string | null {
   return out; // 160 Bit = genau 32 Zeichen, kein Rest
 }
 
+/** Umkehrung von googleEventIdFromRef: erwarteter calensyncRef einer ID; null = keine von CalenSync vergebene ID */
+export function refFromGoogleEventId(id: string): string | null {
+  if (!/^[0-9a-v]{32}$/.test(id)) return null;
+  let hex = "";
+  let buf = 0;
+  let bits = 0;
+  for (const ch of id) {
+    buf = (buf << 5) | BASE32HEX.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      hex += ((buf >>> (bits - 8)) & 255).toString(16).padStart(2, "0");
+      bits -= 8;
+    }
+    buf &= (1 << bits) - 1;
+  }
+  return hex;
+}
+
 /**
  * Graph-förmiger Zielblock (eventToBlock) → Google-Event. Whitelist: nur Zeit, summary, transparency, location,
  * reminders. Teilblöcke (Umschreiben archivierter Termine ohne Zeiten) ergeben einen Teil-PATCH.
+ * patch = true: Google führt verschachtelte Objekte bei PATCH zusammen – die jeweils andere Zeitart wird deshalb
+ * ausdrücklich mit null gelöscht (sonst stünden nach einem Wechsel ganztägig ↔ mit Uhrzeit date UND dateTime im
+ * Termin, und Google lehnte ihn mit 400 ab).
  */
-export function toGoogleEvent(body: Record<string, unknown>): Record<string, unknown> {
+export function toGoogleEvent(body: Record<string, unknown>, patch = false): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (typeof body.subject === "string") out.summary = body.subject;
   // Ziel ist immer "belegt" (busy und oof); frei/mit Vorbehalt kommen gar nicht erst hier an
@@ -98,23 +119,49 @@ export function toGoogleEvent(body: Record<string, unknown>): Record<string, unk
   const s = (body.start as { dateTime?: unknown } | undefined)?.dateTime;
   const e = (body.end as { dateTime?: unknown } | undefined)?.dateTime;
   if (typeof s === "string" && typeof e === "string") {
+    const clear = (o: Record<string, unknown>, keys: string[]) => (patch ? { ...o, ...Object.fromEntries(keys.map((k) => [k, null])) } : o);
     if (body.isAllDay === true) {
-      out.start = { date: s.slice(0, 10) };
-      out.end = { date: e.slice(0, 10) };
+      out.start = clear({ date: s.slice(0, 10) }, ["dateTime", "timeZone"]);
+      out.end = clear({ date: e.slice(0, 10) }, ["dateTime", "timeZone"]);
     } else {
-      out.start = { dateTime: `${s}Z`, timeZone: "UTC" };
-      out.end = { dateTime: `${e}Z`, timeZone: "UTC" };
+      out.start = clear({ dateTime: `${s}Z`, timeZone: "UTC" }, ["date"]);
+      out.end = clear({ dateTime: `${e}Z`, timeZone: "UTC" }, ["date"]);
     }
   }
   if (body.isReminderOn === false) out.reminders = { useDefault: false, overrides: [] };
   return out;
 }
 
-/** Schreibt in calendars/primary/events des impersonierten Postfachs – Postfach kommt nur aus dem geprüften Ziel */
+/**
+ * Schreibt in calendars/primary/events des impersonierten Postfachs – Postfach kommt nur aus dem geprüften Ziel.
+ * Verteidigung in der Tiefe: Vor PATCH/DELETE einer ID, die NICHT in diesem Lauf von uns angelegt wurde (gespeicherte
+ * ID, 409 beim Einfügen), wird der Termin gelesen; er muss extendedProperties.private.calensyncRef = erwarteter Hash
+ * tragen (aus der ID ableitbar). Sonst ForeignEventError – ein fremder Termin wird nie geändert oder gelöscht.
+ */
 export class GoogleCalendarWriter implements TargetWriter {
   readonly kind = "google" as const;
   private readonly base = `${GOOGLE_CALENDAR_BASE}/calendars/primary/events`;
+  /** in diesem Lauf von uns angelegt bzw. schon geprüft → keine erneute Prüfung nötig */
+  private readonly ours = new Set<string>();
   constructor(private readonly call: GoogleCaller, private readonly mailbox: string) {}
+
+  /** missing = existiert nicht; foreign = nicht unsere Markierung; ours (+ cancelled = im Ziel gelöscht) */
+  private async ownership(id: string): Promise<"missing" | "foreign" | "ours" | "ours_cancelled"> {
+    const ref = refFromGoogleEventId(id);
+    if (!ref) return "foreign"; // keine von CalenSync vergebene ID: nicht einmal lesen
+    const r = await this.req("GET", `${this.base}/${encodeURIComponent(id)}?fields=status,extendedProperties`);
+    if (r.status === 404 || r.status === 410) return "missing";
+    if (r.status !== 200) throw new GoogleCallError(r.status, r.text, r.retryAfter);
+    let ev: { status?: unknown; extendedProperties?: { private?: Record<string, unknown> } };
+    try {
+      ev = JSON.parse(r.text) as typeof ev;
+    } catch {
+      throw new GoogleCallError(502, "", null);
+    }
+    if (ev.extendedProperties?.private?.[GOOGLE_REF_PROPERTY] !== ref) return "foreign";
+    this.ours.add(id);
+    return ev.status === "cancelled" ? "ours_cancelled" : "ours";
+  }
 
   private req(method: string, url: string, body?: Record<string, unknown>) {
     return this.call(method, url, body, this.mailbox, SCOPE_CALENDAR_EVENTS);
@@ -129,16 +176,27 @@ export class GoogleCalendarWriter implements TargetWriter {
     if (!id) throw new GoogleCallError(400, "", null);
     const event = { ...toGoogleEvent(block.body), extendedProperties: { private: { [GOOGLE_REF_PROPERTY]: ref } } };
     const r = await this.req("POST", `${this.base}?sendUpdates=none`, { id, ...event });
-    if (r.status === 200 || r.status === 201) return id;
+    if (r.status === 200 || r.status === 201) {
+      this.ours.add(id);
+      return id;
+    }
     if (r.status !== 409) throw new GoogleCallError(r.status, r.text, r.retryAfter);
-    // ID existiert schon (Absturz nach dem Einfügen, oder früher gelöscht): vollständig überschreiben + bestätigen
-    const p = await this.req("PATCH", this.url(id), { ...event, status: "confirmed" });
+    // ID existiert schon (Absturz nach dem Einfügen, oder früher gelöscht) – nur wenn es UNSER Termin ist
+    const own = await this.ownership(id);
+    if (own === "foreign") throw new ForeignEventError();
+    if (own === "missing") throw new GoogleCallError(400, "", null); // 409 ohne Termin: widersprüchlich, nicht anfassen
+    const p = await this.req("PATCH", this.url(id), { ...toGoogleEvent(block.body, true), extendedProperties: event.extendedProperties, status: "confirmed" });
     if (p.status !== 200) throw new GoogleCallError(p.status, p.text, p.retryAfter);
     return id;
   }
 
   async update(targetEventId: string, block: TargetBlock): Promise<"ok" | "gone"> {
-    const r = await this.req("PATCH", this.url(targetEventId), toGoogleEvent(block.body));
+    if (!this.ours.has(targetEventId)) {
+      const own = await this.ownership(targetEventId);
+      if (own === "foreign") throw new ForeignEventError();
+      if (own !== "ours") return "gone"; // fehlt oder im Ziel gelöscht → neu anlegen bzw. nicht wiederbeleben
+    }
+    const r = await this.req("PATCH", this.url(targetEventId), toGoogleEvent(block.body, true));
     if (r.status === 404 || r.status === 410) return "gone";
     if (r.status !== 200) throw new GoogleCallError(r.status, r.text, r.retryAfter);
     // Im Ziel gelöscht (Google behält den Termin als "cancelled") → wie 404: neu anlegen bzw. nicht wiederbeleben
@@ -149,11 +207,16 @@ export class GoogleCalendarWriter implements TargetWriter {
   }
 
   async delete(targetEventId: string): Promise<void> {
+    if (!this.ours.has(targetEventId)) {
+      const own = await this.ownership(targetEventId);
+      if (own === "foreign") throw new ForeignEventError();
+      if (own !== "ours") return; // fehlt oder schon gelöscht = erledigt
+    }
     const r = await this.req("DELETE", this.url(targetEventId));
     if (r.status !== 204 && r.status !== 200 && r.status !== 404 && r.status !== 410) throw new GoogleCallError(r.status, r.text, r.retryAfter);
   }
 
-  /** Deterministische ID – kein Aufruf nötig; existiert der Termin nicht, liefern PATCH/DELETE 404 */
+  /** Deterministische ID – kein Aufruf nötig; update/delete prüfen vor dem Schreiben Existenz und Markierung */
   async findByRef(ref: string): Promise<string | null> {
     return googleEventIdFromRef(ref);
   }
@@ -223,4 +286,16 @@ export async function verifyGoogleIdentity(graph: GraphCaller, google: GoogleCal
   }
   if (typeof a !== "string" || a.trim() === "") return { kind: "rejected", why: "attribute_missing" };
   return a === values[0] ? { kind: "verified", attribute: "employeeId" } : { kind: "rejected", why: "different_person" };
+}
+
+/**
+ * Nur für die BEREINIGUNG: Ist das Google-Konto gelöscht? (Token-Tausch meldete invalid_grant.) Directory-Abfrage
+ * mit dem Directory-Subjekt (nur Lesen). true nur bei 404 – dann existiert der Kalender samt unseren Terminen nicht
+ * mehr. Gesperrt, vorhanden, nicht prüfbar → false (bisherige Fehlerbehandlung).
+ */
+export async function googleAccountDeleted(google: GoogleCaller, mailbox: string, directoryAdminSubject: string | null): Promise<boolean> {
+  if (!directoryAdminSubject) return false;
+  const url = `${GOOGLE_DIRECTORY_BASE}/users/${encodeURIComponent(mailbox)}?projection=basic&viewType=admin_view&fields=primaryEmail,suspended`;
+  const r = await safeCall(() => google("GET", url, undefined, directoryAdminSubject, SCOPE_DIRECTORY_USER_READONLY));
+  return r.status === 404;
 }

@@ -39,6 +39,24 @@ const cal = (m: string) => (r: { method: string; url: string }) => r.method === 
 interface GReq { method: string; url: string; headers: Record<string, string>; body: string | undefined }
 type GInjected = { match: (r: GReq) => boolean; status: number; body?: unknown; times?: number; retryAfter?: string };
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+/** Google-PATCH-Semantik: verschachtelte Objekte werden zusammengeführt, null löscht ein Feld, Arrays ersetzen */
+function googleMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete out[k];
+    else if (isObj(v) && isObj(out[k])) out[k] = googleMerge(out[k] as Record<string, unknown>, v);
+    else out[k] = isObj(v) ? googleMerge({}, v) : v;
+  }
+  return out;
+}
+/** wie Google: start/end je genau eines von date/dateTime, beide gleicher Art */
+function validTimes(e: Record<string, unknown>): boolean {
+  const kind = (t: unknown) => (isObj(t) ? (("date" in t ? 1 : 0) + ("dateTime" in t ? 2 : 0)) : -1);
+  const a = kind(e.start), b = kind(e.end);
+  if (a === -1 && b === -1) return true;
+  return (a === 1 || a === 2) && a === b;
+}
 
 class FakeGoogle {
   requests: GReq[] = [];
@@ -119,14 +137,20 @@ class FakeGoogle {
       const body = JSON.parse(init.body ?? "{}") as Record<string, unknown>;
       if (typeof body.id !== "string" || !/^[a-v0-9]{5,1024}$/.test(body.id)) return this.res(400, { error: { code: 400, errors: [{ reason: "invalid" }] } });
       if (cal.has(body.id)) return this.res(409, { error: { code: 409, errors: [{ reason: "duplicate" }], message: "The requested identifier already exists." } });
-      cal.set(body.id, { ...body, status: "confirmed" });
+      const stored = googleMerge({}, body);
+      if (!validTimes(stored)) return this.res(400, { error: { code: 400, errors: [{ reason: "invalid" }] } });
+      cal.set(body.id, { ...stored, status: "confirmed" });
       return this.res(200, cal.get(body.id));
     }
     if (!id) return this.res(405, {});
     const e = cal.get(id);
+    if (init.method === "GET") {
+      return e ? this.res(200, e) : this.res(404, { error: { code: 404, errors: [{ reason: "notFound" }] } });
+    }
     if (init.method === "PATCH") {
       if (!e) return this.res(404, { error: { code: 404, errors: [{ reason: "notFound" }] } });
-      const next = { ...e, ...(JSON.parse(init.body ?? "{}") as Record<string, unknown>) };
+      const next = googleMerge(e, JSON.parse(init.body ?? "{}") as Record<string, unknown>);
+      if (!validTimes(next)) return this.res(400, { error: { code: 400, errors: [{ reason: "invalid" }], message: "Invalid start time." } });
       cal.set(id, next);
       return this.res(200, next);
     }
@@ -383,8 +407,9 @@ test("Sync Google busy: Prüfung dieselbe Person (Directory als Admin-Subjekt), 
   s.google.requests = [];
   assert.equal((await s.runOnce(false)).synced, 1);
   assert.deepEqual(s.google.api().map((w) => `${w.method} ${w.url.slice(EVENTS.length).split("?")[0] || "/"}`),
-    [`PATCH /${a.id}`, `DELETE /${googleEventIdFromRef(sourceRef("p1", "B"))}`, `DELETE /${googleEventIdFromRef(sourceRef("p1", "E"))}`, "POST /"],
-    "Identität nicht erneut geprüft (< 24 h), Token aus dem Cache");
+    [`GET /${a.id}`, `PATCH /${a.id}`, `GET /${googleEventIdFromRef(sourceRef("p1", "B"))}`, `DELETE /${googleEventIdFromRef(sourceRef("p1", "B"))}`,
+      `GET /${googleEventIdFromRef(sourceRef("p1", "E"))}`, `DELETE /${googleEventIdFromRef(sourceRef("p1", "E"))}`, "POST /"],
+    "Identität nicht erneut geprüft (< 24 h), Token aus dem Cache; vor jedem PATCH/DELETE einer gespeicherten ID Prüf-GET (Markierung)");
   assert.equal(s.google.requests.filter((r) => !r.url.startsWith(GOOGLE_CALENDAR_BASE)).length, 0, "kein neuer Token-Abruf");
   assert.deepEqual(s.google.calendars.get(BOX)!.get(a.id)!.start, { dateTime: "2026-10-02T11:00:00Z", timeZone: "UTC" });
   assert.equal(s.google.live(BOX).length, 2);
@@ -438,12 +463,12 @@ test("Idempotent: Absturz nach dem Einfügen → nächster Lauf PATCHt dieselbe 
   assert.equal(JSON.parse(s.google.writes()[1].body!).status, "confirmed");
   assert.equal(s.google.live(BOX).length, 1, "wiederhergestellt, kein Duplikat");
 
-  // Im Ziel vom Nutzer gelöscht (cancelled) → PATCH sieht cancelled → wie 404: neu anlegen (POST 409 → PATCH)
+  // Im Ziel vom Nutzer gelöscht (cancelled) → Prüf-GET sieht cancelled → wie 404: neu anlegen (POST 409 → PATCH)
   s.google.calendars.get(BOX)!.get(id)!.status = "cancelled";
   s.graph.rounds.push([[ev("A", { changeKey: "4", at: "2026-10-02T09:30:00.0000000" })]]);
   s.google.requests = [];
   await s.runOnce(false);
-  assert.deepEqual(s.google.writes().map((w) => w.method), ["PATCH", "POST", "PATCH"]);
+  assert.deepEqual(s.google.writes().map((w) => w.method), ["POST", "PATCH"]);
   assert.equal(s.google.live(BOX).length, 1);
 });
 
@@ -669,7 +694,8 @@ test("Bereinigung Google: löscht jeden angelegten Termin inkl. archivierter und
   const rows = s.repo.maps.get("p1")!;
   rows.get("A")!.archived = true; // aus dem Fenster gefallen – Zieltermin steht noch
   rows.set("U", { sourceEventId: "U", targetEventId: null, changeKey: null, startAt: NOW, endAt: NOW }); // Anlage begonnen
-  s.google.calendars.get(BOX)!.set(googleEventIdFromRef(sourceRef("p1", "U"))!, { status: "confirmed" }); // … und bei Google angekommen
+  s.google.calendars.get(BOX)!.set(googleEventIdFromRef(sourceRef("p1", "U"))!,
+    { status: "confirmed", extendedProperties: { private: { [GOOGLE_REF_PROPERTY]: sourceRef("p1", "U") } } }); // … und bei Google angekommen
   s.google.calendars.get(BOX)!.get(googleEventIdFromRef(sourceRef("p1", "C"))!)!.status = "cancelled"; // vom Nutzer gelöscht → 410
   rows.set("V", { sourceEventId: "V", targetEventId: null, changeKey: null, startAt: NOW, endAt: NOW }); // nie angekommen → 404
   s.repo.revoke("p1");
@@ -678,8 +704,10 @@ test("Bereinigung Google: löscht jeden angelegten Termin inkl. archivierter und
   assert.equal((await s.cleanup()).cleaned, 1, JSON.stringify(s.cleanupAlerts));
   assert.equal(s.google.live(BOX).length, 0, "nichts mehr von CalenSync im Google-Kalender");
   const api = s.google.api();
-  assert.ok(api.every((r) => r.method === "DELETE"), "nur DELETE");
-  assert.equal(api.length, 5);
+  assert.ok(api.every((r) => r.method === "DELETE" || r.method === "GET"), "nur DELETE (und Prüf-GET)");
+  // A (archiviert), B, U (unbestätigt, angekommen) gelöscht; C schon gelöscht, V nie angekommen → nur GET
+  assert.equal(api.filter((r) => r.method === "DELETE").length, 3);
+  assert.equal(api.filter((r) => r.method === "GET").length, 5);
   assert.ok(api.every((r) => s.google.access.get(r.headers.Authorization.slice(7))!.sub === BOX));
   const p = s.repo.pipelines.get("p1")!;
   assert.deepEqual([p.cleanupDoneAt?.toISOString(), p.target.mailbox, p.target.provider, s.repo.maps.has("p1")], [NOW.toISOString(), null, "google", false]);
@@ -711,4 +739,111 @@ test("Bereinigung Google: löscht jeden angelegten Termin inkl. archivierter und
   u.due();
   assert.equal((await u.cleaner.tick(10)).cleaned, 1);
   assert.equal(u.google.live(BOX).length, 0);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Review 2: Ganztägig ↔ mit Uhrzeit, gelöschtes Google-Konto in der Bereinigung, fremde Termine
+// ---------------------------------------------------------------------------------------------------
+test("Review2 #1: Wechsel mit Uhrzeit ↔ ganztägig – PATCH leert die jeweils andere Zeitart (Google führt verschachtelte Objekte zusammen)", async () => {
+  const s = setup();
+  const id = googleEventIdFromRef(sourceRef("p1", "A"))!;
+  s.graph.rounds.push([[ev("A")]]);
+  await s.runOnce(true);
+  s.graph.rounds.push([[ev("A", { changeKey: "2", isAllDay: true, at: "2026-10-05T00:00:00.0000000", until: "2026-10-06T00:00:00.0000000" })]]);
+  await s.runOnce(false);
+  const g = () => s.google.calendars.get(BOX)!.get(id)!;
+  assert.equal(s.repo.pipelines.get("p1")!.lastSyncError, null, "kein event_rejected");
+  assert.deepEqual([g().start, g().end], [{ date: "2026-10-05" }, { date: "2026-10-06" }]);
+  s.graph.rounds.push([[ev("A", { changeKey: "3", at: "2026-10-07T08:00:00.0000000", until: "2026-10-07T09:00:00.0000000" })]]);
+  await s.runOnce(false);
+  assert.equal(s.repo.pipelines.get("p1")!.lastSyncError, null);
+  assert.deepEqual([g().start, g().end], [{ dateTime: "2026-10-07T08:00:00Z", timeZone: "UTC" }, { dateTime: "2026-10-07T09:00:00Z", timeZone: "UTC" }]);
+  // 409-Pfad: gelöschter Termin mit Uhrzeit wird als ganztägiger wiederbelebt
+  s.graph.rounds.push([[ev("A", { showAs: "free", changeKey: "4" })]]);
+  await s.runOnce(false);
+  s.graph.rounds.push([[ev("A", { changeKey: "5", isAllDay: true, at: "2026-10-08T00:00:00.0000000", until: "2026-10-09T00:00:00.0000000" })]]);
+  s.google.requests = [];
+  await s.runOnce(false);
+  assert.deepEqual(s.google.writes().map((w) => w.method), ["POST", "PATCH"]);
+  assert.equal(s.repo.pipelines.get("p1")!.lastSyncError, null);
+  assert.deepEqual([g().status, g().start, g().end], ["confirmed", { date: "2026-10-08" }, { date: "2026-10-09" }]);
+});
+
+test("Review2 #2: Bereinigung – Google-Konto gelöscht (invalid_grant, Directory 404) → Termine gelten als weg, erledigt; gesperrt → Fehler wie bisher", async () => {
+  const s = setup();
+  s.graph.rounds.push([[ev("A"), ev("B")]]);
+  await s.runOnce(true);
+  s.repo.revoke("p1");
+  s.google.users.delete(BOX); // Konto gelöscht → OAuth invalid_grant, Directory 404
+  for (const [k, v] of s.google.access) if (v.sub === BOX) s.google.access.delete(k); // Tokens des Kontos ungültig
+  s.gTokens.invalidateDelegatedToken(SA, BOX, SCOPE_CALENDAR_EVENTS);
+  s.google.requests = [];
+  assert.equal((await s.cleanup()).cleaned, 1, JSON.stringify(s.cleanupAlerts));
+  assert.deepEqual(s.cleanupAlerts, []);
+  const p = s.repo.pipelines.get("p1")!;
+  assert.deepEqual([p.cleanupDoneAt?.toISOString(), p.target.mailbox], [NOW.toISOString(), null]);
+  const dir = s.google.requests.filter((r) => r.url.startsWith(GOOGLE_DIRECTORY_BASE));
+  assert.equal(dir.length, 1);
+  assert.deepEqual(s.google.access.get(dir[0].headers.Authorization.slice(7)), { sub: ADMIN, scope: SCOPE_DIRECTORY_USER_READONLY, sa: SA });
+
+  const t = setup();
+  t.graph.rounds.push([[ev("A")]]);
+  await t.runOnce(true);
+  t.repo.revoke("p1");
+  t.google.users.get(BOX)!.suspended = true; // gesperrt: Termine existieren weiter → nicht als erledigt werten
+  t.gTokens.invalidateDelegatedToken(SA, BOX, SCOPE_CALENDAR_EVENTS);
+  assert.equal((await t.cleanup()).failed, 1);
+  assert.deepEqual([t.cleanupAlerts[0]?.category, t.repo.pipelines.get("p1")!.cleanupDoneAt, t.repo.maps.get("p1")!.size], ["blocked_scope", null, 1]);
+  // Abgleich unverändert: gelöschtes Konto im Sync → blocked_scope wie bisher (keine Directory-Abfrage als Ausweg)
+  const u = setup({ pipeline: { identityVerifiedAt: NOW, identityAttribute: "employeeId" } });
+  u.google.users.delete(BOX);
+  u.graph.rounds.push([[ev("A")]]);
+  assert.equal((await u.runOnce(true)).failed, 1);
+  assert.equal(u.repo.pipelines.get("p1")!.status, "blocked_scope");
+});
+
+test("Review2 #3: fremder Termin unter unserer ID / gespeicherter fremder ID – nie PATCH oder DELETE; Abgleich event_rejected, Bereinigung überspringt mit Alarm", async () => {
+  const s = setup();
+  const idA = googleEventIdFromRef(sourceRef("p1", "A"))!;
+  const idB = googleEventIdFromRef(sourceRef("p1", "B"))!;
+  const foreign = (id: string) => ({ id, summary: "Vorstand privat", status: "confirmed", start: { date: "2026-10-02" }, end: { date: "2026-10-03" },
+    extendedProperties: { private: { [GOOGLE_REF_PROPERTY]: "0".repeat(40) } } });
+  // 409-Pfad: unter der ID für A liegt ein fremder Termin
+  s.google.calendars.set(BOX, new Map([[idA, foreign(idA)]]));
+  s.graph.rounds.push([[ev("A"), ev("B")]]);
+  await s.runOnce(true);
+  assert.deepEqual(s.google.calendars.get(BOX)!.get(idA), foreign(idA), "fremder Termin unverändert");
+  assert.deepEqual(s.google.writes().map((w) => w.method), ["POST", "POST"], "kein PATCH nach 409 auf fremdem Termin");
+  assert.equal(s.repo.pipelines.get("p1")!.lastSyncError, "event_rejected");
+  assert.equal(s.repo.maps.get("p1")!.has("A"), false);
+  // gespeicherte Zuordnung zeigt auf einen fremden Termin (Manipulation der DB): kein PATCH, kein DELETE
+  s.repo.maps.get("p1")!.get("B")!.targetEventId = idA;
+  s.google.requests = [];
+  s.graph.rounds.push([[ev("B", { changeKey: "2", at: "2026-10-02T11:00:00.0000000" })]]);
+  await s.runOnce(false);
+  s.graph.rounds.push([[ev("B", { showAs: "free", changeKey: "3" })]]);
+  await s.runOnce(false);
+  assert.equal(s.google.writes().length, 0, "nie ein Schreibzugriff auf den fremden Termin");
+  assert.deepEqual(s.google.calendars.get(BOX)!.get(idA), foreign(idA));
+  assert.ok(s.alerts.some((a) => a.category === "foreign_event"));
+  // keine gültige CalenSync-ID → nicht einmal ein GET
+  s.repo.maps.get("p1")!.set("C", { sourceEventId: "C", targetEventId: "fremd123", changeKey: "x", startAt: NOW, endAt: NOW });
+  s.google.requests = [];
+  s.graph.rounds.push([[{ id: "C", "@removed": { reason: "deleted" } }]]);
+  await s.runOnce(false);
+  assert.equal(s.google.api().length, 0);
+
+  // Bereinigung: fremder Termin übersprungen (Alarm), eigener gelöscht, 404 = erledigt, Bereinigung schließt ab
+  const t = setup();
+  t.graph.rounds.push([[ev("A"), ev("B")]]);
+  await t.runOnce(true);
+  t.google.calendars.get(BOX)!.set(idA, foreign(idA));
+  t.repo.maps.get("p1")!.set("V", { sourceEventId: "V", targetEventId: null, changeKey: null, startAt: NOW, endAt: NOW });
+  t.repo.revoke("p1");
+  t.google.requests = [];
+  assert.equal((await t.cleanup()).cleaned, 1);
+  assert.deepEqual(t.google.writes().map((w) => `${w.method} ${w.url.slice(EVENTS.length + 1).split("?")[0]}`), [`DELETE ${idB}`]);
+  assert.deepEqual(t.google.calendars.get(BOX)!.get(idA), foreign(idA), "fremder Termin bleibt");
+  assert.deepEqual(t.cleanupAlerts.map((a) => [a.category, a.reason]), [["foreign_event", "cleanup_foreign_event"]]);
+  assert.ok(t.repo.pipelines.get("p1")!.cleanupDoneAt);
 });
