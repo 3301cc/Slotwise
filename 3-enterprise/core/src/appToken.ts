@@ -26,8 +26,28 @@ function b64url(buf: Buffer | string): string {
   return Buffer.from(buf).toString("base64url");
 }
 
-export class KmsSignedGraphTokenProvider implements AppTokenProvider {
+/**
+ * Graph-Token für einen bestimmten Entra-Mandanten. Der Sync schreibt ggf. in ein Postfach eines verknüpften
+ * Mandanten (Mutter/Tochter): dieselbe Multi-Tenant-App, dort per Admin-Consent freigegeben, dieselbe
+ * KMS-signierte Assertion – nur der Token-Endpunkt (und damit aud) ist der des verknüpften Mandanten.
+ * entraTenantId = null → Heim-Mandant des CalenSync-Mandanten.
+ */
+export interface GraphTokenSource {
+  getGraphToken(tenantId: string, entraTenantId: string | null): Promise<string>;
+  invalidateGraphToken(tenantId: string, entraTenantId: string | null): void;
+}
+
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export class KmsSignedGraphTokenProvider implements AppTokenProvider, GraphTokenSource {
+  /**
+   * Schlüssel = (Entra-Mandant, Client-ID) – NICHT die CalenSync-Mandanten-ID: ein Token für Mandant A darf nie
+   * für einen Aufruf in Mandant B aus dem Cache kommen (Graph würde ihn ablehnen oder – schlimmer – im falschen
+   * Mandanten ausführen).
+   */
   private cache = new Map<string, { token: string; expiresAtMs: number }>();
+  /** zuletzt benutzter Cache-Schlüssel je (CalenSync-Mandant, Ziel) – für das synchrone invalidate() */
+  private lastKey = new Map<string, string>();
 
   constructor(
     private readonly configFor: (tenantId: string) => Promise<EntraAppConfig>,
@@ -39,10 +59,18 @@ export class KmsSignedGraphTokenProvider implements AppTokenProvider {
 
   async getToken(tenantId: string, provider: Provider): Promise<string> {
     if (provider !== "microsoft") throw new Error("KmsSignedGraphTokenProvider liefert nur Microsoft-Tokens");
-    const hit = this.cache.get(tenantId);
+    return this.getGraphToken(tenantId, null);
+  }
+
+  async getGraphToken(tenantId: string, entraTenantId: string | null): Promise<string> {
+    if (entraTenantId !== null && !GUID.test(entraTenantId)) throw new Error("entraTenantId muss eine GUID sein");
+    const base = await this.configFor(tenantId);
+    const cfg: EntraAppConfig = entraTenantId === null ? base : { ...base, entraTenantId };
+    const key = `${cfg.entraTenantId.toLowerCase()}|${cfg.clientId.toLowerCase()}`;
+    this.lastKey.set(`${tenantId}\u0000${entraTenantId ?? ""}`, key);
+    const hit = this.cache.get(key);
     if (hit && hit.expiresAtMs - 120_000 > this.now()) return hit.token;
 
-    const cfg = await this.configFor(tenantId);
     const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(cfg.entraTenantId)}/oauth2/v2.0/token`;
     const nowSec = Math.floor(this.now() / 1000);
     const header = { alg: "RS256", typ: "JWT", "x5t#S256": Buffer.from(cfg.certSha256Hex, "hex").toString("base64url") };
@@ -66,11 +94,16 @@ export class KmsSignedGraphTokenProvider implements AppTokenProvider {
     const text = await res.text();
     if (res.status !== 200) throw new Error(`Entra-Token-Endpunkt ${res.status}: ${text.slice(0, 200)}`);
     const json = JSON.parse(text) as { access_token: string; expires_in: number };
-    this.cache.set(tenantId, { token: json.access_token, expiresAtMs: this.now() + json.expires_in * 1000 });
+    this.cache.set(key, { token: json.access_token, expiresAtMs: this.now() + json.expires_in * 1000 });
     return json.access_token;
   }
 
   invalidate(tenantId: string): void {
-    this.cache.delete(tenantId);
+    this.invalidateGraphToken(tenantId, null);
+  }
+
+  invalidateGraphToken(tenantId: string, entraTenantId: string | null): void {
+    const key = this.lastKey.get(`${tenantId}\u0000${entraTenantId ?? ""}`);
+    if (key) this.cache.delete(key);
   }
 }

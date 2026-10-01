@@ -16,3 +16,7 @@ export * from "./webhookHttp.js";
 export * from "./pgPipelineRepo.js";
 export * from "./googleWebhook.js";
 export * from "./logger.js";
+export * from "./syncTargets.js";
+export * from "./syncWorker.js";
+export * from "./pgSyncRepo.js";
+export * from "./cleanupWorker.js";

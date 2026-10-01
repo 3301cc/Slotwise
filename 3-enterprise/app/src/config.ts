@@ -8,6 +8,7 @@
  * Deployment mit offener CORS-Policy oder Platzhalter-Secrets.
  */
 import type { TokenEntry } from "../../scim/src/auth.js";
+import { isDomain, isGuid, normalizeMailbox, TEAM_ID, type LinkedTenant, type SyncAllowlist, type TeamCalendar } from "../../core/src/syncTargets.js";
 
 export interface AppConfig {
   port: number;
@@ -34,6 +35,30 @@ export interface AppSecrets {
   graphCertSha256Hex: string;
   scimTokenPepper: string;
   scimTokens: TokenEntry[];
+  /**
+   * Sync-Ziele (Admin-Allowlist, core/src/syncTargets.ts). Alles optional; fehlt es, ist das Ziel nicht wählbar.
+   *   ownDomains     Domains für ein zweites Postfach derselben Person im EIGENEN Mandanten
+   *   linkedTenants  verknüpfte Entra-Mandanten (App dort per Admin-Consent freigegeben) + deren Domains
+   *   teamCalendars  Team-/Abteilungskalender: { id, mailbox, label }
+   */
+  ownDomains: string[];
+  linkedTenants: LinkedTenant[];
+  teamCalendars: TeamCalendar[];
+  /** Statisches Bearer-Token der Buchungsseite für GET /api/v1/availability/busy; null = Buchungsseite aus */
+  bookingApiToken: string | null;
+  /** showAs=tentative als belegt übertragen (Default false) */
+  syncTentative: boolean;
+}
+
+/** Allowlist für API und Sync-Worker aus dem geprüften Secret */
+export function syncAllowlistFrom(s: AppSecrets): SyncAllowlist {
+  return {
+    homeEntraTenantId: s.entraTenantId.toLowerCase(),
+    ownDomains: s.ownDomains,
+    linkedTenants: s.linkedTenants,
+    teamCalendars: s.teamCalendars,
+    bookingEnabled: s.bookingApiToken !== null,
+  };
 }
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -103,7 +128,69 @@ function parseSecrets(raw: string): AppSecrets {
     }
     return { tenantId: e.tenantId, sha256Hex: e.sha256Hex.toLowerCase(), expiresAt: e.expiresAt };
   });
-  return { entraTenantId, graphClientId, graphCertSha256Hex: graphCertSha256Hex.toLowerCase(), scimTokenPepper, scimTokens };
+  return {
+    entraTenantId, graphClientId, graphCertSha256Hex: graphCertSha256Hex.toLowerCase(), scimTokenPepper, scimTokens,
+    ...parseSyncTargets(o, entraTenantId),
+  };
+}
+
+function domainList(v: unknown, where: string): string[] {
+  if (!Array.isArray(v)) throw new ConfigError(`${where}: Liste von Domains erwartet`);
+  const out = v.map((d: unknown, i: number) => {
+    const dom = typeof d === "string" ? d.trim().toLowerCase() : "";
+    if (!isDomain(dom)) throw new ConfigError(`${where}[${i}]: ungültige Domain`);
+    return dom;
+  });
+  if (new Set(out).size !== out.length) throw new ConfigError(`${where}: doppelte Domain`);
+  return out;
+}
+
+function label(v: unknown, where: string): string {
+  // eslint-disable-next-line no-control-regex -- Steuerzeichen und spitze Klammern ausschließen (Anzeige im Dashboard)
+  if (typeof v !== "string" || v.trim().length < 1 || v.trim().length > 64 || /[\u0000-\u001f\u007f<>]/.test(v)) {
+    throw new ConfigError(`${where}: label 1–64 Zeichen ohne Steuerzeichen/<>`);
+  }
+  return v.trim();
+}
+
+/** Sync-Ziele und Buchungsseite – optional, aber wenn angegeben, streng geprüft */
+function parseSyncTargets(o: Record<string, unknown>, homeTenant: string) {
+  const ownDomains = o.ownDomains === undefined ? [] : domainList(o.ownDomains, "APP_CONFIG.ownDomains");
+
+  const linkedRaw = o.linkedTenants ?? [];
+  if (!Array.isArray(linkedRaw)) throw new ConfigError("APP_CONFIG.linkedTenants: Liste erwartet");
+  const linkedTenants: LinkedTenant[] = linkedRaw.map((t: unknown, i: number) => {
+    const e = (t ?? {}) as Record<string, unknown>;
+    const where = `APP_CONFIG.linkedTenants[${i}]`;
+    if (typeof e.entraTenantId !== "string" || !isGuid(e.entraTenantId)) throw new ConfigError(`${where}.entraTenantId: GUID erwartet`);
+    if (e.entraTenantId.toLowerCase() === homeTenant.toLowerCase()) throw new ConfigError(`${where}: eigener Mandant gehört in ownDomains`);
+    const domains = domainList(e.domains, `${where}.domains`);
+    if (domains.length === 0) throw new ConfigError(`${where}.domains: mindestens eine Domain`);
+    return { entraTenantId: e.entraTenantId.toLowerCase(), label: label(e.label, `${where}.label`), domains };
+  });
+  if (new Set(linkedTenants.map((t) => t.entraTenantId)).size !== linkedTenants.length) throw new ConfigError("APP_CONFIG.linkedTenants: doppelter Mandant");
+
+  const teamRaw = o.teamCalendars ?? [];
+  if (!Array.isArray(teamRaw)) throw new ConfigError("APP_CONFIG.teamCalendars: Liste erwartet");
+  const teamCalendars: TeamCalendar[] = teamRaw.map((t: unknown, i: number) => {
+    const e = (t ?? {}) as Record<string, unknown>;
+    const where = `APP_CONFIG.teamCalendars[${i}]`;
+    if (typeof e.id !== "string" || !TEAM_ID.test(e.id)) throw new ConfigError(`${where}.id: [a-z0-9_-], 1–64 Zeichen`);
+    const mailbox = typeof e.mailbox === "string" ? normalizeMailbox(e.mailbox) : null;
+    if (!mailbox) throw new ConfigError(`${where}.mailbox: ungültige Adresse`);
+    return { id: e.id, mailbox, label: label(e.label, `${where}.label`) };
+  });
+  if (new Set(teamCalendars.map((t) => t.id)).size !== teamCalendars.length) throw new ConfigError("APP_CONFIG.teamCalendars: doppelte id");
+
+  let bookingApiToken: string | null = null;
+  if (o.bookingApiToken !== undefined && o.bookingApiToken !== null) {
+    if (typeof o.bookingApiToken !== "string" || o.bookingApiToken.length < 32 || o.bookingApiToken.length > 512 || /\s/.test(o.bookingApiToken)) {
+      throw new ConfigError("APP_CONFIG.bookingApiToken: 32–512 Zeichen ohne Leerraum");
+    }
+    bookingApiToken = o.bookingApiToken;
+  }
+  if (o.syncTentative !== undefined && typeof o.syncTentative !== "boolean") throw new ConfigError("APP_CONFIG.syncTentative: true/false");
+  return { ownDomains, linkedTenants, teamCalendars, bookingApiToken, syncTentative: o.syncTentative === true };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {

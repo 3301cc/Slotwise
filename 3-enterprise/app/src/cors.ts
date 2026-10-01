@@ -23,7 +23,7 @@ export function createCorsPolicy(origins: readonly string[]): CorsPolicy {
   for (const o of origins) if (o === "*" || o.includes("*")) throw new Error("CORS-Wildcard ist nicht erlaubt");
   return {
     origins: new Set(origins),
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
     headers: ["authorization", "content-type", "x-request-id", "idempotency-key"],
     exposeHeaders: ["x-request-id", "retry-after", "location", "idempotent-replayed"],
     maxAgeSeconds: 600,

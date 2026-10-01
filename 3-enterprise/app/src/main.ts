@@ -1,7 +1,8 @@
 /**
  * Einstiegspunkt des Mandanten-Backends (ECS-Service "app"):  node dist/app/src/main.js
  *
- * Ein Prozess, drei Rollen: HTTP (Webhooks, SCIM, Dashboard-API), Teardown-Worker, Handshake-Worker.
+ * Ein Prozess, mehrere Rollen: HTTP (Webhooks, SCIM, Dashboard-API, Busy-API), Teardown-, Handshake-, Renewal- und
+ * Sync-Worker (pipeline.delta_sync).
  * Alle teilen sich EINEN pg-Pool (IAM-Auth, max. DB_POOL_MAX Verbindungen) – das Verbindungsbudget je Task
  * ist damit fest und in Terraform (check "db_connection_budget") gegen die Autoscaling-Obergrenze geprüft.
  */
@@ -19,16 +20,20 @@ import {
   PgChannelRepo,
   PgDelayedJobQueue,
   PgPipelineRepo,
+  PgSyncRepo,
   RenewalScheduler,
   RenewalWorker,
   SubscriptionTeardown,
+  SyncScheduler,
+  SyncWorker,
+  TargetCleanupWorker,
   TeardownJobWorker,
   type AppTokenProvider,
   type FetchLike,
 } from "../../core/src/index.js";
 import { HashedTokenAuthenticator } from "../../scim/src/auth.js";
 import { PrismaScimStore } from "../../scim/src/prismaStore.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, syncAllowlistFrom } from "./config.js";
 import { createCorsPolicy } from "./cors.js";
 import { EntraTokenVerifier } from "./entraAuth.js";
 import { createAppServer } from "./server.js";
@@ -48,6 +53,7 @@ const log = (entry: Record<string, unknown>): void => {
 };
 
 const cfg = loadConfig();
+const syncAllowlist = syncAllowlistFrom(cfg.secrets);
 const fetchFn: FetchLike = (url, init) => fetch(url, init);
 
 // --- Datenbank: ein IAM-Pool für alles -----------------------------------------------------------------
@@ -85,6 +91,8 @@ const tokens: AppTokenProvider = {
 const queue = new PgDelayedJobQueue(pool);
 const channels = new PgChannelRepo(pool);
 const pipelines = new PgPipelineRepo(pool);
+const syncRepo = new PgSyncRepo(pool);
+const statusRepo = new PgStatusRepo(pool, syncAllowlist);
 const scimStore = new PrismaScimStore(prisma);
 const teardown = new SubscriptionTeardown({ channels, tokens, fetchFn });
 const workerId = `${hostname()}-${process.pid}`;
@@ -92,6 +100,8 @@ const workerId = `${hostname()}-${process.pid}`;
 const alert = async (e: object): Promise<void> => logger.alert("worker_alert", { ...e }); // Metric-Filter → Alarm
 const teardownWorker = new TeardownJobWorker({
   queue, teardown, channels, users: scimStore, workerId, alert,
+  // Tombstone erst löschen, wenn die Zielkalender bereinigt sind (Notbremse 8 Tage)
+  cleanups: syncRepo,
   audit: (e) => scimStore.appendAudit({ tenantId: e.tenantId, requestId: e.jobId, actor: "worker:subscription-teardown",
     action: e.action, targetUserId: e.userId, outcome: e.outcome, detail: e.detail, at: new Date().toISOString() }),
 });
@@ -105,6 +115,21 @@ const handshakeWorker = new HandshakeWorker({
 // Graph-Abos laufen nach 6 Tagen ab: Scheduler stellt fällige Verlängerungen ein, Worker führt sie aus
 const renewalWorker = new RenewalWorker({ queue, repo: channels, tokens, fetchFn, workerId, alert });
 const renewalScheduler = new RenewalScheduler(channels);
+
+// Kalenderabgleich: Quelle = Postfach des Inhabers (Heim-Mandant), Ziel laut Allowlist; Token je Entra-Mandant
+// (verknüpfte Mandanten: gleiche App, dort per Admin-Consent freigegeben, Cache-Schlüssel = Entra-Mandant)
+const syncWorker = new SyncWorker({
+  queue, repo: syncRepo, tokens: graphTokens, fetchFn, allowlist: syncAllowlist, workerId,
+  alert: (a) => alert({ kind: "sync_failed", ...a }),
+  log,
+  options: { includeTentative: cfg.secrets.syncTentative },
+});
+const syncScheduler = new SyncScheduler(syncRepo);
+// Nach Widerruf (SCIM, Nutzer): alle von CalenSync angelegten Zieltermine löschen, dann Zielpostfach nullen
+const cleanupWorker = new TargetCleanupWorker({
+  queue, repo: syncRepo, tokens: graphTokens, fetchFn, allowlist: syncAllowlist, workerId, log,
+  alert: (a) => alert({ ...a }),
+});
 
 const app = createAppServer({
   tenantId: cfg.tenantId,
@@ -124,8 +149,10 @@ const app = createAppServer({
   },
   cors: createCorsPolicy(cfg.corsAllowedOrigins),
   auth: new EntraTokenVerifier({ tenantId: cfg.secrets.entraTenantId, audiences: cfg.api.audiences, requiredScope: cfg.api.requiredScope, fetchFn }),
-  status: new PgStatusRepo(pool),
-  pipelines: new PrismaPipelineStore(prisma, Number(process.env.MAX_PIPELINES_PER_USER ?? "5")),
+  status: statusRepo,
+  pipelines: new PrismaPipelineStore(prisma, Number(process.env.MAX_PIPELINES_PER_USER ?? "5"), undefined, syncAllowlist),
+  syncTargets: { allowlist: syncAllowlist, owners: statusRepo },
+  booking: { token: cfg.secrets.bookingApiToken, repo: syncRepo },
   writeScope: cfg.api.writeScope,
   log,
   security: logger,
@@ -148,6 +175,13 @@ const loop = (name: string, fn: () => Promise<unknown>, everyMs: number) => {
 loop("teardown", () => teardownWorker.tick(10), 2_000);
 loop("handshake", () => handshakeWorker.tick(10), 2_000);
 loop("renewal", () => renewalWorker.tick(10), 5_000);
+// Sync-Jobs dauern länger (mehrere Graph-Aufrufe je Termin): wenige je Tick, lange Lease (= Sync-Lease je Pipeline)
+loop("sync", () => syncWorker.tick(5), 2_000);
+loop("target-cleanup", () => cleanupWorker.tick(5), 5_000);
+loop("sync-scheduler", async () => {
+  const n = await syncScheduler.tick();
+  if (n > 0) log({ level: "info", msg: "syncs_scheduled", count: n });
+}, 15 * 60_000);
 // Ein INSERT … SELECT je Lauf; mehrere Tasks gleichzeitig sind harmlos (dedupe_key renew:<channel>)
 loop("renewal-scheduler", async () => {
   const n = await renewalScheduler.tick();
@@ -165,7 +199,7 @@ installGracefulShutdown({
     },
     closeIdleConnections: () => app.server.closeIdleConnections(),
   },
-  workers: [teardownWorker, handshakeWorker, renewalWorker],
+  workers: [teardownWorker, handshakeWorker, renewalWorker, syncWorker, cleanupWorker],
   closePool: async () => {
     await prisma.$disconnect();
     await pool.end();

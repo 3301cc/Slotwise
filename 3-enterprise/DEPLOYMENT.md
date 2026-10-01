@@ -63,7 +63,7 @@ run_task() {   # $1 = Task-Familie
 T=$(run_task "$(terraform output -raw bootstrap_task_definition)")
 aws ecs wait tasks-stopped --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T"
 
-# 3) Schema anlegen (core/migrations 001–006) als calensync_migrator
+# 3) Schema anlegen (core/migrations 001–007) als calensync_migrator
 T=$(run_task "$(terraform output -raw migrate_task_definition)")
 aws ecs wait tasks-stopped --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T"
 aws ecs describe-tasks --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T" \
@@ -449,8 +449,56 @@ Mit dabei ein Fix im Handshake: `activateWithChannel` schreibt den Channel nur n
 und der Nutzer aktiv ist (`FOR UPDATE` auf die Pipeline, wartet auf eine laufende Deaktivierung). Vorher konnte ein
 während des Graph-POST deaktivierter Nutzer ein lebendes Abo behalten, bis die erste Notification den Teardown auslöste.
 
-**Noch nicht gebaut:** der Worker für `pipeline.delta_sync`, also der eigentliche Kalenderabgleich. Webhooks und
-Lifecycle-Events stellen die Jobs ein (je Pipeline höchstens einer wartend), aber niemand arbeitet sie ab.
+Der Kalenderabgleich selbst (`pipeline.delta_sync`) ist im folgenden Abschnitt beschrieben. Webhooks und
+Lifecycle-Events stellen die Jobs ein (je Pipeline höchstens einer wartend), der Sync-Worker arbeitet sie ab.
+
+### Kalenderabgleich (`core/src/syncWorker.ts`, Migration `007_sync.sql`)
+
+Quelle ist immer das Microsoft-365-Postfach des Inhabers (`users/{entraObjectId}/calendarView/delta`, Fenster
+jetzt − 1 Tag … + 90 Tage, alle 24 h neu aufgespannt). Ziel je Pipeline: `account` (zweites Postfach derselben Person,
+auch in einem verknüpften Entra-Mandanten), `team` (Team-Kalender im eigenen Mandanten) oder `booking` (Buchungsseite,
+kein Schreibzugriff). Google-Ziele sind noch nicht unterstützt. Ziele nur aus dieser Allowlist in `APP_CONFIG`
+(alle Schlüssel optional):
+
+```json
+{
+  "ownDomains": ["acme-alias.de"],
+  "linkedTenants": [{ "entraTenantId": "<GUID Tochter-Mandant>", "label": "Acme Tochter GmbH", "domains": ["acme-tochter.de"] }],
+  "teamCalendars": [{ "id": "vertrieb", "mailbox": "vertrieb@acme.de", "label": "Vertrieb" }],
+  "bookingApiToken": "<mind. 32 Zufallszeichen, nur serverseitig>",
+  "syncTentative": false
+}
+```
+
+- **account:** lokaler Teil muss dem `userName` des Inhabers entsprechen; Domain aus `linkedTenants[].domains` (anderer
+  Mandant) bzw. `ownDomains` (eigener Mandant, nicht das Quellpostfach). Im verknüpften Mandanten muss die Graph-App
+  per Admin-Consent freigegeben und per RBAC auf die Zielpostfächer begrenzt sein (`powershell/`, dort ausführen).
+  Token je Entra-Mandant mit derselben KMS-Assertion; der Cache ist je Entra-Mandant getrennt.
+- **team:** Postfach kommt nur aus der Config; es muss im RBAC-Scope der App liegen (Schreibrecht).
+- Geprüft wird bei der Anlage (`422 target_not_allowed` + `reason`) und vor jedem Lauf im Worker erneut
+  (sonst `config_error` + Alarm). Vor **jedem** Graph-Aufruf liest der Worker den Pipeline-Status neu.
+- Gespeichert werden nur Quell-/Ziel-ID, Beginn, Ende, changeKey (`sync_event_map`), Delta-Link, `last_synced_at`,
+  `last_sync_error` (nur Code). `busy`: Ziel bekommt Zeit, `showAs=busy`, `busyLabel`; `full`: zusätzlich Betreff und
+  Ort, private Termine wie `busy`; Text und Teilnehmer nie.
+- Jobs: Webhooks, erster voller Abgleich bei Aktivierung (gleiches Statement), Scheduler alle 15 min für Pipelines,
+  deren letzter Abgleich > 12 h zurückliegt.
+- `GET /api/v1/availability/busy?from=…&to=…` (≤ 62 Tage, ISO mit Zeitzone) mit `Authorization: Bearer <bookingApiToken>`
+  liefert `{ "busy": [{ "start", "end" }] }` über alle aktiven `booking`-Pipelines, zusammengefasst, ohne Nutzerbezug.
+  Nur vom Server der Buchungsseite aufrufen, nie aus dem Browser.
+- **Ende einer Pipeline = Spuren weg** (`core/src/cleanupWorker.ts`, Job `pipeline.target_cleanup`, dedupe je Pipeline):
+  SCIM-Deaktivierung, SCIM-DELETE und `DELETE /api/v1/me/pipelines/{id}` (Nutzer, `Sync.Write`) setzen die Pipeline auf
+  `revoked`, markieren `cleanup_requested_at` und stellen den Job **im selben Commit** ein. Der Worker löscht jeden von
+  CalenSync angelegten Zieltermin (`404` = schon weg; unbestätigte Anlagen über die Extended Property), danach werden
+  Zuordnungen gelöscht und das Zielpostfach genullt (`cleanup_done_at`). Nur DELETE-Aufrufe; keine
+  „Inhaber aktiv“-Prüfung, aber Allowlist (ohne Same-Person-Prüfung, der Name ist nach DELETE geschwärzt).
+  Fehler: Backoff; endgültig → Alarm `target_cleanup_failed`, Zuordnungen bleiben zur Nacharbeit.
+  Nach SCIM-DELETE behält der Tombstone Zielpostfach und Termin-IDs, bis die Bereinigung fertig ist; erst dann löscht
+  der Teardown-Worker ihn endgültig – spätestens nach 8 Tagen (Notbremse, Alarm `cleanup_deadline`).
+- `DELETE /api/v1/me/pipelines/{id}`: `202 {id, status:"revoked", cleanup:"pending"}`, erneut `200` (cleanup
+  `pending`/`done`), fremde/unbekannte ID `404 pipeline_not_found`, Nutzer nicht aktiv `404 user_not_provisioned`.
+  Stoppt nur das Graph-Abo dieser Pipeline. `sync-status` zeigt je Pipeline `cleanup: "pending" | "done" | null`.
+- Nicht enthalten: Fortsetzen sehr großer Kalender über mehrere Sync-Läufe (Budget 8 min je Lauf; die Bereinigung
+  setzt dagegen fort).
 
 ---
 

@@ -21,7 +21,7 @@ Details zu jedem Schritt stehen in `DEPLOYMENT.md`. Diese Seite ist nur die Reih
 2. **AWS:** `tenants/acme-prod.tfvars.example` kopieren und ausfüllen, dann in `terraform/`:
    `terraform init -backend-config=backend.hcl` → `terraform validate` → `terraform plan` → `terraform apply`
 3. **Secret `APP_CONFIG` befüllen** (DEPLOYMENT.md, Abschnitt 2B). Nie über Terraform, nie ins Repo.
-4. **Datenbank:** Bootstrap-Task, dann Migrator-Task (Abschnitt 1, Schritte 2–3). Migrationen `core/migrations/000–006` (001 legt das Basisschema an).
+4. **Datenbank:** Bootstrap-Task, dann Migrator-Task (Abschnitt 1, Schritte 2–3). Migrationen `core/migrations/000–007` (001 legt das Basisschema an, 007 den Kalenderabgleich).
 5. **DNS:** `acme.calensync.de` als CNAME auf `terraform output -raw alb_dns_name`.
 6. **Entra:** API-App (`Sync.Read`, `Sync.Write`) + SPA-App fürs Dashboard (Abschnitt 3).
 7. **Website (statische Seite in `slotwise-website-online/`, schon angebunden):**
@@ -41,9 +41,16 @@ Details zu jedem Schritt stehen in `DEPLOYMENT.md`. Diese Seite ist nur die Reih
 |---|---|---|
 | GET | `/api/v1/me/sync-status` | `Sync.Read` |
 | POST | `/api/v1/me/pipelines` (Header `Idempotency-Key`) | `Sync.Write` |
+| GET | `/api/v1/me/sync-targets` | `Sync.Read` |
+| DELETE | `/api/v1/me/pipelines/{id}` (beenden, Zieltermine werden entfernt) | `Sync.Write` |
+| GET | `/api/v1/availability/busy?from&to` (Buchungsseite, statisches Token) | – |
 
 ## Noch nicht fertig
 
-- **Kalenderabgleich** (`pipeline.delta_sync`): Jobs werden eingestellt, aber noch nicht abgearbeitet. Termine werden also noch nicht übertragen.
+- **Kalenderabgleich** (`pipeline.delta_sync`): Worker, Migration 007 und API sind gebaut (DEPLOYMENT.md, Abschnitt
+  „Kalenderabgleich“), aber nur gegen einen Graph-Fake getestet, nicht gegen echte Microsoft-365-Postfächer.
+  Ziele nur Microsoft 365 (zweites Konto, auch Tochter-Mandant; Team-Kalender) und die Buchungsseite – **Google-Ziele
+  noch nicht**. Nach Widerruf/Deaktivierung/Löschung entfernt ein Bereinigungs-Job die Zieltermine (ebenfalls nur gegen
+  den Fake getestet).
 - **Google-Abo-Anlage** (`events.watch` + Workload Identity): Der Eingang ist fertig, Channels entstehen noch nicht.
 - **Nicht ausgeführt:** `terraform plan`, Docker-Build, Deployment auf AWS.

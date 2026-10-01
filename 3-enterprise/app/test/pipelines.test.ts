@@ -12,23 +12,25 @@ import { EntraTokenVerifier } from "../src/entraAuth.js";
 import { createAppServer } from "../src/server.js";
 import {
   PrismaPipelineStore, parseCreatePipelineBody, parseIdempotencyKey,
-  type CreatePipelineInput, type CreatePipelineResult, type PipelineStore,
+  type CreatePipelineInput, type CreatePipelineResult, type EndPipelineResult, type PipelineStore,
 } from "../src/pipelineStore.js";
 import { InMemoryDelayedJobQueue, type FetchLike } from "../../core/src/index.js";
 import { MemoryScimStore } from "../../scim/src/memoryStore.js";
 import { HashedTokenAuthenticator } from "../../scim/src/auth.js";
 import type { PipelineRow, PrismaLike, PrismaTx, ScimUserRow } from "../../scim/src/prismaStore.js";
 import { StoreBusyError } from "../../scim/src/types.js";
+import type { SyncAllowlist } from "../../core/src/syncTargets.js";
 
 // ---------------------------------------------------------------------------------------------------
 // Fake-Prisma: protokolliert jeden Aufruf in Reihenfolge, hält Users/Pipelines/Jobs im Speicher
 // ---------------------------------------------------------------------------------------------------
 type Args = { where?: Record<string, unknown>; data?: Record<string, unknown>; select?: Record<string, unknown> };
 interface FakeState {
-  users: Array<Pick<ScimUserRow, "id" | "tenantId" | "externalId" | "active" | "createdAt"> & { deletionRequestedAt: Date | null }>;
+  users: Array<Pick<ScimUserRow, "id" | "tenantId" | "externalId" | "active" | "createdAt" | "userName"> & { deletionRequestedAt: Date | null }>;
   pipelines: PipelineRow[];
   jobs: Array<{ kind: string; dedupeKey: string; payload: string }>;
   calls: string[];
+  channels?: Array<Record<string, unknown>>;
   /** wird nach dem Lock einmal ausgeführt – simuliert eine SCIM-Deaktivierung zwischen Vorab-Lookup und Sperre */
   afterLock?: () => void;
   /** wirft beim n-ten $transaction einen Fehler */
@@ -68,10 +70,20 @@ function fakePrisma(st: FakeState): PrismaLike {
         st.pipelines.push(row);
         return row;
       },
-      updateMany: notUsed,
+      updateMany: async (a: Args) => {
+        st.calls.push("pipeline.updateMany");
+        let count = 0;
+        for (const p of st.pipelines) if (matches(p as unknown as Record<string, unknown>, a.where)) { Object.assign(p, a.data); count++; }
+        return { count };
+      },
     },
     providerToken: { deleteMany: notUsed },
-    webhookChannel: { updateMany: notUsed },
+    webhookChannel: { updateMany: async (a: Args) => {
+      st.calls.push("channel.updateMany");
+      let count = 0;
+      for (const c of st.channels ?? []) if (matches(c, a.where)) { Object.assign(c, a.data); count++; }
+      return { count };
+    } },
     auditEvent: { findFirst: notUsed, create: notUsed },
     $executeRaw: async (q: TemplateStringsArray, ...v: unknown[]) => {
       const sql = q.join("?").replace(/\s+/g, " ").trim();
@@ -109,12 +121,23 @@ function fakePrisma(st: FakeState): PrismaLike {
 
 const CREATED = new Date("2026-09-01T08:00:00Z");
 const state = (over: Partial<FakeState> = {}): FakeState => ({
-  users: [{ id: "u-1", tenantId: "acme", externalId: "oid-42", active: true, createdAt: CREATED, deletionRequestedAt: null }],
+  users: [{ id: "u-1", tenantId: "acme", externalId: "oid-42", userName: "Max.Muster@acme.example", active: true, createdAt: CREATED, deletionRequestedAt: null }],
   pipelines: [], jobs: [], calls: [], ...over,
 });
 const input = (o: Partial<CreatePipelineInput> = {}): CreatePipelineInput => ({
-  tenantId: "acme", entraObjectId: "oid-42", mode: "busy", busyLabel: "Termin", idempotencyKey: "key-0000000000000001", ...o,
+  tenantId: "acme", entraObjectId: "oid-42", mode: "busy", busyLabel: "Termin", idempotencyKey: "key-0000000000000001",
+  target: { kind: "team", teamId: "vertrieb" }, ...o,
 });
+const HOME = "11111111-2222-3333-4444-555555555555";
+const LINKED = "99999999-8888-7777-6666-555555555555";
+/** Admin-Allowlist wie aus APP_CONFIG */
+const ALLOW: SyncAllowlist = {
+  homeEntraTenantId: HOME,
+  ownDomains: ["acme.example", "acme-alias.example"],
+  linkedTenants: [{ entraTenantId: LINKED, label: "Acme Tochter GmbH", domains: ["tochter.example"] }],
+  teamCalendars: [{ id: "vertrieb", mailbox: "vertrieb@acme.example", label: "Vertrieb" }],
+  bookingEnabled: true,
+};
 let seq = 0;
 const ids = () => `pl-${++seq}`;
 
@@ -123,7 +146,7 @@ const ids = () => `pl-${++seq}`;
 // ---------------------------------------------------------------------------------------------------
 test("Store: Happy Path – Sperre vor jeder Prüfung, Pipeline + Handshake-Job in derselben Transaktion", async () => {
   const st = state();
-  const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids).createPipeline(input());
+  const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW).createPipeline(input());
   assert.equal(r.kind, "created");
   assert.deepEqual(st.calls, [
     "user.findFirst:any",          // Vorab-Lookup nur für den Sperrschlüssel
@@ -144,7 +167,7 @@ test("Store: Happy Path – Sperre vor jeder Prüfung, Pipeline + Handshake-Job 
 
 test("Store: gleicher Idempotency-Key → Replay ohne zweite Pipeline; andere Nutzlast → Konflikt", async () => {
   const st = state();
-  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids);
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW);
   const a = await store.createPipeline(input());
   const b = await store.createPipeline(input());
   assert.equal(a.kind, "created");
@@ -163,7 +186,7 @@ test("Store: Limit greift exakt, revoked zählt nicht mit", async () => {
       { id: "r1", tenantId: "acme", ownerUserId: "u-1", status: "revoked", mode: "busy", busyLabel: null, idempotencyKey: null },
     ],
   });
-  const store = new PrismaPipelineStore(fakePrisma(st), 3, ids);
+  const store = new PrismaPipelineStore(fakePrisma(st), 3, ids, ALLOW);
   assert.equal((await store.createPipeline(input({ idempotencyKey: "key-0000000000000003" }))).kind, "created");
   assert.deepEqual(await store.createPipeline(input({ idempotencyKey: "key-0000000000000004" })), { kind: "limit_reached", limit: 3 });
   assert.equal(st.jobs.length, 1);
@@ -171,37 +194,37 @@ test("Store: Limit greift exakt, revoked zählt nicht mit", async () => {
 
 test("Store: unbekannt, gelöscht, deaktiviert – und Deaktivierung zwischen Vorab-Lookup und Sperre", async () => {
   const unknown = state();
-  assert.equal((await new PrismaPipelineStore(fakePrisma(unknown)).createPipeline(input({ entraObjectId: "oid-fremd" }))).kind, "user_not_provisioned");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(unknown), 5, ids, ALLOW).createPipeline(input({ entraObjectId: "oid-fremd" }))).kind, "user_not_provisioned");
   assert.deepEqual(unknown.calls, ["user.findFirst:any"], "keine Transaktion für Unbekannte");
 
   const tomb = state();
   tomb.users[0]!.deletionRequestedAt = new Date();
-  assert.equal((await new PrismaPipelineStore(fakePrisma(tomb)).createPipeline(input())).kind, "user_not_provisioned");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(tomb), 5, ids, ALLOW).createPipeline(input())).kind, "user_not_provisioned");
 
   const inactive = state();
   inactive.users[0]!.active = false;
-  assert.equal((await new PrismaPipelineStore(fakePrisma(inactive)).createPipeline(input())).kind, "user_not_provisioned");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(inactive), 5, ids, ALLOW).createPipeline(input())).kind, "user_not_provisioned");
   assert.equal(inactive.pipelines.length, 0);
 
   // Race: Vorab-Lookup sieht den User aktiv, SCIM deaktiviert ihn, bevor wir die Sperre bekommen
   const race = state();
   race.afterLock = () => { race.users[0]!.active = false; };
-  assert.equal((await new PrismaPipelineStore(fakePrisma(race), 5, ids).createPipeline(input())).kind, "user_not_provisioned");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(race), 5, ids, ALLOW).createPipeline(input())).kind, "user_not_provisioned");
   assert.deepEqual([race.pipelines.length, race.jobs.length], [0, 0]);
 });
 
 test("Store: Lock-Timeout wird wiederholt, danach StoreBusyError; fremde Fehler sofort durchgereicht", async () => {
   const lockTimeout = Object.assign(new Error("canceling statement due to lock timeout"), { code: "P2010", meta: { code: "55P03" } });
   const once = state({ failTx: (n) => (n === 1 ? lockTimeout : undefined) });
-  assert.equal((await new PrismaPipelineStore(fakePrisma(once), 5, ids).createPipeline(input())).kind, "created");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(once), 5, ids, ALLOW).createPipeline(input())).kind, "created");
   assert.equal(once.calls.filter((c) => c.startsWith("tx:")).length, 2);
 
   const always = state({ failTx: () => lockTimeout });
-  await assert.rejects(new PrismaPipelineStore(fakePrisma(always), 5, ids).createPipeline(input()), StoreBusyError);
+  await assert.rejects(new PrismaPipelineStore(fakePrisma(always), 5, ids, ALLOW).createPipeline(input()), StoreBusyError);
   assert.equal(always.calls.filter((c) => c.startsWith("tx:")).length, 3);
 
   const other = state({ failTx: () => new Error("connection refused") });
-  await assert.rejects(new PrismaPipelineStore(fakePrisma(other), 5, ids).createPipeline(input()), /connection refused/);
+  await assert.rejects(new PrismaPipelineStore(fakePrisma(other), 5, ids, ALLOW).createPipeline(input()), /connection refused/);
   assert.equal(other.calls.filter((c) => c.startsWith("tx:")).length, 1);
 });
 
@@ -209,10 +232,15 @@ test("Store: Lock-Timeout wird wiederholt, danach StoreBusyError; fremde Fehler 
 // Eingabeprüfung
 // ---------------------------------------------------------------------------------------------------
 test("Body: gültige Eingaben werden normalisiert", () => {
-  assert.deepEqual(parseCreatePipelineBody({ mode: "busy" }), { ok: true, mode: "busy", busyLabel: null });
-  assert.deepEqual(parseCreatePipelineBody({ mode: "busy", busyLabel: "  Außer Haus  " }), { ok: true, mode: "busy", busyLabel: "Außer Haus" });
-  assert.deepEqual(parseCreatePipelineBody({ mode: "busy", busyLabel: "Gespräch" }), { ok: true, mode: "busy", busyLabel: "Gespräch" }, "NFC");
-  assert.deepEqual(parseCreatePipelineBody({ mode: "full", busyLabel: null }), { ok: true, mode: "full", busyLabel: null });
+  const target = { kind: "booking" } as const;
+  assert.deepEqual(parseCreatePipelineBody({ mode: "busy", target }), { ok: true, mode: "busy", busyLabel: null, target });
+  assert.deepEqual(parseCreatePipelineBody({ target, mode: "busy", busyLabel: "  Außer Haus  " }), { ok: true, mode: "busy", busyLabel: "Außer Haus", target });
+  assert.deepEqual(parseCreatePipelineBody({ target, mode: "busy", busyLabel: "Gespräch" }), { ok: true, mode: "busy", busyLabel: "Gespräch", target }, "NFC");
+  assert.deepEqual(parseCreatePipelineBody({ target, mode: "full", busyLabel: null }), { ok: true, mode: "full", busyLabel: null, target });
+  assert.deepEqual(parseCreatePipelineBody({ mode: "busy", target: { kind: "account", mailbox: " Max.Muster@Tochter.Example ", entraTenantId: LINKED.toUpperCase() } }),
+    { ok: true, mode: "busy", busyLabel: null, target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED } });
+  assert.deepEqual(parseCreatePipelineBody({ mode: "busy", target: { kind: "team", teamId: "vertrieb" } }),
+    { ok: true, mode: "busy", busyLabel: null, target: { kind: "team", teamId: "vertrieb" } });
 });
 
 test("Body: manipulierte Eingaben werden abgewiesen", () => {
@@ -319,21 +347,22 @@ function mockStore(result: CreatePipelineResult | Error) {
 const KEY = "0b7c1d1e-6a43-4c7e-9d2b-2f2a0d6f9c11";
 const ok = (extra: Record<string, string> = {}) => ({ Authorization: `Bearer ${tok()}`, "Idempotency-Key": KEY, "Content-Type": "application/json", ...extra });
 const PIPE = { id: "pl-9", status: "pending", mode: "busy" as const, busyLabel: "Termin" };
+const TEAM = { kind: "team", teamId: "vertrieb" } as const;
 
 test("Route: 201 mit Location, 200-Replay mit Header – Store bekommt oid aus dem Token, nie aus dem Body", async () => {
   const created = mockStore({ kind: "created", pipeline: PIPE });
   await withApi(created.store, async (port) => {
-    const r = await post(port, ok(), JSON.stringify({ mode: "busy", busyLabel: "Termin" }));
+    const r = await post(port, ok(), JSON.stringify({ mode: "busy", busyLabel: "Termin", target: TEAM }));
     assert.equal(r.status, 201);
     assert.equal(r.headers.location, "/api/v1/me/pipelines/pl-9");
     assert.equal(r.headers["access-control-allow-origin"], ORIGIN);
     assert.match(String(r.headers["access-control-expose-headers"]), /location/i);
     assert.deepEqual(r.json, PIPE);
-    assert.deepEqual(created.calls, [{ tenantId: "acme", entraObjectId: "oid-42", mode: "busy", busyLabel: "Termin", idempotencyKey: KEY }]);
+    assert.deepEqual(created.calls, [{ tenantId: "acme", entraObjectId: "oid-42", mode: "busy", busyLabel: "Termin", idempotencyKey: KEY, target: TEAM }]);
   });
   const replay = mockStore({ kind: "replayed", pipeline: PIPE });
   await withApi(replay.store, async (port) => {
-    const r = await post(port, ok(), JSON.stringify({ mode: "busy", busyLabel: "Termin" }));
+    const r = await post(port, ok(), JSON.stringify({ mode: "busy", busyLabel: "Termin", target: TEAM }));
     assert.equal(r.status, 200);
     assert.equal(r.headers["idempotent-replayed"], "true");
   });
@@ -348,7 +377,7 @@ test("Route: Store-Ergebnisse → 404, 409, 422; DB überlastet → 503 mit Retr
   ];
   for (const [result, status, error] of cases) {
     await withApi(mockStore(result).store, async (port) => {
-      const r = await post(port, ok(), JSON.stringify({ mode: "full" }));
+      const r = await post(port, ok(), JSON.stringify({ mode: "full", target: TEAM }));
       assert.equal(r.status, status, error);
       assert.equal(r.json.error, error);
       if (status === 409) assert.equal(r.json.limit, 5);
@@ -405,5 +434,146 @@ test("Route: CORS – Preflight erlaubt Idempotency-Key nur für die Frontend-Do
     assert.equal(evil.headers["access-control-allow-origin"], undefined);
     assert.equal(evil.status, 403);
     assert.equal(sec.at(-1)?.event, "cors_origin_rejected");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Ziel (target): Allowlist nach der Sperre, Ziel gespeichert, Replay vergleicht das Ziel
+// ---------------------------------------------------------------------------------------------------
+test("Store: Ziel wird NACH Sperre + Nutzerprüfung gegen die Allowlist geprüft; Team-Postfach kommt aus der Config", async () => {
+  const st = state();
+  const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW).createPipeline(input());
+  assert.equal(r.kind, "created");
+  assert.deepEqual(r.kind === "created" && r.pipeline.target, { kind: "team", label: "Vertrieb" });
+  const row = st.pipelines[0] as unknown as Record<string, unknown>;
+  assert.deepEqual([row.targetKind, row.targetMailbox, row.targetEntraTenantId, row.targetRef], ["team", "vertrieb@acme.example", null, "vertrieb"]);
+
+  const linked = state();
+  const acc = await new PrismaPipelineStore(fakePrisma(linked), 5, ids, ALLOW).createPipeline(input({
+    target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED } }));
+  assert.deepEqual(acc.kind === "created" && acc.pipeline.target, { kind: "account", label: "Acme Tochter GmbH" });
+  const lrow = linked.pipelines[0] as unknown as Record<string, unknown>;
+  assert.deepEqual([lrow.targetKind, lrow.targetMailbox, lrow.targetEntraTenantId, lrow.targetRef], ["account", "max.muster@tochter.example", LINKED, null]);
+});
+
+test("Store: fremdes oder nicht freigegebenes Ziel → target_not_allowed, keine Pipeline, kein Job", async () => {
+  const cases: Array<[CreatePipelineInput["target"], string, SyncAllowlist?]> = [
+    [{ kind: "account", mailbox: "eva.chefin@tochter.example", entraTenantId: LINKED }, "not_same_person"],
+    [{ kind: "account", mailbox: "max.muster@evil.example", entraTenantId: LINKED }, "domain_not_allowed"],
+    [{ kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: "aaaaaaaa-0000-0000-0000-000000000000" }, "tenant_not_linked"],
+    [{ kind: "account", mailbox: "max.muster@acme.example", entraTenantId: null }, "target_is_source"],
+    [{ kind: "account", mailbox: "irgendwer@gmail.com", entraTenantId: null }, "domain_not_allowed"],
+    [{ kind: "account", mailbox: "max.muster@acme-alias.example", entraTenantId: null }, "own_mailboxes_not_configured", { ...ALLOW, ownDomains: [] }],
+    [{ kind: "team", teamId: "geschaeftsfuehrung" }, "team_not_found"],
+    [{ kind: "booking" }, "booking_disabled", { ...ALLOW, bookingEnabled: false }],
+  ];
+  for (const [target, reason, allow] of cases) {
+    const st = state();
+    const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, allow ?? ALLOW).createPipeline(input({ target }));
+    assert.deepEqual(r, { kind: "target_not_allowed", reason }, JSON.stringify(target));
+    assert.deepEqual([st.pipelines.length, st.jobs.length], [0, 0]);
+    assert.deepEqual(st.calls.slice(0, 5), ["user.findFirst:any", "tx:ReadCommitted", "lock_timeout", "advisory_lock:acme/u-1", "user.findFirst:active"], "Prüfung erst nach der Sperre");
+  }
+  // ohne Allowlist (Default) ist gar nichts wählbar
+  const none = state();
+  assert.equal((await new PrismaPipelineStore(fakePrisma(none), 5, ids).createPipeline(input())).kind, "target_not_allowed");
+});
+
+test("Store: gleicher Key mit anderem Ziel → Konflikt; gleiches Ziel → Replay", async () => {
+  const st = state();
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW);
+  assert.equal((await store.createPipeline(input())).kind, "created");
+  assert.equal((await store.createPipeline(input())).kind, "replayed");
+  assert.equal((await store.createPipeline(input({ target: { kind: "booking" } }))).kind, "idempotency_conflict");
+  assert.equal(st.pipelines.length, 1);
+});
+
+test("Route: target fehlt → 422 target_required, kaputtes target → 400, nicht erlaubt → 422 mit reason", async () => {
+  const m = mockStore({ kind: "target_not_allowed", reason: "not_same_person" });
+  await withApi(m.store, async (port) => {
+    const missing = await post(port, ok(), JSON.stringify({ mode: "busy", busyLabel: "Termin" }));
+    assert.deepEqual([missing.status, missing.json.error], [422, "target_required"]);
+    for (const [target, error] of [
+      ["team", "target_invalid"], [{ kind: "google" }, "target_kind_invalid"], [{ kind: "team" }, "target_team_id_invalid"],
+      [{ kind: "team", teamId: "vertrieb", mailbox: "ceo@acme.example" }, "unknown_field:target.mailbox"],
+      [{ kind: "account", mailbox: "x" }, "target_mailbox_invalid"], [{ kind: "account", mailbox: "a@b.de", entraTenantId: "nope" }, "target_entra_tenant_id_invalid"],
+    ] as const) {
+      const r = await post(port, ok(), JSON.stringify({ mode: "busy", target }));
+      assert.deepEqual([r.status, r.json.error], [400, error], JSON.stringify(target));
+    }
+    assert.equal(m.calls.length, 0);
+    const na = await post(port, ok(), JSON.stringify({ mode: "busy", target: { kind: "account", mailbox: "eva@tochter.example", entraTenantId: LINKED } }));
+    assert.deepEqual([na.status, na.json], [422, { error: "target_not_allowed", reason: "not_same_person" }]);
+    assert.deepEqual(m.calls[0]?.target, { kind: "account", mailbox: "eva@tochter.example", entraTenantId: LINKED });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Pipeline beenden: DELETE /api/v1/me/pipelines/{id}
+// ---------------------------------------------------------------------------------------------------
+test("Store: endPipeline – Sperre zuerst, nur eigene Pipeline, revoked + Bereinigung + Abo-Stopp + Jobs in EINER Transaktion", async () => {
+  const st = state({
+    pipelines: [
+      { id: "mine", tenantId: "acme", ownerUserId: "u-1", status: "active", mode: "busy", busyLabel: null, idempotencyKey: null },
+      { id: "other", tenantId: "acme", ownerUserId: "u-2", status: "active", mode: "busy", busyLabel: null, idempotencyKey: null },
+    ],
+    channels: [
+      { tenantId: "acme", pipelineId: "mine", stopRequestedAt: null, stoppedAt: null },
+      { tenantId: "acme", pipelineId: "zweite-eigene", stopRequestedAt: null, stoppedAt: null },
+    ],
+  });
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW);
+  const r = await store.endPipeline({ tenantId: "acme", entraObjectId: "oid-42", pipelineId: "mine" });
+  assert.deepEqual(r, { kind: "ended", pipeline: { id: "mine", status: "revoked", cleanup: "pending" } });
+  assert.deepEqual(st.calls, ["user.findFirst:any", "tx:ReadCommitted", "lock_timeout", "advisory_lock:acme/u-1", "user.findFirst:active",
+    "pipeline.findFirst", "pipeline.updateMany", "channel.updateMany", "job.insert", "job.insert"]);
+  const mine = st.pipelines[0] as unknown as Record<string, unknown>;
+  assert.deepEqual([mine.status, mine.revokedReason, mine.cleanupRequestedAt instanceof Date], ["revoked", "user_ended", true]);
+  assert.ok(st.channels![0].stopRequestedAt instanceof Date);
+  assert.equal(st.channels![1].stopRequestedAt, null, "Abos anderer Pipelines bleiben");
+  assert.deepEqual(st.jobs.map((j) => [j.kind, j.dedupeKey]), [["subscription.teardown", "teardown:u-1"], ["pipeline.target_cleanup", "cleanup:mine"]]);
+  assert.deepEqual(JSON.parse(st.jobs[1].payload), { pipelineId: "mine" });
+
+  const again = await store.endPipeline({ tenantId: "acme", entraObjectId: "oid-42", pipelineId: "mine" });
+  assert.deepEqual(again, { kind: "already_ended", pipeline: { id: "mine", status: "revoked", cleanup: "pending" } });
+  assert.equal(st.jobs.length, 2);
+  assert.deepEqual(await store.endPipeline({ tenantId: "acme", entraObjectId: "oid-42", pipelineId: "other" }), { kind: "not_found" }, "fremde Pipeline");
+  assert.equal(st.pipelines[1].status, "active");
+  assert.deepEqual(await store.endPipeline({ tenantId: "acme", entraObjectId: "oid-x", pipelineId: "mine" }), { kind: "user_not_provisioned" });
+});
+
+test("Route: DELETE /me/pipelines/{id} → 202/200/404, nur mit Sync.Write, CORS erlaubt DELETE", async () => {
+  const calls: unknown[] = [];
+  const answers: EndPipelineResult[] = [
+    { kind: "ended", pipeline: { id: "pl-1", status: "revoked", cleanup: "pending" } },
+    { kind: "already_ended", pipeline: { id: "pl-1", status: "revoked", cleanup: "done" } },
+    { kind: "not_found" },
+    { kind: "user_not_provisioned" },
+  ];
+  const store: PipelineStore = { createPipeline: async () => ({ kind: "user_not_provisioned" }), endPipeline: async (i) => { calls.push(i); return answers.shift()!; } };
+  await withApi(store, async (port) => {
+    const del = (id: string, h: Record<string, string> = { Authorization: `Bearer ${tok()}` }) =>
+      new Promise<{ status: number; json: Record<string, unknown> }>((resolve, reject) => {
+        const r = request({ host: "127.0.0.1", port, method: "DELETE", path: `/api/v1/me/pipelines/${id}`, headers: { Origin: ORIGIN, ...h } }, (res) => {
+          let t = "";
+          res.on("data", (c) => (t += c));
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, json: t ? JSON.parse(t) : {} }));
+        });
+        r.on("error", reject);
+        r.end();
+      });
+    const a = await del("pl-1");
+    assert.deepEqual([a.status, a.json], [202, { id: "pl-1", status: "revoked", cleanup: "pending" }]);
+    assert.deepEqual(calls[0], { tenantId: "acme", entraObjectId: "oid-42", pipelineId: "pl-1" });
+    assert.deepEqual([(await del("pl-1")).status], [200]);
+    assert.deepEqual(Object.values(await del("pl-2")), [404, { error: "pipeline_not_found" }]);
+    assert.deepEqual(Object.values(await del("pl-3")), [404, { error: "user_not_provisioned" }]);
+    assert.equal((await del("x".repeat(65))).json.error, "pipeline_not_found");
+    assert.equal((await del("pl-1", { Authorization: `Bearer ${tok({ scp: "Sync.Read" })}` })).status, 403);
+    assert.equal((await del("pl-1", {})).status, 401);
+    assert.equal(calls.length, 4, "ungültige ID / fehlender Scope erreichen den Store nicht");
+    const pre = await post(port, { "Access-Control-Request-Method": "DELETE", "Access-Control-Request-Headers": "authorization" }, undefined, "OPTIONS");
+    assert.equal(pre.status, 204);
+    assert.match(String(pre.headers["access-control-allow-methods"]), /DELETE/);
   });
 });
