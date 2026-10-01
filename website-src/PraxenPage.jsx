@@ -27,75 +27,75 @@ const SW_PX_ICONS = {
 const SwPxIcon = ({ name, size = 22, className }) => <SwIcon d={SW_PX_ICONS[name]} size={size} className={className} />;
 
 const SW_PX_CALL = [
-  { who: "ki", text: "Praxis Dr. Berger, guten Morgen. Sie sprechen mit dem digitalen Assistenten der Praxis. Wie kann ich helfen?" },
+  { who: "ki", text: "Praxis Dr. Berger, guten Morgen. Sie sprechen mit dem digitalen Assistenten der Praxis. Bei einem Notfall wählen Sie bitte die 112. Was kann ich für Sie tun?" },
   { who: "kunde", text: "Ich brauche ein Folgerezept für mein Blutdruckmittel." },
-  { who: "ki", text: "Gern. Ich nehme Ihren Wunsch auf, das Praxisteam prüft ihn. Wie ist Ihr Name und Ihr Geburtsdatum?" },
-  { who: "sys", text: "Aufgabe für das Team angelegt · Rezeptwunsch" },
+  { who: "ki", text: "Das gebe ich gern an das Praxisteam weiter. Nennen Sie mir bitte Ihren Namen und Ihr Geburtsdatum." },
+  { who: "sys", text: "Aufgabe angelegt · Folgerezept" },
   { who: "kunde", text: "Und ich bräuchte noch einen Termin zur Kontrolle." },
-  { who: "ki", text: "Donnerstag um 8:30 Uhr ist frei. Ich merke ihn vor, die Praxis bestätigt ihn Ihnen noch." },
-  { who: "sys", text: "Termin vorgemerkt · wartet auf Freigabe durch das Team" },
+  { who: "ki", text: "Am Donnerstag um 8:30 Uhr ist ein Termin frei. Ich merke ihn vor, die Praxis meldet sich zur Bestätigung." },
+  { who: "sys", text: "Termin vorgemerkt · Freigabe durch das Team" },
 ];
 
 const SW_PX_PAINS = [
-  { icon: "phone", title: "Morgens ist die Leitung dicht", text: "Zwischen acht und zehn klingelt es ununterbrochen. Wer nicht durchkommt, ruft später an – oder bei der nächsten Praxis." },
-  { icon: "task", title: "Die Anmeldung macht Telefondienst", text: "Rezeptwünsche, Überweisungen, Terminverschiebungen: Jede Minute am Telefon fehlt am Tresen und bei den Patienten vor Ort." },
-  { icon: "calendar", title: "Leere Stühle durch No-Shows", text: "Wer absagen will, kommt oft nicht durch. Beim Assistenten landet die Absage sofort als Aufgabe bei Ihrem Team – der Termin wird wieder frei." },
+  { icon: "phone", title: "Telefonspitze am Morgen", text: "Zwischen 8 und 10 Uhr ist die Leitung oft durchgehend besetzt. Wer nicht durchkommt, ruft später erneut an oder wendet sich an eine andere Praxis." },
+  { icon: "task", title: "Telefondienst neben dem Empfang", text: "Folgerezepte, Überweisungen und Terminverschiebungen kosten Zeit. Jedes Telefonat fehlt bei der Patientenaufnahme und bei den Menschen im Wartezimmer." },
+  { icon: "calendar", title: "Terminausfälle", text: "Wer absagen möchte und nicht durchkommt, erscheint oft einfach nicht. Über den Assistenten erreicht die Absage Ihr Team sofort, und der Termin lässt sich neu vergeben." },
 ];
 
 const SW_PX_STEPS = [
-  { icon: "ear", title: "Annehmen", text: "Der Agent geht sofort ran, auch wenn alle Leitungen belegt sind, und sagt gleich zu Beginn, dass hier eine KI spricht." },
-  { icon: "message", title: "Anliegen verstehen", text: "Termin, Absage, Verschiebung, Rezept- oder Überweisungswunsch – der Agent fragt nach, bis klar ist, worum es geht." },
-  { icon: "calendar", title: "Aufnehmen", text: "Zum Start nimmt er Rückruf-, Rezept- und Überweisungswünsche auf. Später merkt er auch Termine vor – Ihr Team gibt jeden frei." },
-  { icon: "task", title: "Übergeben", text: "Alles landet als Aufgabe im Dashboard. Mit der Taste 0 kommt der Anrufer jederzeit direkt zu Ihrem Team." },
+  { icon: "ear", title: "Annehmen", text: "Der Assistent nimmt den Anruf an, wenn alle Leitungen belegt sind. Er sagt zu Beginn, dass eine KI spricht, und nennt die 112 für Notfälle." },
+  { icon: "message", title: "Anliegen klären", text: "Termin, Absage, Folgerezept oder Überweisung: Er fragt nach, bis das Anliegen eindeutig ist, und erfasst Name, Geburtsdatum und Rückrufnummer." },
+  { icon: "calendar", title: "Aufnehmen", text: "In der Startphase nimmt er nur Anliegen auf und bucht nichts. Später kann er auch Termine vormerken, die Ihr Team freigibt." },
+  { icon: "task", title: "Übergeben", text: "Jedes Anliegen erscheint als Aufgabe in Ihrer Praxisübersicht. Über die Taste 0 erreicht der Anrufer jederzeit Ihr Team." },
 ];
 
 const SW_PX_NEVER = [
-  "keine medizinische Einschätzung, keine Diagnose, keine Dringlichkeitsbewertung",
-  "keine Auskunft zu Befunden, Laborwerten oder Medikamenten",
-  "bei Notfall-Stichworten sofort der Hinweis auf 112 und den ärztlichen Bereitschaftsdienst 116 117",
-  "keine Abfrage von E-Mail-Adressen oder Bestätigungscodes – Name, Geburtsdatum und Rückrufnummer reichen",
-  "auf Wunsch jederzeit Weiterleitung an einen Menschen im Team, auch per Taste 0",
+  "keine Ersteinschätzung von Beschwerden, keine Diagnose, keine Einstufung der Dringlichkeit",
+  "keine Auskunft zu Befunden, Laborwerten oder Medikation",
+  "bei Hinweisen auf einen Notfall sofort der Verweis auf die 112 und den ärztlichen Bereitschaftsdienst 116 117",
+  "keine Abfrage von E-Mail-Adresse oder Bestätigungscode, Name, Geburtsdatum und Rückrufnummer genügen",
+  "Weiterleitung an Ihr Team jederzeit auf Wunsch oder über die Taste 0",
 ];
 
 const SW_PX_SPECIALTIES = [
   {
     icon: "steth",
     title: "Für Arztpraxen",
-    text: "Allgemeinmedizin, Innere, Kinder- und Facharztpraxen.",
-    items: ["Akute Beschwerden: Rückrufwunsch statt Selbstbuchung", "Vorsorge und Check-up", "Impftermine", "Rezept- und Überweisungswünsche als Aufgabe", "Befundbesprechung (nur Termin, keine Auskunft)"],
+    text: "Allgemeinmedizin, Innere Medizin, Kinder- und Jugendmedizin sowie Facharztpraxen.",
+    items: ["Akute Beschwerden: Rückrufbitte statt Selbstbuchung", "Vorsorgeuntersuchungen und Check-up", "Impftermine", "Folgerezepte und Überweisungen als Aufgabe fürs Team", "Befundbesprechung: nur Terminvergabe, keine Auskunft am Telefon"],
   },
   {
     icon: "tooth",
     title: "Für Zahnarztpraxen",
-    text: "Einzelpraxen, Gemeinschaftspraxen und Praxen mit Prophylaxe-Team.",
-    items: ["Prophylaxe und PZR mit Recall-Liste im Dashboard", "Kontrolltermine", "Schmerzpatienten: Rückrufwunsch mit Vorrang", "Beratung Zahnersatz und Implantate", "Kinderprophylaxe"],
+    text: "Einzel- und Gemeinschaftspraxen, auch mit eigenem Prophylaxe-Team.",
+    items: ["Prophylaxe und PZR (professionelle Zahnreinigung) mit Recall-Liste", "Kontrolluntersuchungen", "Schmerzpatienten: Rückrufbitte mit Vorrang", "Beratung zu Zahnersatz und Implantaten", "Individualprophylaxe für Kinder"],
   },
 ];
 
 const SW_PX_TRUST = [
-  { icon: "server", title: "Gehostet in Frankfurt am Main", text: "Anwendung, Datenbank und KI-Verarbeitung laufen in Frankfurt. Den Telefonie-Anbieter und seinen Standort nennen wir Ihnen vor Vertragsschluss." },
-  { icon: "lock", title: "AV-Vertrag mit Schweigepflicht", text: "Auftragsverarbeitung nach Art. 28 DSGVO, dazu die Verpflichtung auf Verschwiegenheit nach § 203 StGB für alle Beteiligten." },
-  { icon: "shield", title: "Datensparsam by Design", text: "Gespeichert wird, was für den Termin nötig ist. Keine Befunde, keine Diagnosen, keine Tonaufnahmen. Aufgaben werden nach 30 Tagen gelöscht." },
-  { icon: "bot", title: "Transparente KI", text: "Anrufer erfahren zu Beginn, dass sie mit einem digitalen Assistenten sprechen, und können jederzeit einen Menschen verlangen." },
+  { icon: "server", title: "Hosting in Frankfurt am Main", text: "Anwendung, Datenbank und KI-Verarbeitung laufen in Frankfurt. Den Telefonie-Anbieter und seinen Standort nennen wir Ihnen vor Vertragsschluss." },
+  { icon: "lock", title: "AV-Vertrag mit Schweigepflicht", text: "Auftragsverarbeitung nach Art. 28 DSGVO. Alle Beteiligten sind auf die Verschwiegenheit nach § 203 StGB verpflichtet." },
+  { icon: "shield", title: "Nur das Nötigste", text: "Keine Befunde, keine Diagnosen, keine Tonaufnahmen. Aufgaben werden nach 30 Tagen automatisch gelöscht." },
+  { icon: "bot", title: "Als KI erkennbar", text: "Anrufer hören gleich zu Beginn, dass sie mit einem digitalen Assistenten sprechen, und können jederzeit einen Menschen verlangen." },
 ];
 
 const SW_PX_PLAN = [
   "Bis zu 3 Behandlerkalender pro Standort",
-  "KI-Telefonagent mit 400 Minuten pro Monat",
+  "Telefonassistent mit 400 Minuten pro Monat",
   "500 SMS pro Monat",
-  "Praxis-Vorlagen und Recall-Liste",
-  "Rezept- und Überweisungswünsche als Aufgaben",
-  "AV-Vertrag mit § 203-Verpflichtung",
+  "Vorlagen für Arzt- und Zahnarztpraxen, Recall-Liste",
+  "Folgerezept- und Überweisungswünsche als Aufgaben",
+  "AV-Vertrag mit Verpflichtung nach § 203 StGB",
 ];
 
 const SW_PX_FAQ = [
-  { q: "Was kann CalenSync heute – und was kommt noch?", a: "Heute: Anrufe annehmen, Rückruf-, Rezept-, Überweisungs- und Absagewünsche als Aufgabe aufnehmen, Termine zur Freigabe vormerken, Notfall-Hinweis und Weiterleitung, Dashboard für Ihr Team. In Vorbereitung: SMS-Erinnerungen und automatischer Recall, Schnittstellen zu Praxisverwaltungssystemen, Benutzerkonten mit Rollen. Was davon zuerst kommt, entscheiden die Pilotpraxen mit." },
-  { q: "Funktioniert das mit unserer Praxissoftware?", a: "Heute arbeitet CalenSync mit Google- und Microsoft-Kalendern und eigenem Kalender im Dashboard. Schnittstellen zu gängigen Praxisverwaltungssystemen sind in Vorbereitung – mit den Pilotpraxen legen wir fest, welche zuerst kommen." },
-  { q: "Wir nutzen schon ein Online-Buchungstool. Geht das parallel?", a: "Ja. Viele Praxen nutzen CalenSync zuerst nur als Telefonassistent für die Stoßzeiten. Welche Termine der Agent selbst bucht, legen Sie pro Terminart fest." },
-  { q: "Was passiert bei einem Notfall?", a: "Der Agent bewertet keine Beschwerden. Die Begrüßung nennt die 112, mit der Taste 0 kommt man sofort zum Team. Fallen Notfall-Stichworte – oder ist der Assistent unsicher –, verweist er auf die 112 bzw. den ärztlichen Bereitschaftsdienst 116 117 und gibt den Anruf weiter. Das ersetzt keine Notrufleitung und wird mit jeder Pilotpraxis an echten Anrufen geprüft." },
-  { q: "Können Patienten mit einem Menschen sprechen?", a: "Jederzeit. Auf Wunsch leitet der Agent weiter oder nimmt einen Rückrufwunsch auf, der als Aufgabe im Dashboard erscheint." },
-  { q: "Wo werden die Daten verarbeitet?", a: "Anwendung, Datenbank und KI-Verarbeitung laufen in Frankfurt am Main. Sie bekommen vorab einen AV-Vertrag nach Art. 28 DSGVO mit Verschwiegenheitsverpflichtung nach § 203 StGB und die vollständige Liste der Unterauftragsverarbeiter, einschließlich Telefonie-Anbieter und Standort." },
-  { q: "Was kostet es nach der Pilotphase?", a: "Der Praxis-Plan kostet 89 € pro Standort und Monat bei jährlicher Zahlung. Pilotpraxen zahlen im ersten Jahr nach der Pilotphase die Hälfte. Kündigen können Sie zum Ende der Pilotphase ohne Kosten." },
+  { q: "Was kann CalenSync heute und was ist geplant?", a: "Heute nimmt der Assistent Anrufe an, erfasst Rückrufbitten, Folgerezept-, Überweisungs- und Absagewünsche als Aufgabe, merkt auf Wunsch Termine zur Freigabe vor und verweist bei Notfällen auf die 112. In Vorbereitung sind SMS-Erinnerungen, ein automatischer Recall, Schnittstellen zu Praxisverwaltungssystemen (PVS) und Benutzerkonten für das Praxisteam. Die Reihenfolge stimmen wir mit den Pilotpraxen ab." },
+  { q: "Funktioniert das mit unserer Praxissoftware?", a: "Derzeit arbeitet CalenSync mit einem eigenen Kalender sowie mit Google- und Microsoft-Kalendern. Schnittstellen zu gängigen PVS sind in Vorbereitung. Welche zuerst kommt, legen wir gemeinsam mit den Pilotpraxen fest." },
+  { q: "Wir nutzen bereits eine Online-Terminbuchung. Geht beides parallel?", a: "Ja. Viele Praxen setzen den Assistenten zunächst nur in den Telefonspitzen ein. Welche Terminarten er vormerken darf, legen Sie selbst fest." },
+  { q: "Was passiert bei einem Notfall?", a: "Der Assistent schätzt keine Beschwerden ein. Schon die Begrüßung nennt die 112, und über die Taste 0 erreicht man sofort das Team. Erkennt er Hinweise auf einen Notfall oder ist er sich unsicher, verweist er auf die 112 beziehungsweise den ärztlichen Bereitschaftsdienst 116 117 und gibt den Anruf weiter. Eine Notrufleitung ersetzt das nicht. Deshalb prüfen wir das Verhalten mit jeder Pilotpraxis anhand echter Anrufe." },
+  { q: "Können Patienten mit einem Menschen sprechen?", a: "Jederzeit. Auf Wunsch leitet der Assistent weiter oder nimmt eine Rückrufbitte auf, die als Aufgabe in der Praxisübersicht erscheint." },
+  { q: "Wo werden die Daten verarbeitet?", a: "Anwendung, Datenbank und KI-Verarbeitung laufen in Frankfurt am Main. Vorab erhalten Sie den AV-Vertrag nach Art. 28 DSGVO mit Verpflichtung nach § 203 StGB und die vollständige Liste der Unterauftragsverarbeiter, einschließlich Telefonie-Anbieter und Standort." },
+  { q: "Was kostet CalenSync nach der Pilotphase?", a: "Der Praxis-Tarif kostet 89 € pro Standort und Monat bei jährlicher Zahlung. Pilotpraxen zahlen im ersten Jahr nach der Pilotphase die Hälfte. Zum Ende der Pilotphase können Sie kostenfrei kündigen." },
 ];
 
 function SwPxCallCard() {
@@ -110,7 +110,7 @@ function SwPxCallCard() {
           </div>
         </div>
         <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
-          <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-hidden="true" />KI-Agent
+          <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" aria-hidden="true" />KI-Assistent
         </span>
       </div>
       <ol className="space-y-2.5 px-5 py-4 text-sm" aria-label="Beispiel eines Anrufs">
@@ -120,7 +120,7 @@ function SwPxCallCard() {
               <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">{m.text}</span>
             ) : (
               <span className={`max-w-[85%] rounded-2xl px-3.5 py-2 leading-relaxed ${m.who === "kunde" ? "bg-slate-900 text-white" : "bg-indigo-50 text-slate-800"}`}>
-                <span className="sr-only">{m.who === "kunde" ? "Patient: " : "KI-Agent: "}</span>{m.text}
+                <span className="sr-only">{m.who === "kunde" ? "Patient: " : "KI-Assistent: "}</span>{m.text}
               </span>
             )}
           </li>
@@ -154,16 +154,16 @@ function SwPraxenPage() {
           <div>
             <SwBadge tone="neutral">Für Arzt- und Zahnarztpraxen</SwBadge>
             <h1 id="px-title" className="mt-4 font-display text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl">
-              Das Praxistelefon klingelt. Ihr KI-Agent geht ran.
+              Telefonassistenz für die Anmeldung Ihrer Praxis
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-600">
-              CalenSync nimmt Terminwünsche, Absagen und Rezeptbestellungen am Telefon an, auch wenn die Anmeldung voll ist.
-              Ihr Team sieht jeden Anruf im Dashboard und entscheidet, was der Agent allein erledigen darf.
+              CalenSync nimmt Anrufe an, wenn Ihre Medizinischen Fachangestellten am Empfang gebraucht werden. Der Assistent erfasst
+              Folgerezept- und Überweisungswünsche, Absagen und Rückrufbitten und legt sie Ihrem Team als Aufgabe vor. Ärztliche Entscheidungen trifft er nicht.
             </p>
             <ul className="mt-6 space-y-2.5">
-              <SwPxCheckItem><span className="font-semibold text-slate-900">Gehostet in Frankfurt.</span> AV-Vertrag mit Verschwiegenheitsverpflichtung nach § 203 StGB.</SwPxCheckItem>
-              <SwPxCheckItem><span className="font-semibold text-slate-900">Keine Medizin, nur Organisation.</span> Der Agent gibt keine Einschätzungen und verweist bei Notfällen auf die 112.</SwPxCheckItem>
-              <SwPxCheckItem><span className="font-semibold text-slate-900">Gemeinsam eingerichtet.</span> Terminarten, Sprechzeiten und Ansage stellen wir zusammen mit Ihrem Team ein.</SwPxCheckItem>
+              <SwPxCheckItem><span className="font-semibold text-slate-900">Hosting in Frankfurt am Main.</span> AV-Vertrag mit Verpflichtung auf die Schweigepflicht nach § 203 StGB.</SwPxCheckItem>
+              <SwPxCheckItem><span className="font-semibold text-slate-900">Organisation, keine Medizin.</span> Keine Ersteinschätzung von Beschwerden, bei Notfallhinweisen Verweis auf die 112.</SwPxCheckItem>
+              <SwPxCheckItem><span className="font-semibold text-slate-900">Gemeinsam eingerichtet.</span> Sprechzeiten, Terminarten und Ansagetext legen wir mit Ihrem Praxisteam fest.</SwPxCheckItem>
             </ul>
             <div className="mt-8 flex flex-wrap gap-3">
               <SwButton variant="success" size="lg" onClick={swPilot}>Als Pilotpraxis bewerben<SwArrow size={16} /></SwButton>
@@ -179,8 +179,8 @@ function SwPraxenPage() {
       <SwSection tone="white" aria-labelledby="px-pain-title">
         <SwHeading
           eyebrow={<SwBadge tone="neutral">Der Praxisalltag</SwBadge>}
-          title={<span id="px-pain-title">Drei Dinge, die jede Anmeldung kennt.</span>}
-          description="CalenSync ersetzt kein Praxisteam. Es nimmt ihm die Anrufe ab, die sich wiederholen."
+          title={<span id="px-pain-title">Was die Anmeldung jeden Tag bindet</span>}
+          description="CalenSync ersetzt keine Medizinische Fachangestellte. Der Assistent übernimmt die Anrufe, die sich täglich wiederholen."
         />
         <ul className="mt-10 grid gap-6 md:grid-cols-3">
           {SW_PX_PAINS.map((p) => (
@@ -197,7 +197,7 @@ function SwPraxenPage() {
       <SwSection aria-labelledby="px-flow-title">
         <SwHeading
           eyebrow={<SwBadge tone="neutral">So läuft ein Anruf</SwBadge>}
-          title={<span id="px-flow-title">Vom Klingeln bis zur Bestätigung, ohne dass jemand abheben muss.</span>}
+          title={<span id="px-flow-title">Vom ersten Klingeln bis zur Aufgabe für Ihr Team</span>}
         />
         <ol className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {SW_PX_STEPS.map((s, i) => (
@@ -215,7 +215,7 @@ function SwPraxenPage() {
           <div className="flex items-start gap-3">
             <span className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-white text-amber-700 ring-1 ring-inset ring-amber-200"><SwPxIcon name="alert" size={20} /></span>
             <div>
-              <h3 className="font-display text-base font-bold text-slate-900">Was der Agent nie tut</h3>
+              <h3 className="font-display text-base font-bold text-slate-900">Was der Assistent nicht tut</h3>
               <ul className="mt-3 grid gap-2 text-sm leading-relaxed text-amber-950 sm:grid-cols-2">
                 {SW_PX_NEVER.map((t) => <li key={t} className="flex gap-2"><span aria-hidden="true">–</span><span>{t}</span></li>)}
               </ul>
@@ -228,8 +228,8 @@ function SwPraxenPage() {
       <SwSection tone="white" aria-labelledby="px-spec-title">
         <SwHeading
           eyebrow={<SwBadge tone="neutral">Vorlagen</SwBadge>}
-          title={<span id="px-spec-title">Fertig eingerichtet für Ihre Fachrichtung.</span>}
-          description="Terminarten, Dauer, Puffer und Recall-Intervalle sind vorbelegt. Sie passen nur noch Ihre Sprechzeiten an."
+          title={<span id="px-spec-title">Vorlagen für Ihre Fachrichtung</span>}
+          description="Terminarten mit Dauer, Pufferzeiten und Recall-Intervallen (Wiedereinbestellung) sind vorbelegt. Sie ergänzen nur noch Ihre Sprechzeiten."
         />
         <div className="mt-10 grid gap-6 md:grid-cols-2">
           {SW_PX_SPECIALTIES.map((s) => (
@@ -251,8 +251,8 @@ function SwPraxenPage() {
       <SwSection aria-labelledby="px-trust-title">
         <SwHeading
           eyebrow={<SwBadge tone="neutral">Datenschutz und Schweigepflicht</SwBadge>}
-          title={<span id="px-trust-title">Patientendaten bleiben, wo sie hingehören.</span>}
-          description="Gesundheitsdaten sind besonders geschützt. Darauf ist CalenSync von Anfang an ausgelegt."
+          title={<span id="px-trust-title">Patientendaten unter Schweigepflicht</span>}
+          description="Gesundheitsdaten gehören nach Art. 9 DSGVO zu den besonders geschützten Daten. CalenSync verarbeitet deshalb nur, was für die Terminorganisation nötig ist."
         />
         <ul className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {SW_PX_TRUST.map((t) => (
@@ -270,8 +270,8 @@ function SwPraxenPage() {
         <SwHeading
           align="center"
           eyebrow={<SwBadge tone="neutral">Preise für Praxen</SwBadge>}
-          title={<span id="px-price-title">Ein Preis pro Standort. Keine Kosten pro Anruf.</span>}
-          description="Für Unternehmen gibt es weiter die normalen Pläne. Praxen bekommen einen eigenen Plan mit mehr Telefonminuten und Praxis-Funktionen."
+          title={<span id="px-price-title">Ein Preis pro Standort, keine Abrechnung pro Anruf</span>}
+          description="Unternehmen buchen weiterhin die regulären Pläne. Für Praxen gibt es einen eigenen Tarif mit mehr Telefonminuten und Funktionen für die Praxisorganisation."
         />
         <div className="mx-auto mt-10 grid max-w-5xl gap-6 lg:grid-cols-[1.15fr_1fr]">
           <article className={`${SW_PX_CARD} relative p-7 sm:p-8 ring-2 ring-indigo-600`}>
@@ -285,14 +285,14 @@ function SwPraxenPage() {
             <ul className="mt-6 space-y-2.5">{SW_PX_PLAN.map((t) => <SwPxCheckItem key={t}>{t}</SwPxCheckItem>)}</ul>
             <div className="mt-6 rounded-xl bg-indigo-50 p-4 text-sm text-indigo-950">
               <p className="font-semibold">Angebot für Pilotpraxen</p>
-              <p className="mt-1 text-indigo-900">3 Monate kostenlos, danach 50 % im ersten Jahr. Wir starten im Rückruf-Modus und schalten das Vormerken von Terminen erst frei, wenn Sie es wollen. Dafür: ehrliches Feedback und ein kurzes Gespräch nach 4 Wochen. Kündigung zum Ende der Pilotphase ohne Kosten.</p>
+              <p className="mt-1 text-indigo-900">3 Monate kostenlos, danach im ersten Jahr zum halben Preis. Wir beginnen im Rückruf-Modus. Das Vormerken von Terminen schalten Sie frei, sobald Sie so weit sind. Im Gegenzug wünschen wir uns ehrliche Rückmeldungen und ein kurzes Gespräch nach vier Wochen. Zum Ende der Pilotphase können Sie kostenfrei kündigen.</p>
             </div>
             <SwButton variant="success" size="lg" className="mt-6 w-full" onClick={swPilot}>Als Pilotpraxis bewerben</SwButton>
           </article>
           <div className="grid gap-6">
             <article className={`${SW_PX_CARD} p-7`}>
               <h3 className="font-display text-lg font-bold text-slate-900">Weitere Standorte und MVZ</h3>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">Jeder weitere Standort und zusätzliche Behandlerkalender zu festen Preisen. Gemeinsame Auswertung über alle Standorte.</p>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">Zusätzliche Standorte und Behandlerkalender zu festen Preisen, mit gemeinsamer Auswertung über alle Standorte.</p>
               <SwButton variant="secondary" className="mt-5" onClick={swPilot}>Angebot anfragen</SwButton>
             </article>
             <article className={`${SW_PX_CARD} p-7`}>
@@ -300,7 +300,7 @@ function SwPraxenPage() {
                 <span className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-slate-50 text-slate-700"><SwPxIcon name="hospital" size={20} /></span>
                 <h3 className="font-display text-lg font-bold text-slate-900">Kliniken und Ambulanzen</h3>
               </div>
-              <p className="mt-3 text-sm leading-relaxed text-slate-600">Terminvergabe für Ambulanzen und Sprechstunden mit eigener Instanz, individuellen Verträgen und Anbindung an Ihre Systeme. Auf Anfrage.</p>
+              <p className="mt-3 text-sm leading-relaxed text-slate-600">Terminvergabe für Ambulanzen und Spezialsprechstunden mit eigener Instanz, individuellem Vertrag und Anbindung an Ihre Klinik-IT. Auf Anfrage.</p>
               <SwButton variant="secondary" className="mt-5" onClick={swPilot}>Kontakt aufnehmen</SwButton>
             </article>
           </div>
@@ -309,7 +309,7 @@ function SwPraxenPage() {
 
       {/* FAQ */}
       <SwSection aria-labelledby="px-faq-title">
-        <SwHeading eyebrow={<SwBadge tone="neutral">Häufige Fragen</SwBadge>} title={<span id="px-faq-title">Was Praxen uns fragen.</span>} />
+        <SwHeading eyebrow={<SwBadge tone="neutral">Häufige Fragen</SwBadge>} title={<span id="px-faq-title">Häufige Fragen aus Praxen</span>} />
         <div className="mt-8 divide-y divide-slate-200 rounded-2xl border border-slate-200 bg-white">
           {SW_PX_FAQ.map((f) => (
             <details key={f.q} className="group px-5 py-4 sm:px-6">
@@ -326,11 +326,11 @@ function SwPraxenPage() {
       {/* Abschluss */}
       <SwSection tone="white" spacing="tight">
         <div className="rounded-3xl bg-slate-900 px-6 py-12 text-center sm:px-12">
-          <h2 className="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">Weniger Telefon. Mehr Zeit für Patienten.</h2>
-          <p className="mx-auto mt-3 max-w-xl text-slate-300">Bewerben Sie sich als Pilotpraxis. Wir melden uns innerhalb von zwei Werktagen für ein kurzes Kennenlernen.</p>
+          <h2 className="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">Mehr Zeit für die Patienten in Ihrer Praxis</h2>
+          <p className="mx-auto mt-3 max-w-xl text-slate-300">Bewerben Sie sich als Pilotpraxis. Wir melden uns innerhalb von zwei Werktagen und vereinbaren ein kurzes Kennenlernen.</p>
           <div className="mt-7 flex flex-wrap justify-center gap-3">
             <SwButton variant="success" size="lg" onClick={swPilot}>Als Pilotpraxis bewerben<SwArrow size={16} /></SwButton>
-            <SwButton as="a" href="/ki-agent" size="lg" variant="secondary">Den KI-Agenten hören</SwButton>
+            <SwButton as="a" href="/ki-agent" size="lg" variant="secondary">Beispielanruf anhören</SwButton>
           </div>
         </div>
       </SwSection>

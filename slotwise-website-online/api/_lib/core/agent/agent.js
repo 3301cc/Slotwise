@@ -69,7 +69,7 @@ function createAgent(config, deps = {}) {
     if (name === "create_task") {
       const t = await tasks.add({ ...args, channel: session.channel });
       await activity.log({ kind: "task", text: `${TASK_TYPES[t.type]} von ${t.name} aufgenommen – Aufgabe für das Praxisteam, Rückruf an ${mask(t.phone)}`, ref: { type: "task", id: t.id }, channel: session.channel });
-      return { tool: name, created: true, say: "Ich habe Ihren Wunsch für das Praxisteam aufgenommen. Die Praxis prüft ihn und meldet sich bei Ihnen. Auf Wiederhören!" };
+      return { tool: name, created: true, say: "Ich habe Ihr Anliegen an das Praxisteam weitergegeben. Die Praxis prüft es und meldet sich bei Ihnen. Auf Wiederhören." };
     }
     if (name === "create_booking" && cfg.industry === "praxis") {
       // Praxis: ohne OTP, ohne E-Mail, immer nur Vorschlag zur Freigabe durch das Team
@@ -83,7 +83,7 @@ function createAgent(config, deps = {}) {
       const slot = { id: crypto.randomUUID(), start, end, title: String(args.appointment_type || "Termin").slice(0, 60), with: args.name, dateOfBirth: args.date_of_birth, phone: args.phone_e164, source: "ai", channel: session.channel, createdAt: new Date(now()).toISOString() };
       await calendar.addProposal(slot);
       await activity.log({ kind: "proposed", text: `${slot.title} für ${args.name} vorgemerkt: ${label} – wartet auf Freigabe durch das Praxisteam`, ref: { type: "slot", id: slot.id }, channel: session.channel });
-      return { tool: name, booked: false, proposal: true, slot: { id: slot.id, start, end }, say: `Ich habe ${label} für Sie vorgemerkt. Die Praxis bestätigt den Termin per SMS oder ruft Sie zurück. Auf Wiederhören!` };
+      return { tool: name, booked: false, proposal: true, slot: { id: slot.id, start, end }, say: `Ich habe ${label} für Sie vorgemerkt. Die Praxis meldet sich zur Bestätigung bei Ihnen. Auf Wiederhören.` };
     }
     if (name === "create_booking") {
       const start = args.start, end = new Date(Date.parse(start) + (args.duration_minutes || 30) * 60000).toISOString();

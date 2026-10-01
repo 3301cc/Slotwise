@@ -15,16 +15,16 @@ const crypto = require("node:crypto");
 
 const EMERGENCY_DE =
   "Wenn es sich um einen Notfall handelt, legen Sie bitte auf und rufen Sie sofort die 112 an. " +
-  "Außerhalb der Sprechzeiten erreichen Sie den ärztlichen Bereitschaftsdienst unter 116 117. " +
+  "Bei dringenden Beschwerden außerhalb der Sprechzeiten hilft der ärztliche Bereitschaftsdienst unter 116 117. " +
   "Ich gebe Ihren Anruf jetzt an das Praxisteam weiter.";
 
 const MEDICAL_REFUSAL_DE =
-  "Medizinische Fragen kann ich nicht beantworten, das klärt die Praxis persönlich mit Ihnen. " +
-  "Ich kann Ihnen einen Termin geben oder einen Rückrufwunsch für das Praxisteam aufnehmen. Was ist Ihnen lieber?";
+  "Medizinische Fragen kann ich leider nicht beantworten. Das bespricht die Ärztin oder der Arzt persönlich mit Ihnen. " +
+  "Ich kann eine Rückrufbitte für das Praxisteam aufnehmen oder Ihnen bei einem Termin helfen. Was möchten Sie?";
 
 const MODIFY_PRAXIS_DE =
   "Bestehende Termine kann ich am Telefon nicht einsehen oder ändern. " +
-  "Ich nehme Ihren Wunsch aber für das Praxisteam auf, es meldet sich bei Ihnen. Wie ist Ihr Name und unter welcher Nummer erreichen wir Sie?";
+  "Ich gebe Ihren Wunsch aber an das Praxisteam weiter, es meldet sich bei Ihnen. Nennen Sie mir bitte Ihren Namen und eine Rückrufnummer.";
 
 const DISCLOSURE_PRAXIS_DE =
   "Guten Tag, Sie sprechen mit dem digitalen Assistenten von {{company}}. Das Gespräch wird zur Terminvereinbarung verarbeitet. " +
@@ -131,7 +131,7 @@ const PRAXIS_PROMPT_BASE = `
 
 const PRAXIS_PROMPT_BOOKING = `
 - Neue Termine: Terminart und Wunschzeitraum erfragen, mit find_availability höchstens drei Vorschläge nennen, dann Name, Geburtsdatum und Rückrufnummer erfragen und wiederholen, dann create_booking.
-  Sage danach: Der Termin ist vorgemerkt, die Praxis bestätigt ihn per SMS oder Rückruf. Nenne ihn nie als fest.
+  Sage danach: Der Termin ist vorgemerkt, die Praxis meldet sich zur Bestätigung. Nenne ihn nie als fest.
 - Termine für akute Beschwerden buchst du nicht selbst, sondern nimmst einen Rückrufwunsch auf (create_task, type "callback").`.trim();
 
 const PRAXIS_PROMPT_CALLBACK_ONLY = `
