@@ -17,11 +17,11 @@ Details zu jedem Schritt stehen in `DEPLOYMENT.md`. Diese Seite ist nur die Reih
 
 ## Reihenfolge
 
-1. **Lokal prüfen:** `npm ci && npm test` (in `app/`, `core/`, `scim/`). Hier laufen die echten Pakete (Prisma, pg, Express), die in meiner Umgebung nicht installierbar waren.
+1. **Lokal prüfen:** `npm ci && npm test` im Root (app), in `core/` und in `scim/`, dazu `npm run build`. Mit `DATABASE_URL` laufen zusätzlich die `*.pg.test`-Suiten.
 2. **AWS:** `tenants/acme-prod.tfvars.example` kopieren und ausfüllen, dann in `terraform/`:
    `terraform init -backend-config=backend.hcl` → `terraform validate` → `terraform plan` → `terraform apply`
 3. **Secret `APP_CONFIG` befüllen** (DEPLOYMENT.md, Abschnitt 2B). Nie über Terraform, nie ins Repo.
-4. **Datenbank:** Bootstrap-Task, dann Migrator-Task (Abschnitt 1, Schritte 2–3). Migrationen `core/migrations/000–006`.
+4. **Datenbank:** Bootstrap-Task, dann Migrator-Task (Abschnitt 1, Schritte 2–3). Migrationen `core/migrations/000–006` (001 legt das Basisschema an).
 5. **DNS:** `acme.calensync.de` als CNAME auf `terraform output -raw alb_dns_name`.
 6. **Entra:** API-App (`Sync.Read`, `Sync.Write`) + SPA-App fürs Dashboard (Abschnitt 3).
 7. **Website (statische Seite in `slotwise-website-online/`, schon angebunden):**

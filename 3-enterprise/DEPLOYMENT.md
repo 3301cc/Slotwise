@@ -30,9 +30,9 @@ davor bringt für eine API ohne cachebare Antworten nichts und würde die Webhoo
 - [ ] ECR-Repository `calensync-backend` im CI-Account; Repository-Policy erlaubt `ecr:BatchGetImage` und
       `ecr:GetDownloadUrlForLayer` für die Execution-Rollen des Mandanten-Accounts
 - [ ] GitHub-OIDC-Provider in beiden Accounts, Rollen: `CI_ROLE_ARN` (ECR push), `DEPLOY_ROLE_ARN` (Terraform + ECS)
-- [ ] `prisma/schema.prisma` = Schema der CalenSync-App aus dem Haupt-Repo inkl. der Felder aus
-      `scim/prisma/scim.prisma`, `binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]`
-- [ ] `package-lock.json` im Repo-Root committet (der Build nutzt `npm ci`)
+- [x] `prisma/schema.prisma` liegt im Repo (5 Modelle, nur für den Prisma-Client; `binaryTargets` inkl. ARM64).
+      Die Tabellen legen allein die SQL-Migrationen an (`core/migrations/001_base_schema.sql` ff.)
+- [x] `package-lock.json` in Root, `core/` und `scim/` committet (der Build nutzt `npm ci`)
 
 ### Erstinstallation (einmalig je Mandant)
 
@@ -63,7 +63,7 @@ run_task() {   # $1 = Task-Familie
 T=$(run_task "$(terraform output -raw bootstrap_task_definition)")
 aws ecs wait tasks-stopped --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T"
 
-# 3) Schema anlegen (Prisma + core/migrations) als calensync_migrator
+# 3) Schema anlegen (core/migrations 001–006) als calensync_migrator
 T=$(run_task "$(terraform output -raw migrate_task_definition)")
 aws ecs wait tasks-stopped --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T"
 aws ecs describe-tasks --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T" \
@@ -487,7 +487,7 @@ Alarme (Namespace `CalenSync/<tenant>`, je 5 min, an SNS-Topic mit eigenem KMS-S
 | Teil | Geprüft |
 |---|---|
 | `app/` | Typecheck; 21 Tests (Config, Entra-Token mit echten RSA-Schlüsseln, Routing, CORS, Sicherheitsereignisse, Pipeline-Store mit Sperr-Reihenfolge, Replay, Limit, Race vor der Sperre, Lock-Timeout → 503, 19 manipulierte Bodies, Route 201/200/400/401/403/404/409/413/415/422/503) |
-| `scim/` | 45 Tests, davon 17 neu für die Transport-Härtung über echtes `node:http` (Origin/Sec-Fetch, 10 Pfad-Tricks, 405, 415, 413 per Header und Chunked-Stream, `__proto__`, UTF-8, Timeout → 503, Fehlkonfiguration). Express-Adapter-Test vorhanden, hier **übersprungen** (express nicht installierbar) |
+| `scim/` | 47 Tests, davon 17 neu für die Transport-Härtung über echtes `node:http` (Origin/Sec-Fetch, 10 Pfad-Tricks, 405, 415, 413 per Header und Chunked-Stream, `__proto__`, UTF-8, Timeout → 503, Fehlkonfiguration). Express-Adapter-Tests laufen über `node:http` (kein `fetch`, das `Sec-Fetch-Mode: cors` sendet) |
 | Pipeline-Race | pgbench auf PostgreSQL 16, 24 Clients, 15 s, laufende Invarianten-Prüfung: mit Sperre 0 Verstöße bei ~3 900 Pipelines; ohne Sperre (Negativkontrolle) > 15 000 beobachtete Verstöße |
 | Smoke-Test | 25/25 gegen den echten `createAppServer` lokal (HTTP), nicht gegen AWS |
 | Migrationen | gegen PostgreSQL 16: Bootstrap, Vorwärts, Idempotenz, Rollback bei Fehler, Prüfsummen-Schutz, Default-Privileges (App darf DML, kein TRUNCATE/DDL) |
@@ -495,4 +495,4 @@ Alarme (Namespace `CalenSync/<tenant>`, je 5 min, an SNS-Topic mit eigenem KMS-S
 | `core/` | 71 Tests inkl. der PostgreSQL-16-Tests (Queue, Google-Replay-Schutz, Renewal-Scheduler und 404-Neuanlage, Aktivierung nach Deaktivierung), Logger, Renewal-Worker (200, 404, 401, 429/503/Timeout, 403, 400, Offboarding-Vorrang); Migration 006 zweimal eingespielt |
 | Terraform | statisch (Klammern, Referenzen, Variablen). **Kein** `terraform validate/plan` – vor dem ersten Apply zwingend |
 | Dockerfile, Deploy-Workflow | YAML geprüft, **nicht gebaut/ausgeführt** (kein Docker, kein AWS in der Sandbox) |
-| `pg`, Prisma, AWS SDK, MSAL | gegen Typ-Nachbildungen der öffentlichen APIs geprüft; echte Pakete waren nicht installierbar → `npm ci && npm test` im Repo ausführen |
+| `pg`, Prisma, AWS SDK, MSAL | mit den echten Paketen geprüft (`npm ci`, Typecheck, `npm run build`); Migrationen 000–006 auf leerem PostgreSQL 16 angewendet, zweiter Lauf ohne Änderung; alle Suiten inkl. `*.pg.test` grün |
