@@ -1,0 +1,6 @@
+# terraform init -backend-config=backend.hcl
+# State-Bucket liegt im Tenant-Account selbst (Bootstrap einmalig per CLI/CloudFormation anlegen:
+# Versionierung an, SSE-KMS, Public Access Block, Bucket-Policy nur für die Deploy-Rolle).
+bucket = "calensync-acme-prod-tfstate-123456789012"
+key    = "calensync/acme/prod/terraform.tfstate"
+region = "eu-central-1"
