@@ -61,4 +61,4 @@ Details zu jedem Schritt stehen in `DEPLOYMENT.md`. Diese Seite ist nur die Reih
   Vor dem ersten Kunden mit einem Test-Workspace Ende-zu-Ende fahren. Google als **Quelle** gibt es weiterhin nicht.
 - **Google-Abo-Anlage** (`events.watch`): Der Eingang ist fertig, Channels entstehen noch nicht (der Workload-Identity-
   Token-Provider existiert jetzt, `core/src/googleAuth.ts`, ist dafür aber noch nicht verdrahtet).
-- **Nicht ausgeführt:** `terraform plan`, Docker-Build, Deployment auf AWS.
+- **Nicht ausgeführt:** `terraform plan`, `docker build`, Deployment auf AWS. Ausgeführt: `terraform validate` (AWS-Provider 6.67.0, gültig) und die Build-Stufe des Dockerfiles ohne Docker (`npm ci`, `prisma generate`, `tsc`, `npm prune --omit=dev`).
