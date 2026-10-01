@@ -9,7 +9,9 @@
   const appLive = env.VITE_APP_LIVE === "1";
   const appUrl = (env.VITE_APP_URL || "").replace(/\/$/, "");
   const signupUrl = appLive && appUrl ? `${appUrl}/login?plan=trial` : "/anmelden";
-  const loginUrl = appLive && appUrl ? `${appUrl}/login` : "/anmelden";
+  // Ist die Microsoft-365-Anbindung eingerichtet (enterprise.js), meldet „Anmelden“ direkt per Microsoft an
+  const entra = Boolean(env.CALENSYNC_API && env.ENTRA_TENANT_ID && env.ENTRA_SPA_CLIENT_ID && env.CALENSYNC_API_SCOPE);
+  const loginUrl = entra ? "/auth/callback?login=1" : appLive && appUrl ? `${appUrl}/login` : "/anmelden";
   const ERR = {
     invalid_email: "Das sieht nicht nach einer gültigen E-Mail-Adresse aus.",
     consent_required: "Bitte bestätige, dass wir dich per E-Mail informieren dürfen.",

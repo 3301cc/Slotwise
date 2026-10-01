@@ -136,6 +136,18 @@
             </div>
             <ol id="activity-list" class="divide-y divide-slate-100" aria-live="polite" aria-relevant="additions"></ol>
           </section>
+
+          <!-- 3 · Microsoft 365 (CalenSync Enterprise, nur wenn in site-config.js eingerichtet; Inhalt aus enterprise.js) -->
+          <section id="microsoft-365" aria-labelledby="m365-title" class="card" hidden>
+            <div class="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div>
+                <h2 id="m365-title" class="font-display text-base font-bold text-slate-900">Microsoft 365</h2>
+                <p class="text-xs text-slate-500">Outlook-Kalender abgleichen. Anmeldung über Ihr Firmenkonto.</p>
+              </div>
+              <span class="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">Enterprise</span>
+            </div>
+            <div id="m365-body" class="px-5 py-4" aria-live="polite"></div>
+          </section>
         </div>
 
         <!-- 4 · KI-Konfiguration -->
@@ -235,5 +247,6 @@
     <script src="/dashboard/dashboard.js"></script>
     <script src="/dashboard/views.js"></script>
     <script src="/dashboard/tour.js"></script>
+    <script src="/dashboard/enterprise.js"></script>
   </body>
 </html>

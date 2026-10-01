@@ -24,12 +24,15 @@ Details zu jedem Schritt stehen in `DEPLOYMENT.md`. Diese Seite ist nur die Reih
 4. **Datenbank:** Bootstrap-Task, dann Migrator-Task (Abschnitt 1, Schritte 2–3). Migrationen `core/migrations/000–006`.
 5. **DNS:** `acme.calensync.de` als CNAME auf `terraform output -raw alb_dns_name`.
 6. **Entra:** API-App (`Sync.Read`, `Sync.Write`) + SPA-App fürs Dashboard (Abschnitt 3).
-7. **Website (Next.js auf Vercel):**
-   - `frontend/calensyncApi.ts` ins Projekt kopieren, `npm i @azure/msal-browser`
-   - Seite `/auth/callback` anlegen (MSAL-Redirect)
-   - Vercel-Variablen: `NEXT_PUBLIC_CALENSYNC_API`, `NEXT_PUBLIC_ENTRA_TENANT_ID`, `NEXT_PUBLIC_ENTRA_SPA_CLIENT_ID`,
-     `NEXT_PUBLIC_CALENSYNC_API_SCOPE`, `NEXT_PUBLIC_CALENSYNC_API_WRITE_SCOPE`
-   - Dashboard-Domain exakt in `cors_allowed_origins` (tfvars) eintragen, kein `*`
+7. **Website (statische Seite in `slotwise-website-online/`, schon angebunden):**
+   - In `slotwise-website-online/site-config.js` die fünf Werte eintragen: `CALENSYNC_API`, `ENTRA_TENANT_ID`,
+     `ENTRA_SPA_CLIENT_ID`, `CALENSYNC_API_SCOPE`, `CALENSYNC_API_WRITE_SCOPE` (alle öffentlich, kein Secret, kein Neubau nötig)
+   - Redirect-URI der SPA-App in Entra: `https://<website-domain>/auth/callback` (Plattform „Single-Page-Anwendung“)
+   - Website-Domain exakt in `cors_allowed_origins` (tfvars) eintragen, kein `*`
+   - Ergebnis: Im Dashboard erscheint die Karte „Microsoft 365“ (Anmelden, Sync-Status, Kalender verbinden).
+     Code: `slotwise-website-online/dashboard/enterprise.js` (Portierung von `frontend/calensyncApi.ts`),
+     `slotwise-website-online/auth/callback/index.html`, MSAL lokal unter `slotwise-website-online/vendor/`
+   - `frontend/calensyncApi.ts` bleibt als Referenz für eine spätere Next.js- oder Vite-App.
 8. **Testen:** `bash scripts/smoke/webhooks.sh https://acme.calensync.de` → muss mit 0 enden.
 
 ## API fürs Dashboard

@@ -23,6 +23,7 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 | `slotwise-website-online/api/agent/*.js` | Vercel-Einstiege des Agenten: `voice-webhook.js` (Twilio), `intake.js` (E-Mail), `[action].js` für alle Dashboard-Endpunkte (Vercel Hobby erlaubt max. 12 Funktionen) |
 | `slotwise-website-online/dashboard/` | Dashboard-Vorschau (`/dashboard`): Markup, Darstellung (`dashboard.js`), Datenschicht (`dashboard-data.js`), Ansichten Kunden / Event-Typen / Berichte (`views.js`, Hash-Routing `#kunden`, `#event-typen`, `#berichte`), Erklär-Tour (`tour.js`, eigenes CSS, kein Build nötig), gebautes CSS |
 | `website-src/dashboard/` | Tailwind-Quelle und -Konfiguration des Dashboards |
+| `slotwise-website-online/dashboard/enterprise.js`, `auth/callback/`, `vendor/msal-browser.min.js` | Microsoft-365-Anbindung ans Enterprise-Backend (`3-enterprise/`): aktiv, sobald die `CALENSYNC_API`/`ENTRA_*`-Werte in `site-config.js` gesetzt sind |
 
 Nach Änderungen an den `.jsx`-Dateien oder am Dashboard-CSS:
 
