@@ -80,6 +80,10 @@ function createAgent(config, deps = {}) {
         await activity.log({ kind: "conflict", text: `Doppelbuchung verhindert: ${label} ist inzwischen belegt – Alternative angeboten`, channel: session.channel });
         return { tool: name, booked: false, conflict: true, alternatives: alt, say: `Dieser Termin ist inzwischen belegt. ${alt.length ? `Frei wäre ${alt.map((a) => a.label).join(" oder ")}.` : "Soll ich einen Rückruf für Sie aufnehmen?"}` };
       }
+      if ((await calendar.countOnDay(start)) >= cfg.maxPerDay) {
+        await activity.log({ kind: "info", text: `Tageslimit (${cfg.maxPerDay}) erreicht – Terminwunsch von ${args.name} nicht vorgemerkt`, channel: session.channel });
+        return { tool: name, booked: false, say: "An diesem Tag sind alle Termine vergeben. Soll ich den nächsten freien Tag vorschlagen?" };
+      }
       const slot = { id: crypto.randomUUID(), start, end, title: String(args.appointment_type || "Termin").slice(0, 60), with: args.name, dateOfBirth: args.date_of_birth, phone: args.phone_e164, source: "ai", channel: session.channel, createdAt: new Date(now()).toISOString() };
       await calendar.addProposal(slot);
       await activity.log({ kind: "proposed", text: `${slot.title} für ${args.name} vorgemerkt: ${label} – wartet auf Freigabe durch das Praxisteam`, ref: { type: "slot", id: slot.id }, channel: session.channel });

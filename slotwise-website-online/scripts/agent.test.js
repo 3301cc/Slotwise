@@ -279,3 +279,13 @@ test("Taste 0: sofort zum Team, im Praxismodus mit Rückrufwunsch", async () => 
   assert.strictEqual(task.type, "callback"); assert.strictEqual(task.phone, "+4915112345678");
   assert.match(await agent.disclosure(), /Taste 0/);
 });
+
+test("Praxis: Brust/Atem-Formulierungen, Umlaute an Wortgrenzen, Absage nennt 112", () => {
+  for (const u of ["Ich habe Schmerzen in der Brust", "Druck auf der Brust und linker Arm taub", "Ich habe Luftnot", "Ich kann kaum atmen", "Ich bekomme keine Luft", "Ich möchte sterben", "Er hat einen allergischen Schock", "Überdosis Tabletten genommen", "Annem bayıldı"]) assert.ok(detectEmergency(u), u);
+  for (const u of ["Mein Gesicht ist taub, ganz plötzlich", "Es ist nicht dringend aber mein Herz rast"]) assert.ok(detectEmergency(u), u);
+  for (const u of ["Termin zur Kontrolle bitte", "Nicht dringend, nur eine Überweisung", "Ich brauche eine Überweisung zum Kardiologen"]) assert.ok(!detectEmergency(u), u);
+  assert.match(MEDICAL_REFUSAL_DE, /112/);
+  assert.match(MEDICAL_REFUSAL_DE, /116 117/);
+  // Medizinische Frage mit Notfallbezug: Absage enthält in jedem Fall den Notruf-Hinweis
+  for (const u of ["Ich kann kaum atmen, ist das gefährlich?", "Ich habe Schmerzen in der Brust, soll ich ins Krankenhaus?"]) assert.ok(detectEmergency(u), u);
+});

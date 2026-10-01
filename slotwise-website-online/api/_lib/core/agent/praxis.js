@@ -20,7 +20,8 @@ const EMERGENCY_DE =
 
 const MEDICAL_REFUSAL_DE =
   "Medizinische Fragen kann ich leider nicht beantworten. Das bespricht die Ärztin oder der Arzt persönlich mit Ihnen. " +
-  "Ich kann eine Rückrufbitte für das Praxisteam aufnehmen oder Ihnen bei einem Termin helfen. Was möchten Sie?";
+  "Wenn Sie gerade starke oder plötzliche Beschwerden haben, legen Sie bitte auf und rufen Sie die 112 an, außerhalb der Sprechzeiten den Bereitschaftsdienst unter 116 117. " +
+  "Sonst kann eine Rückrufbitte für das Praxisteam aufnehmen oder Ihnen bei einem Termin helfen. Was möchten Sie?";
 
 const MODIFY_PRAXIS_DE =
   "Bestehende Termine kann ich am Telefon nicht einsehen oder ändern. " +
@@ -36,8 +37,10 @@ const DISCLOSURE_PRAXIS_DE =
 const EMERGENCY_PATTERNS = [
   /\bnotfall\b/i,
   /\b(brust|herz)\w*\s*(schmerz|stech|druck|enge)/i,
-  /\bherzrasen\b/i,
-  /\b(atemnot|keine luft|krieg\w* (kaum |keine )?luft|kann nicht (mehr )?atmen|ersticke|erstickt)/i,
+  /\b(schmerz\w*|druck|stechen|stiche|enge\w*|engegefühl)\b.{0,25}\b(in der|auf der|an der|in die) brust\b/i,
+  /\b(herzrasen|herz rast|herz rast\w*|herz schlägt (ganz )?(wild|unregelmäßig))\b/i,
+  /\b(verwirrt|taub|gelähmt|schwach|schwindel\w*|kopfschmerz\w*)\b.{0,30}\b(plötzlich|ploetzlich)\b/i,
+  /\b(atemnot|luftnot|atme (ganz )?schwer|kann (kaum|schlecht|nicht) (mehr )?atmen|bekomm\w* (kaum |keine )?luft|keine luft|krieg\w* (kaum |keine )?luft|kann nicht (mehr )?atmen|ersticke|erstickt)/i,
   /\b(bewusstlos|ohnmächtig|ohnmaechtig|kollabiert|zusammengebrochen|krampfanfall|krampft|nicht ansprechbar|reagiert nicht)/i,
   /\b(schlaganfall|herzinfarkt|lähmung|laehmung|gelähmt|gelaehmt|sprachstörung|kann nicht (mehr )?(richtig )?sprechen|gesicht hängt|hängender mundwinkel)/i,
   /\b(sehe doppelt|doppelt sehen|doppelbilder|plötzlich (nichts|schlecht|verschwommen) (mehr )?sehen|plötzlich blind)/i,
@@ -46,8 +49,8 @@ const EMERGENCY_PATTERNS = [
   /\b(kind|baby|säugling|saeugling|tochter|sohn)\b.{0,40}\b(fieber|grad)\b.{0,15}\b(39|40|41|42)/i,
   /\b(40|41|42) ?grad\b/i,
   /\b(kind|baby|säugling|saeugling|tochter|sohn)\b.{0,40}\b(39|40|41|42)([,.]\d)? ?(grad)? ?fieber/i,
-  /\b(suizid|selbstmord|umbringen|nicht mehr leben|mir etwas antun|mir was antun|ich kann nicht mehr)/i,
-  /\b(vergiftung|vergiftet|überdosis|ueberdosis|tabletten geschluckt|allergischer schock|anaphyla|zunge schwillt|hals schwillt zu)/i,
+  /\b(suizid|selbstmord|umbringen|nicht mehr leben|(will|möchte|moechte) (nur noch )?sterben|(will|möchte|moechte) tot sein|mir etwas antun|mir was antun|ich kann nicht mehr)/i,
+  /\b(vergiftung|vergiftet|überdosis|ueberdosis|tabletten geschluckt|allergisch\w* schock|anaphyla|zunge schwillt|hals schwillt zu)/i,
   /\b(unfall|gestürzt|gestuerzt|hingefallen).{0,30}\b(kopf|bewusst|blut)/i,
   // Englisch / Türkisch (Grundschutz)
   /\b(emergency|chest (pain|hurts)|heart attack|can'?t breathe|cannot breathe|unconscious|stroke|bleeding)\b/i,
@@ -67,6 +70,12 @@ const MEDICAL_PATTERNS = [
   /\bdarf ich\b.{0,40}\b(nehmen|essen|trinken|sport|arbeiten)\b/i,
   /\bkann ich (mit|trotz)\b.{0,30}\b(ibuprofen|paracetamol|aspirin|tablette|medikament|fieber)\b/i,
 ];
+
+// \b in JavaScript-Regexen kennt nur ASCII-Buchstaben, an Ü/ä/ı greift es nicht. Darum Unicode-Wortgrenzen.
+const UB = "(?:(?<![\\p{L}\\p{N}_])(?=[\\p{L}\\p{N}_])|(?<=[\\p{L}\\p{N}_])(?![\\p{L}\\p{N}_]))";
+const unicodeBounds = (re) => new RegExp(re.source.replace(/\\b/g, UB), re.flags.includes("u") ? re.flags : re.flags + "u");
+EMERGENCY_PATTERNS.splice(0, EMERGENCY_PATTERNS.length, ...EMERGENCY_PATTERNS.map(unicodeBounds));
+MEDICAL_PATTERNS.splice(0, MEDICAL_PATTERNS.length, ...MEDICAL_PATTERNS.map(unicodeBounds));
 
 function detectEmergency(u) {
   const text = String(u || "").replace(NEGATED, " ");
@@ -120,7 +129,7 @@ const PRAXIS_PROMPT_BASE = `
 ## Praxismodus (Arzt- oder Zahnarztpraxis)
 - Sprich die Anrufer mit "Sie" an. Du bist der Assistent der Praxis, nicht der Arzt.
 - Du beurteilst nichts Medizinisches: keine Einschätzung von Beschwerden, keine Dringlichkeit, keine Auskunft zu Befunden, Werten oder Medikamenten.
-  Bei solchen Fragen antworte wörtlich: "${MEDICAL_REFUSAL_DE}"
+  Bei solchen Fragen antworte wörtlich (die Absage enthält bewusst den Notruf-Hinweis): "${MEDICAL_REFUSAL_DE}"
 - Notfall-Stichworte (z. B. Brustschmerz, Atemnot, Bewusstlosigkeit, starke Blutung): antworte wörtlich "${EMERGENCY_DE}" und rufe handover_to_human mit reason "possible_emergency" auf.
 - WICHTIG: Wenn du auch nur unsicher bist, ob es ein Notfall sein könnte (plötzliche starke Beschwerden, Verwirrtheit, ein Kind mit hohem Fieber, Gedanken, sich etwas anzutun, eine Sprache, die du nicht sicher verstehst), handle genauso: Notfalltext sagen und handover_to_human mit reason "possible_emergency". Lieber einmal zu oft.
 - Rezept-, Überweisungs- und Rückrufwünsche sowie Wünsche, einen bestehenden Termin zu ändern oder abzusagen:
