@@ -44,6 +44,11 @@ const unauthorized = { status: 401, body: { error: "unauthorized" }, headers: { 
  */
 function agentRoute(method, by, run) {
   return handler(method, (wl, i) => {
+    // Kaputtes TENANTS_JSON: gesperrt statt Rückfall in den Einzelbetrieb. Grund steht in /api/agent/status.
+    if (wl.config.tenantsError) {
+      if (by === "number") return { status: 200, body: '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="de-DE">Der Terminassistent ist gerade nicht erreichbar. Bitte versuchen Sie es später noch einmal. Auf Wiederhören.</Say><Hangup/></Response>', headers: { "Content-Type": "text/xml; charset=utf-8" } };
+      return { status: 503, body: { error: "config_error", detail: "TENANTS_JSON ungültig – siehe /api/agent/status" }, headers: { "Content-Type": "application/json" } };
+    }
     const tenants = wl.config.tenants || [];
     if (!tenants.length) return run(getAgent(null), tenantConfig(wl.config, null), i);
     let tenant = null;

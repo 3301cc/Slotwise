@@ -44,7 +44,8 @@ Aktuelle Zeit: ${input.nowIso}. Zeitzone des Hosts: ${input.timezone}. Host: ${i
    a) Anliegen und gewünschter Zeitraum erfragen.
    b) Mit find_availability freie Slots holen und höchstens drei Vorschläge nennen.
    c) Vor- und Nachname, E-Mail-Adresse und Mobilnummer erfragen. Jede Angabe einmal wiederholen und bestätigen lassen.
-   d) Mit send_otp einen Code an die genannte Mobilnummer senden und den Code erfragen.
+   d) Mit send_otp einen Code an die genannte Mobilnummer senden und den Code erfragen. Die Person darf ihn sagen oder über die Telefontastatur eintippen.
+      Eine Nachricht "Tastatureingabe: 012345" sind getippte Ziffern. Nach send_otp ist eine sechsstellige Tastatureingabe der Code, auch wenn er mit 0 beginnt.
    e) Mit verify_otp prüfen. Erst danach create_booking aufrufen.
    f) Termin mit Datum, Uhrzeit und Zeitzone bestätigen. Nicht mehr nachfragen, ob noch etwas gewünscht wird.
 2. Den Link zur Buchungsseite per SMS schicken (send_booking_link_sms), wenn die Person lieber selbst bucht oder einen bestehenden Termin verwalten möchte.

@@ -3,7 +3,7 @@
  * Konfiguration aus Umgebungsvariablen – der einzige Ort, der process.env liest.
  * Alles andere bekommt das fertige config-Objekt übergeben.
  */
-const { parseTenants } = require("./tenants");
+const { loadTenants } = require("./tenants");
 const { parseBusySource } = require("./agent/calendar");
 
 const REQUIRED_SECRET_LENGTH = 32;
@@ -13,6 +13,10 @@ function fromEnv(env = process.env) {
   const redisUrl = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL || env.REDIS_REST_URL || "";
   const redisToken = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN || env.REDIS_REST_TOKEN || "";
   const secret = env.WAITLIST_SECRET && env.WAITLIST_SECRET.length >= REQUIRED_SECRET_LENGTH ? env.WAITLIST_SECRET : "";
+
+  // Mandanten einmal je Prozess prüfen. Fehler werfen bewusst nicht (kein Absturz-Neustart-Kreislauf mit Logflut),
+  // sondern sperren den Mandantenbetrieb und erscheinen in /api/agent/status (siehe tenants.js).
+  const t = loadTenants(env.TENANTS_JSON || "", console, { waitlistAdminToken: env.WAITLIST_ADMIN_TOKEN || "" });
 
   return {
     deployed,
@@ -28,7 +32,8 @@ function fromEnv(env = process.env) {
     tokenTtlMs: 72 * 60 * 60 * 1000,
     rateLimit: { max: 5, windowSec: 600 },
     // Mandanten (mehrere Praxen/Unternehmen). Leer = ein Mandant wie bisher. Format: siehe core/tenants.js
-    tenants: parseTenants(env.TENANTS_JSON || ""),
+    tenants: t.tenants,
+    tenantsError: t.error,   // "" = in Ordnung; sonst Grund ohne Tokens
 
     // KI-Agent (Telefon + E-Mail)
     agent: {
@@ -47,6 +52,12 @@ function fromEnv(env = process.env) {
       // Belegte Zeiten aus CalenSync Enterprise (Ziel „Buchungsseite“), z. B. https://acme.calensync.de/api/v1/availability/busy.
       // Beide leer = aus. Mit TENANTS_JSON gilt das nur für den Einzelbetrieb; Mandanten tragen eigene Werte ein (tenants.js).
       enterpriseBusy: parseBusySource(env.ENTERPRISE_BUSY_URL, env.ENTERPRISE_BUSY_TOKEN),
+      // Löschfristen in Tagen (agent/retention.js); leer = Standard 30 / 90 / 90
+      retention: {
+        tasksDays: Number(env.AGENT_RETENTION_TASKS_DAYS) || undefined,
+        calendarDays: Number(env.AGENT_RETENTION_CALENDAR_DAYS) || undefined,
+        activityDays: Number(env.AGENT_RETENTION_ACTIVITY_DAYS) || undefined,
+      },
     },
   };
 }

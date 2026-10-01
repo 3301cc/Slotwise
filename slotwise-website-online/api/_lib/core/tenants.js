@@ -24,34 +24,73 @@ const { parseBusySource } = require("./agent/calendar");
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const E164 = /^\+[1-9][0-9]{6,14}$/;
+const RESERVED_IDS = new Set(["default"]); // "default" = Einzelbetrieb (Agent-Cache und Schlüssel ohne Präfix)
 
-/** Liest TENANTS_JSON. Ungültige Einträge werden mit Grund verworfen statt still übernommen. */
-function parseTenants(raw, log = console) {
-  if (!raw) return [];
+/** Rufnummer auf E.164 bringen: Leerzeichen, Bindestriche, Klammern, Punkte, Schrägstriche weg; 00 → +. Ungültig → "". */
+function normalizeE164(raw) {
+  const n = String(raw ?? "").trim().replace(/[\s\-()./]/g, "").replace(/^00/, "+");
+  return E164.test(n) ? n : "";
+}
+
+/**
+ * Liest TENANTS_JSON → { tenants, error }.
+ *   - Einzelne kaputte Einträge (id/adminToken ungültig) werden mit Grund verworfen (die Nummer bleibt dann unvergeben).
+ *   - Widersprüche machen die GANZE Konfiguration ungültig (error gesetzt, tenants leer): ungültiges JSON, reservierte
+ *     id "default", doppelte ids, doppelte adminTokens, doppelte Rufnummern (nach E.164-Normalisierung), adminToken
+ *     gleich WAITLIST_ADMIN_TOKEN. Dann antworten die Agenten-Routen mit 503 und /api/agent/status nennt den Grund –
+ *     bewusst kein Rückfall in den Einzelbetrieb (sonst landeten Anrufe/Zugriffe beim falschen Mandanten).
+ * Fehlertexte und Logs enthalten nie Tokens, nur ids und Positionen.
+ */
+function loadTenants(raw, log = console, { waitlistAdminToken = "" } = {}) {
+  if (!raw || !String(raw).trim()) return { tenants: [], error: "" };
+  const fail = (error) => { log.error(`[tenants] Konfigurationsfehler: ${error} – Mandantenbetrieb gesperrt`); return { tenants: [], error }; };
   let list;
-  try { list = JSON.parse(raw); } catch { log.error("[tenants] TENANTS_JSON ist kein gültiges JSON – ignoriert"); return []; }
-  if (!Array.isArray(list)) return [];
-  const seen = new Set();
+  try { list = JSON.parse(raw); } catch { return fail("TENANTS_JSON ist kein gültiges JSON"); }
+  if (!Array.isArray(list)) return fail("TENANTS_JSON muss eine Liste (Array) sein");
+  const problems = [];
+  const ids = new Map(), tokens = new Map(), numbers = new Map();
   const out = [];
-  for (const t of list) {
+  list.forEach((t, i) => {
+    const pos = `Eintrag ${i + 1}`;
+    if (t && typeof t === "object" && RESERVED_IDS.has(String(t.id || "").toLowerCase())) { problems.push(`${pos}: id "${String(t.id)}" ist reserviert`); return; }
     const why = !t || typeof t !== "object" ? "kein Objekt"
       : !ID_RE.test(String(t.id || "")) ? "id fehlt oder ungültig"
-      : seen.has(t.id) ? "id doppelt"
       : String(t.adminToken || "").length < 24 ? "adminToken fehlt oder kürzer als 24 Zeichen"
       : null;
-    if (why) { log.error(`[tenants] Eintrag verworfen (${why})`); continue; }
-    seen.add(t.id);
+    if (why) { log.error(`[tenants] ${pos} verworfen (${why})`); return; }
+    const label = `${pos} ("${t.id}")`;
+    if (ids.has(t.id)) problems.push(`${label}: id doppelt (wie ${ids.get(t.id)})`);
+    else ids.set(t.id, label);
+    const token = String(t.adminToken);
+    if (tokens.has(token)) problems.push(`${label}: adminToken identisch mit ${tokens.get(token)}`);
+    else tokens.set(token, label);
+    if (waitlistAdminToken && token === waitlistAdminToken) problems.push(`${label}: adminToken identisch mit WAITLIST_ADMIN_TOKEN`);
+    const phones = [];
+    for (const rawNo of Array.isArray(t.phoneNumbers) ? t.phoneNumbers : []) {
+      const n = normalizeE164(rawNo);
+      if (!n) { log.error(`[tenants] ${label}: Rufnummer ignoriert (kein E.164)`); continue; }
+      if (phones.includes(n)) continue; // doppelt im selben Eintrag: harmlos
+      if (numbers.has(n)) problems.push(`${label}: Rufnummer ${n} schon bei ${numbers.get(n)}`);
+      else numbers.set(n, label);
+      phones.push(n);
+    }
     out.push({
       id: t.id,
       company: String(t.company || t.id).slice(0, 120),
       hostName: String(t.hostName || "das Team").slice(0, 120),
-      adminToken: String(t.adminToken),
-      phoneNumbers: (Array.isArray(t.phoneNumbers) ? t.phoneNumbers : []).map(String).filter((n) => E164.test(n)),
-      escalationPhone: E164.test(String(t.escalationPhone || "")) ? String(t.escalationPhone) : "",
+      adminToken: token,
+      phoneNumbers: phones,
+      escalationPhone: normalizeE164(t.escalationPhone),
       enterpriseBusy: parseBusySource(t.enterpriseBusyUrl, t.enterpriseBusyToken, log),
     });
-  }
-  return out;
+  });
+  if (problems.length) return fail(`TENANTS_JSON: ${problems.join("; ")}`);
+  return { tenants: out, error: "" };
+}
+
+/** Nur die gültigen Mandanten (leer bei Konfigurationsfehler). */
+function parseTenants(raw, log = console, opts) {
+  return loadTenants(raw, log, opts).tenants;
 }
 
 /** Store-Hülle mit eigenem Schlüsselraum. Nur die Methoden, die der Agent nutzt. */
@@ -66,6 +105,7 @@ function scopedStore(store, tenantId) {
     listPush: (key, ...a) => store.listPush(k(key), ...a),
     listRange: (key, ...a) => store.listRange(k(key), ...a),
     listReplace: (key, ...a) => store.listReplace(k(key), ...a),
+    listRemove: (key, ...a) => store.listRemove(k(key), ...a),
   };
 }
 
@@ -93,8 +133,8 @@ function tenantByToken(tenants, headers) {
 
 /** Mandant zur angerufenen Nummer. */
 function tenantByNumber(tenants, to) {
-  const n = String(to || "").replace(/\s+/g, "");
-  return tenants.find((t) => t.phoneNumbers.includes(n)) || null;
+  const n = normalizeE164(to);
+  return (n && tenants.find((t) => t.phoneNumbers.includes(n))) || null;
 }
 
-module.exports = { parseTenants, scopedStore, tenantConfig, tenantByToken, tenantByNumber };
+module.exports = { loadTenants, parseTenants, normalizeE164, scopedStore, tenantConfig, tenantByToken, tenantByNumber };
