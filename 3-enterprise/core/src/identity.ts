@@ -32,6 +32,9 @@ export interface IdentitySubject {
   mailbox: string;
   entraTenantId: string | null;
   attribute: IdentityAttribute;
+  /** google: Zielpostfach in einem verknüpften Google Workspace (Prüfung über verifyGoogleIdentity) */
+  provider?: "microsoft" | "google";
+  workspaceId?: string | null;
 }
 
 const transient = (status: number) => status === 0 || status === 429 || status >= 500;

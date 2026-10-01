@@ -97,7 +97,7 @@ Siehe `powershell/ANLEITUNG-Admin-Consent.md`. Kernpunkte:
 - **Application Access Policies sind abgelöst.** Microsoft führt RBAC for Applications als Nachfolger. Das Skript nutzt RBAC als Standard und AAP nur als Legacy-Modus.
 - **Im RBAC-Modus darf die App in Entra keinen mandantenweiten Kalender-Grant haben.** Entra-Grants und Exchange-RBAC addieren sich, ein unbeschränkter Grant hebt die Begrenzung auf. Das Skript prüft das und bricht ab.
 - **Ausschluss in zwei Schichten:** Gruppenmitgliedschaft (nur direkte Mitglieder zählen) und zusätzlich ein Abteilungsfilter (`Department -ne 'Personal'`). Ein HR-Postfach, das versehentlich in die Gruppe gerät, bleibt so trotzdem gesperrt.
-- **Google Workspace hat kein plattformseitiges Gegenstück.** Domänenweite Delegation ist alles oder nichts. Das ist im Fact Sheet unter D4 als Restrisiko ausgewiesen.
+- **Google Workspace hat kein plattformseitiges Gegenstück.** Domänenweite Delegation ist alles oder nichts. Das ist im Fact Sheet unter D4 als Restrisiko ausgewiesen. Für Google als Ziel „zweites Konto“ begrenzt CalenSync die Impersonation in Software (Allowlist in API und Worker, Directory-/Graph-Prüfung „dieselbe Person“, nur `calendar.events` für Zielkonten, `admin.directory.user.readonly` nur für ein Directory-Konto mit Rolle „Nutzer: Lesen“); das Dienstkonto hat keinen Schlüssel (IAM `signJwt` über Workload Identity Federation aus AWS). Details: DEPLOYMENT.md, „Ziel Google Workspace“.
 
 ## 4 · Compliance-Abbildung
 
@@ -153,7 +153,7 @@ setInterval(() => void teardownWorker.tick(), 5_000);
 installGracefulShutdown({ server, workers: [teardownWorker, handshakeWorker], closePool: () => pool.end(), log: console.log });
 ```
 
-Für Google-Channels braucht `tokens` zusätzlich einen Provider für Workload Identity mit Impersonation (`getToken(tenant, "google", userId)`). Ein zusammengesetzter `AppTokenProvider` verteilt nach `provider`.
+Für Google-Ziele gibt es `WorkloadIdentityGoogleTokenProvider` (`core/src/googleAuth.ts`: SigV4-signierter `GetCallerIdentity` → Google STS → IAM `signJwt` → OAuth, Cache je Dienstkonto/Postfach/Scope); `SyncWorker` und `TargetCleanupWorker` bekommen ihn als `googleTokens`. Für Google-Channels (`events.watch`) muss er noch in einen zusammengesetzten `AppTokenProvider` eingehängt werden.
 
 ## 6 · Abschluss-Audit: drei weitere Befunde
 

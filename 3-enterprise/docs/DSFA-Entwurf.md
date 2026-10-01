@@ -62,7 +62,10 @@ Fristen: Protokolle [365] Tage, Audit-Log [400] Tage, Backups [35] Tage (`terraf
 ## 5 Offene Punkte vor Produktivstart
 
 - **Abnahme mit echtem Mandanten:** Abgleich und Bereinigung sind gegen eine Nachbildung von Microsoft Graph
-  getestet. Vor Produktivstart mit einem echten Microsoft-365-Testmandanten abnehmen. Google-Ziele gibt es noch nicht.
+  getestet. Vor Produktivstart mit einem echten Microsoft-365-Testmandanten abnehmen. Google-Workspace-Ziele (zweites
+  Konto derselben Person, domänenweite Delegation) sind nur gegen eine Nachbildung der Google-Endpunkte getestet und
+  vor Nutzung mit einem Test-Workspace abzunehmen. Restrisiko: Google begrenzt die Delegation nicht auf Nutzer; die
+  Begrenzung (freigegebene Domains, aktive SCIM-Nutzer, Prüfung „dieselbe Person“) leistet die CalenSync-Software.
 - **Pentest und ISMS:** Externer Penetrationstest steht aus, ISO-27001-Zertifizierung ist geplant (Fact Sheet H1, H2).
 - **Restore-Test:** Erster dokumentierter Restore-Test steht aus (Fact Sheet F3).
 - **Vault Lock:** Wird nach 3 Tagen unwiderruflich und kann mit kurzen Löschfristen kollidieren; vor dem ersten

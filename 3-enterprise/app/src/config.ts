@@ -10,8 +10,9 @@
 import type { TokenEntry } from "../../scim/src/auth.js";
 import {
   IDENTITY_ATTRIBUTES, isDomain, isGuid, normalizeMailbox, TEAM_ID,
-  type IdentityAttribute, type LinkedTenant, type SyncAllowlist, type TeamCalendar,
+  type IdentityAttribute, type LinkedGoogleWorkspace, type LinkedTenant, type SyncAllowlist, type TeamCalendar,
 } from "../../core/src/syncTargets.js";
+import { SERVICE_ACCOUNT_EMAIL, WIF_AUDIENCE } from "../../core/src/googleAuth.js";
 
 export interface AppConfig {
   port: number;
@@ -53,6 +54,13 @@ export interface AppSecrets {
   bookingApiToken: string | null;
   /** showAs=tentative als belegt übertragen (Default false) */
   syncTentative: boolean;
+  /**
+   * Google Workspaces als Ziel (account + provider google). Schreiben per domänenweiter Delegation, keyless:
+   * JWT signiert die IAM Credentials API (signJwt), angemeldet per Workload Identity Federation aus AWS.
+   */
+  linkedGoogleWorkspaces: LinkedGoogleWorkspace[];
+  /** Pflicht, sobald linkedGoogleWorkspaces nicht leer ist */
+  googleWorkloadIdentity: { audience: string; serviceAccountEmail: string } | null;
 }
 
 /** Allowlist für API und Sync-Worker aus dem geprüften Secret */
@@ -64,6 +72,7 @@ export function syncAllowlistFrom(s: AppSecrets): SyncAllowlist {
     linkedTenants: s.linkedTenants,
     teamCalendars: s.teamCalendars,
     bookingEnabled: s.bookingApiToken !== null,
+    googleWorkspaces: s.linkedGoogleWorkspaces,
   };
 }
 
@@ -200,7 +209,59 @@ function parseSyncTargets(o: Record<string, unknown>, homeTenant: string) {
   }
   if (o.syncTentative !== undefined && typeof o.syncTentative !== "boolean") throw new ConfigError("APP_CONFIG.syncTentative: true/false");
   const ownDomainsIdentityAttribute = identityAttribute(o.ownDomainsIdentityAttribute ?? "objectId", "APP_CONFIG.ownDomainsIdentityAttribute");
-  return { ownDomains, ownDomainsIdentityAttribute, linkedTenants, teamCalendars, bookingApiToken, syncTentative: o.syncTentative === true };
+  const google = parseGoogle(o, [...ownDomains, ...linkedTenants.flatMap((t) => t.domains)]);
+  return { ownDomains, ownDomainsIdentityAttribute, linkedTenants, teamCalendars, bookingApiToken, syncTentative: o.syncTentative === true, ...google };
+}
+
+/**
+ * Google-Ziele: googleWorkloadIdentity { audience, serviceAccountEmail } + linkedGoogleWorkspaces[] – streng:
+ * Domains dürfen sich mit Microsoft-Domains nicht überschneiden (ein Postfach gehört genau einer Allowlist),
+ * employeeId-Prüfung verlangt ein directoryAdminSubject, nur Dienstkonten *.iam.gserviceaccount.com.
+ */
+function parseGoogle(o: Record<string, unknown>, microsoftDomains: readonly string[]) {
+  let googleWorkloadIdentity: AppSecrets["googleWorkloadIdentity"] = null;
+  if (o.googleWorkloadIdentity !== undefined && o.googleWorkloadIdentity !== null) {
+    const w = o.googleWorkloadIdentity as Record<string, unknown>;
+    const where = "APP_CONFIG.googleWorkloadIdentity";
+    if (typeof w !== "object" || Array.isArray(w)) throw new ConfigError(`${where}: Objekt erwartet`);
+    if (typeof w.audience !== "string" || !WIF_AUDIENCE.test(w.audience)) {
+      throw new ConfigError(`${where}.audience: //iam.googleapis.com/projects/<Nummer>/locations/global/workloadIdentityPools/<Pool>/providers/<Provider>`);
+    }
+    const sa = typeof w.serviceAccountEmail === "string" ? w.serviceAccountEmail.trim().toLowerCase() : "";
+    if (!SERVICE_ACCOUNT_EMAIL.test(sa)) throw new ConfigError(`${where}.serviceAccountEmail: <name>@<projekt>.iam.gserviceaccount.com`);
+    googleWorkloadIdentity = { audience: w.audience, serviceAccountEmail: sa };
+  }
+  const raw = o.linkedGoogleWorkspaces ?? [];
+  if (!Array.isArray(raw)) throw new ConfigError("APP_CONFIG.linkedGoogleWorkspaces: Liste erwartet");
+  if (raw.length > 0 && !googleWorkloadIdentity) throw new ConfigError("APP_CONFIG.googleWorkloadIdentity fehlt (Pflicht für linkedGoogleWorkspaces)");
+  const seen = new Set(microsoftDomains);
+  const linkedGoogleWorkspaces: LinkedGoogleWorkspace[] = raw.map((t: unknown, i: number) => {
+    const e = (t ?? {}) as Record<string, unknown>;
+    const where = `APP_CONFIG.linkedGoogleWorkspaces[${i}]`;
+    if (typeof e.id !== "string" || !TEAM_ID.test(e.id)) throw new ConfigError(`${where}.id: [a-z0-9_-], 1–64 Zeichen`);
+    const domains = domainList(e.domains, `${where}.domains`);
+    if (domains.length === 0) throw new ConfigError(`${where}.domains: mindestens eine Domain`);
+    for (const d of domains) {
+      if (seen.has(d)) throw new ConfigError(`${where}.domains: ${d} steht schon in einer anderen Allowlist`);
+      seen.add(d);
+    }
+    const sa = e.serviceAccountEmail === undefined ? googleWorkloadIdentity!.serviceAccountEmail
+      : typeof e.serviceAccountEmail === "string" ? e.serviceAccountEmail.trim().toLowerCase() : "";
+    if (!SERVICE_ACCOUNT_EMAIL.test(sa)) throw new ConfigError(`${where}.serviceAccountEmail: <name>@<projekt>.iam.gserviceaccount.com`);
+    const ia = e.identityAttribute ?? "employeeId";
+    if (ia !== "employeeId" && ia !== "localPart") throw new ConfigError(`${where}.identityAttribute: employeeId | localPart`);
+    let directoryAdminSubject: string | null = null;
+    if (e.directoryAdminSubject !== undefined && e.directoryAdminSubject !== null) {
+      directoryAdminSubject = typeof e.directoryAdminSubject === "string" ? normalizeMailbox(e.directoryAdminSubject) : null;
+      if (!directoryAdminSubject) throw new ConfigError(`${where}.directoryAdminSubject: ungültige Adresse`);
+    }
+    if (ia === "employeeId" && !directoryAdminSubject) {
+      throw new ConfigError(`${where}.directoryAdminSubject: Pflicht für identityAttribute employeeId (Nutzer mit Admin-Rolle "Nutzer: Lesen")`);
+    }
+    return { id: e.id, label: label(e.label, `${where}.label`), domains, serviceAccountEmail: sa, identityAttribute: ia, directoryAdminSubject };
+  });
+  if (new Set(linkedGoogleWorkspaces.map((w) => w.id)).size !== linkedGoogleWorkspaces.length) throw new ConfigError("APP_CONFIG.linkedGoogleWorkspaces: doppelte id");
+  return { linkedGoogleWorkspaces, googleWorkloadIdentity };
 }
 
 function identityAttribute(v: unknown, where: string): IdentityAttribute {

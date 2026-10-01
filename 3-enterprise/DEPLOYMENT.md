@@ -63,7 +63,7 @@ run_task() {   # $1 = Task-Familie
 T=$(run_task "$(terraform output -raw bootstrap_task_definition)")
 aws ecs wait tasks-stopped --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T"
 
-# 3) Schema anlegen (core/migrations 001–007) als calensync_migrator
+# 3) Schema anlegen (core/migrations 001–008) als calensync_migrator
 T=$(run_task "$(terraform output -raw migrate_task_definition)")
 aws ecs wait tasks-stopped --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T"
 aws ecs describe-tasks --cluster "$(terraform output -raw ecs_cluster_name)" --tasks "$T" \
@@ -413,9 +413,11 @@ Migration `004_google_channels.sql`:
 **Noch offen für Google insgesamt:**
 
 - **Watch-Handshake:** `events.watch` mit `id` = UUID, `token` = 32 Zufallsbytes base64url, `address` = `${PUBLIC_BASE_URL}/webhooks/google`
-- **Google-Token-Provider:** Workload Identity Federation
+- Der Google-Token-Provider (Workload Identity Federation, keyless) existiert inzwischen für Google-**Ziele**
+  (`core/src/googleAuth.ts`, Abschnitt „Kalenderabgleich → Ziel Google Workspace“); für `events.watch` auf einer
+  Google-**Quelle** ist er noch nicht verdrahtet.
 
-Der Eingang ist fertig. Echte Google-Channels entstehen aber erst mit diesen zwei Teilen.
+Der Eingang ist fertig. Echte Google-Channels entstehen erst mit dem Watch-Handshake.
 
 ### Smoke-Test nach jedem Deployment (`scripts/smoke/webhooks.sh`)
 
@@ -456,8 +458,9 @@ Lifecycle-Events stellen die Jobs ein (je Pipeline höchstens einer wartend), de
 
 Quelle ist immer das Microsoft-365-Postfach des Inhabers (`users/{entraObjectId}/calendarView/delta`, Fenster
 jetzt − 1 Tag … + 90 Tage, alle 24 h neu aufgespannt). Ziel je Pipeline: `account` (zweites Postfach derselben Person,
-auch in einem verknüpften Entra-Mandanten), `team` (Team-Kalender im eigenen Mandanten) oder `booking` (Buchungsseite,
-kein Schreibzugriff). Google-Ziele sind noch nicht unterstützt. Ziele nur aus dieser Allowlist in `APP_CONFIG`
+auch in einem verknüpften Entra-Mandanten **oder in einem verknüpften Google Workspace**, Migration
+`008_google_target.sql`, Unterabschnitt „Ziel Google Workspace“ unten), `team` (Team-Kalender im eigenen Mandanten)
+oder `booking` (Buchungsseite, kein Schreibzugriff). Ziele nur aus dieser Allowlist in `APP_CONFIG`
 (alle Schlüssel optional):
 
 ```json
@@ -526,6 +529,109 @@ kein Schreibzugriff). Google-Ziele sind noch nicht unterstützt. Ziele nur aus d
 - Nicht enthalten: Fortsetzen sehr großer Kalender über mehrere Sync-Läufe (Budget 8 min je Lauf; die Bereinigung
   setzt dagegen fort).
 
+#### Ziel Google Workspace (`core/src/googleCalendar.ts`, `core/src/googleAuth.ts`, Migration `008_google_target.sql`)
+
+> **Nur gegen gefälschte Google-Endpunkte getestet** (STS, IAM, OAuth, Calendar, Directory in
+> `core/test/googleTarget.test.ts`), nicht gegen echtes Google Cloud / Google Workspace. Vor dem ersten Kunden mit
+> einem Test-Workspace Ende-zu-Ende prüfen.
+
+Das zweite Konto derselben Person kann ein Google-Workspace-Konto sein. CalenSync schreibt per **domänenweiter
+Delegation (DWD)** in den **Primärkalender** genau dieses Kontos – **ohne Dienstkonto-Schlüssel**:
+
+```
+ECS-Task-Rolle ──SigV4──▶ signierter sts:GetCallerIdentity (wird NICHT an AWS gesendet, nur an Google übergeben)
+   ──▶ sts.googleapis.com/v1/token (Token-Exchange; Google prüft Konto + Rolle gegen den WIF-Provider)
+   ──▶ iamcredentials …/serviceAccounts/<SA>:signJwt  (Google signiert { iss: SA, sub: <Zielpostfach>, scope, aud })
+   ──▶ oauth2.googleapis.com/token (jwt-bearer) → Access Token nur für dieses Postfach und diesen Scope
+```
+
+`APP_CONFIG` (zusätzlich, optional):
+
+```json
+{
+  "googleWorkloadIdentity": {
+    "audience": "//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/calensync-aws/providers/acme-prod",
+    "serviceAccountEmail": "calensync-dwd@calensync-acme.iam.gserviceaccount.com"
+  },
+  "linkedGoogleWorkspaces": [{
+    "id": "acme-google", "label": "Acme Google", "domains": ["acme-g.de"],
+    "serviceAccountEmail": "calensync-dwd@calensync-acme.iam.gserviceaccount.com",
+    "identityAttribute": "employeeId",
+    "directoryAdminSubject": "calensync-directory@acme-g.de"
+  }]
+}
+```
+
+- `id` `[a-z0-9_-]` (steht in `pipelines.target_workspace_id`), `label` wird im Dashboard als „Zweites Konto (Google): …“
+  gezeigt. `domains` dürfen sich mit `ownDomains`/`linkedTenants[].domains` nicht überschneiden (Start bricht ab).
+- `serviceAccountEmail` je Workspace optional (Default: das aus `googleWorkloadIdentity`).
+- `identityAttribute`: `employeeId` (Default) – **dieselbe Person** heißt: Entra `employeeId` des Inhabers (Graph,
+  `User.Read.All` wie bisher) ist nicht leer und exakt gleich `externalIds[type=organization]` des Google-Kontos
+  (Directory API `users.get`, genau ein Wert). Dazu muss das Google-Konto die Primäradresse sein (kein Alias) und
+  darf nicht gesperrt sein. `localPart` = Opt-in ohne Prüfung (Warnung wie bei Microsoft).
+- `directoryAdminSubject`: Pflicht bei `employeeId`. Nur dieses Konto wird für die Directory-Abfrage impersoniert
+  (Scope `admin.directory.user.readonly`). Warum nicht der Zielnutzer selbst mit `viewType=domain_public`: die
+  Mitarbeiter-ID ist ein Admin-Feld und dort nicht zuverlässig sichtbar.
+- Request: `{ "kind": "account", "provider": "google", "workspaceId": "acme-google", "mailbox": "jana@acme-g.de" }`
+  (ohne `provider` bzw. `provider: "microsoft"` bleibt alles wie bisher). Neue Fehler: `400 target_provider_invalid`,
+  `400 target_workspace_id_invalid` (fehlt/ungültig bzw. bei Microsoft gesetzt), `400 target_entra_tenant_id_invalid`
+  (Google mit Entra-Mandant), `422 target_not_allowed` + `reason: "workspace_not_linked"`.
+- `GET /me/sync-targets`: Vorschläge zusätzlich `{ provider: "google", workspaceId, label, mailbox, verified: false }`;
+  `sync-status`: `target: { kind: "account", label: "Google: <label>", provider: "google" }`.
+
+Was geschrieben wird (`calendars/primary/events`, `sendUpdates=none`): `busy` = `summary` (busyLabel),
+`transparency: "opaque"`, Beginn/Ende, Erinnerungen aus – kein `description`, `location`, `attendees`; `full` =
+zusätzlich Betreff und Ort, private Termine wie `busy`. Jeder Termin hat eine **deterministische ID** (base32hex des
+Hashes aus Pipeline + Quelltermin) und `extendedProperties.private.calensyncRef` (derselbe Hash, kein Inhalt).
+Absturz nach dem Einfügen → nächster Lauf PATCHt dieselbe ID; `409` beim Einfügen (ID existiert, auch gelöscht) →
+PATCH mit `status: "confirmed"`; `404`/`410` beim Löschen = erledigt. Die Bereinigung löscht alle Zieltermine
+(auch archivierte und unbestätigte Anlagen) mit genau diesen IDs, nur per DELETE.
+
+Sicherheitsregeln wie bei Microsoft: Allowlist in API **und** Worker (Workspace + Domain), Prüfung „dieselbe Person“
+bei der Anlage und spätestens alle 24 h im Worker, Pipeline-Status vor **jedem** Google-Aufruf (auch vor jedem Schritt
+der Token-Kette), keine Inhalte in DB/Log/Alarm (Kanarienvogel-Tests). Tokens werden je (Dienstkonto, Postfach,
+Scope) gecacht – ein Token von Person A kommt nie für Person B aus dem Cache. Fehler (`classifyGoogleError`):
+`403 rateLimitExceeded/userRateLimitExceeded/quotaExceeded`, `429`, `5xx` → Backoff; `401` → Token neu;
+`403 accessNotConfigured/insufficientPermissions/domainPolicy` → `config_error`; sonstige `403`, `404` →
+`blocked_scope` (in den ersten 8 h nach Anlage: Wiederholung); Token-Kette: `unauthorized_client` (DWD fehlt) →
+`config_error`, `invalid_grant` (Konto unbekannt/gesperrt) → `blocked_scope`, STS/IAM-Ablehnung → `config_error`.
+
+**Was der Google-Admin des Kunden (bzw. der Betreiber im eigenen GCP-Projekt) einrichten muss:**
+
+1. **GCP-Projekt des Betreibers** (eines je CalenSync-Mandant empfohlen): APIs aktivieren – *IAM Service Account
+   Credentials API*, *Security Token Service API*, *Google Calendar API*, *Admin SDK API*.
+2. **Dienstkonto** `calensync-dwd@<projekt>.iam.gserviceaccount.com` anlegen. **Keinen Schlüssel erzeugen**; per
+   Organisationsrichtlinie `iam.disableServiceAccountKeyCreation` absichern. Notieren: **OAuth-2-Client-ID** (numerische
+   „Unique ID“) des Dienstkontos.
+3. **Workload Identity Pool + AWS-Provider**: Pool `calensync-aws`, Provider `acme-prod` vom Typ AWS mit der
+   **AWS-Konto-ID des Mandanten-Stacks**; Attribut-Bedingung auf die Task-Rolle, z. B.
+   `attribute.aws_role == "arn:aws:sts::<KONTO>:assumed-role/calensync-<tenant>-<env>-ecs-task"`.
+   Die volle Provider-Ressource ist `audience` in `APP_CONFIG`.
+4. **Impersonation erlauben**: auf dem Dienstkonto `roles/iam.serviceAccountTokenCreator` für
+   `principalSet://iam.googleapis.com/projects/<NUMMER>/locations/global/workloadIdentityPools/calensync-aws/attribute.aws_role/arn:aws:sts::<KONTO>:assumed-role/calensync-<tenant>-<env>-ecs-task`
+   (nur diese Rolle, nicht der ganze Pool). Mehr IAM-Rechte bekommt das Dienstkonto nicht.
+5. **Google Workspace Admin-Konsole** → *Sicherheit → Zugriffs- und Datenkontrolle → API-Steuerung →
+   Domainweite Delegierung*: Client-ID aus 2. mit **genau** diesen Scopes eintragen:
+   `https://www.googleapis.com/auth/calendar.events,https://www.googleapis.com/auth/admin.directory.user.readonly`.
+6. **Directory-Subjekt**: Nutzer `calensync-directory@…` anlegen (keine Lizenz für Gmail/Kalender nötig), eine
+   **benutzerdefinierte Admin-Rolle** nur mit *Admin-API-Berechtigungen → Nutzer → Lesen* erstellen und nur ihm
+   zuweisen. Bei den Nutzern muss die Mitarbeiter-ID (*Nutzerinformationen → Mitarbeiter-ID*) = Entra `employeeId`
+   gepflegt sein (z. B. per Google Cloud Directory Sync / Provisioning).
+7. AWS: keine neue Berechtigung nötig (`sts:GetCallerIdentity` braucht keine). Egress 443 zu `sts.googleapis.com`,
+   `iamcredentials.googleapis.com`, `oauth2.googleapis.com`, `www.googleapis.com`, `admin.googleapis.com`.
+
+**Grenze (Fact Sheet D4):** Google kann DWD nicht auf Nutzer oder Gruppen einschränken – das Dienstkonto *könnte*
+jedes Konto des Workspace impersonieren. CalenSync begrenzt das in Software: Kalender-Scope nur für Postfächer, die
+(a) in `linkedGoogleWorkspaces[].domains` liegen, (b) einer Pipeline eines per SCIM provisionierten, aktiven Inhabers
+gehören (also Mitglied der Freigabegruppe in Entra) und (c) nach Directory + Graph derselben Person gehören; nach
+einem Widerruf nur noch DELETE der eigenen Termine (Bereinigung). Directory-Scope nur für `directoryAdminSubject`.
+Abgewiesene Ziele: `config_error` + Alarm `worker_alert`; die Admin-Rolle des Directory-Subjekts begrenzt dessen
+Leserechte plattformseitig.
+
+**Reihenfolge beim Einführen:** erst Migration 008 + neuen Code ausrollen, **danach** `linkedGoogleWorkspaces` in
+`APP_CONFIG` eintragen (neuer Task-Start). Ein noch laufender alter Task kennt Google-Ziele nicht und würde eine
+Google-Pipeline als `target_not_allowed` stilllegen.
+
 ---
 
 ## 5 · Logging & Monitoring (`core/src/logger.ts`, `terraform/monitoring.tf`)
@@ -566,6 +672,7 @@ Alarme (Namespace `CalenSync/<tenant>`, je 5 min, an SNS-Topic mit eigenem KMS-S
 | Smoke-Test | 25/25 gegen den echten `createAppServer` lokal (HTTP), nicht gegen AWS |
 | Migrationen | gegen PostgreSQL 16: Bootstrap, Vorwärts, Idempotenz, Rollback bei Fehler, Prüfsummen-Schutz, Default-Privileges (App darf DML, kein TRUNCATE/DDL) |
 | `frontend/` | Typecheck; 4 Tests gegen den echten App-Server (200, 401 → Token-Erneuerung, 403, 404, 503 mit Retry-After, Netzwerkfehler, `createPipeline` inkl. Replay, 409, 422, verlorene Antwort → Retry mit demselben Key, genau eine Pipeline) |
+| Google-Ziel | `core/test/googleTarget.test.ts` (16 Tests: Token-Kette mit echter SigV4-Signatur inkl. AWS-Testvektor, Caches je Subjekt, Anlage/Änderung/Löschung, 409 → PATCH, busy/full, Kanarienvogel, Allowlist, dieselbe Person, Bereinigung inkl. archivierter, Fehlerklassen) und `app/test/sync.pg.test.ts` (Migration 008). **Nur gegen gefälschte Google-Endpunkte** |
 | `core/` | 71 Tests inkl. der PostgreSQL-16-Tests (Queue, Google-Replay-Schutz, Renewal-Scheduler und 404-Neuanlage, Aktivierung nach Deaktivierung), Logger, Renewal-Worker (200, 404, 401, 429/503/Timeout, 403, 400, Offboarding-Vorrang); Migration 006 zweimal eingespielt |
 | Terraform | statisch (Klammern, Referenzen, Variablen). **Kein** `terraform validate/plan` – vor dem ersten Apply zwingend |
 | Dockerfile, Deploy-Workflow | YAML geprüft, **nicht gebaut/ausgeführt** (kein Docker, kein AWS in der Sandbox) |

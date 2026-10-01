@@ -4,6 +4,8 @@
  * Quelle: Microsoft-365-Postfach des Inhabers, users/{entraObjectId}/calendarView/delta über ein Zeitfenster
  * (Default jetzt − 1 Tag … jetzt + 90 Tage). Ziel (pipelines.target_kind):
  *   account  zweites Postfach derselben Person, ggf. in einem verknüpften Entra-Mandanten (eigenes App-Token)
+ *            oder – target_provider google – Primärkalender in einem verknüpften Google Workspace (googleCalendar.ts,
+ *            domänenweite Delegation, Token keyless über googleAuth.ts)
  *   team     Team-/Abteilungskalender im eigenen Mandanten
  *   booking  Buchungsseite – KEIN Provider-Schreibzugriff, nur sync_event_map (Busy-API liest daraus)
  *
@@ -36,11 +38,14 @@
  *     error + Alarm, last_sync_error = Code.
  */
 import { createHash } from "node:crypto";
-import { classifyGraphError, type FailureCategory, type GraphFailure } from "./errorHandler.js";
+import { classifyGoogleError, classifyGraphError, type ErrorDecision, type FailureCategory, type GraphFailure } from "./errorHandler.js";
+import { GoogleAuthError, GoogleCallError, GraphCallError, RunAborted } from "./syncErrors.js";
 import type { GraphTokenSource } from "./appToken.js";
 import type { DelayedJobQueue, Job } from "./retryQueue.js";
-import { fullModeAllowed, recheckStoredTarget, type ResolvedTarget, type StoredTarget, type SyncAllowlist } from "./syncTargets.js";
+import { fullModeAllowed, googleWorkspaceFor, recheckStoredTarget, type ResolvedTarget, type StoredTarget, type SyncAllowlist } from "./syncTargets.js";
 import { verifyIdentity } from "./identity.js";
+import type { GoogleTokenSource } from "./googleAuth.js";
+import { createGoogleCaller, GoogleCalendarWriter, verifyGoogleIdentity, type GoogleCaller } from "./googleCalendar.js";
 import type { FetchLike } from "./types.js";
 
 export const SYNC_KIND = "pipeline.delta_sync";
@@ -128,6 +133,8 @@ export interface SyncDeps {
   queue: Pick<DelayedJobQueue, "claimDue" | "complete" | "reschedule" | "fail">;
   repo: SyncRepo;
   tokens: GraphTokenSource;
+  /** Google-Ziele (DWD, keyless); fehlt es, gelten Google-Ziele als nicht konfiguriert (config_error) */
+  googleTokens?: GoogleTokenSource;
   fetchFn: FetchLike;
   allowlist: SyncAllowlist;
   workerId: string;
@@ -169,14 +176,9 @@ export const DEFAULT_SYNC_OPTIONS: SyncOptions = {
 
 export type SyncOutcome = "synced" | "dropped" | "stopped" | "busy" | "rescheduled" | "failed";
 
-/** Graph hat mit einem unerwarteten Status geantwortet. body wird nur klassifiziert, nie gespeichert/geloggt. */
-export class GraphCallError extends Error {
-  constructor(readonly status: number, readonly body: string, readonly retryAfter: string | null) {
-    super(`HTTP ${status}`);
-  }
-}
-/** Lauf bewusst abgebrochen (Checkpoint) – nie als Provider-Fehler klassifizieren */
-export class RunAborted extends Error {}
+// GraphCallError (unerwarteter Provider-Status; body nur klassifiziert, nie gespeichert/geloggt) und RunAborted
+// (Checkpoint-Abbruch) liegen in syncErrors.ts und werden hier re-exportiert.
+export { GraphCallError, GoogleCallError, GoogleAuthError, RunAborted } from "./syncErrors.js";
 /** Pipeline nicht mehr aktiv / Ziel geändert – sofort aufhören, nichts mehr aufrufen */
 class PipelineStopped extends RunAborted {}
 class RunBudgetExceeded extends RunAborted {}
@@ -329,7 +331,7 @@ export type GraphCaller = (method: string, url: string, body: Record<string, unk
   Promise<{ status: number; text: string; retryAfter: string | null }>;
 
 export interface TargetWriter {
-  readonly kind: "graph" | "booking";
+  readonly kind: "graph" | "google" | "booking";
   /** Liefert die ID des Zieltermins (booking: null) */
   create(block: TargetBlock, ref: string, transactionId: string): Promise<string | null>;
   update(targetEventId: string, block: TargetBlock): Promise<"ok" | "gone">;
@@ -425,7 +427,17 @@ interface Run {
 
 const alive = (c: SyncContext | null): c is SyncContext => c !== null && c.status === "active" && c.ownerActive && !!c.ownerEntraObjectId;
 const sameTarget = (a: ResolvedTarget, b: ResolvedTarget) =>
-  a.kind === b.kind && a.mailbox === b.mailbox && (a.entraTenantId ?? null) === (b.entraTenantId ?? null) && (a.ref ?? null) === (b.ref ?? null);
+  a.kind === b.kind && a.mailbox === b.mailbox && (a.entraTenantId ?? null) === (b.entraTenantId ?? null) && (a.ref ?? null) === (b.ref ?? null)
+  && (a.provider ?? "microsoft") === (b.provider ?? "microsoft") && (a.workspaceId ?? null) === (b.workspaceId ?? null);
+
+/** Entscheidung für einen Provider-Fehler: Google-Aufrufe nach Googles Format, alles andere nach Graph */
+export function classifyProviderError(err: GraphCallError, ctx: Parameters<typeof classifyGraphError>[1]): ErrorDecision {
+  if (err instanceof GoogleCallError) {
+    return classifyGoogleError({ status: err.status, body: err.body, retryAfter: err.retryAfter,
+      ...(err instanceof GoogleAuthError ? { authStage: err.stage, authCode: err.code } : {}) }, ctx);
+  }
+  return classifyGraphError({ status: err.status, body: err.body, retryAfter: err.retryAfter }, ctx);
+}
 
 export class SyncWorker {
   private stopping = false;
@@ -503,6 +515,17 @@ export class SyncWorker {
       return "failed";
     }
 
+    const workspace = googleWorkspaceFor(this.d.allowlist, check.target);
+    if (check.target.provider === "google" && (!workspace || !this.d.googleTokens)) {
+      // Google-Ziel erlaubt, aber kein Token-Provider (googleWorkloadIdentity fehlt) → nichts aufrufen
+      const reason = "google_not_configured";
+      await queue.fail(job.id, workerId, reason);
+      await repo.setPipelineStatus(job.tenantId, pipelineId, "config_error");
+      await repo.setSyncError(job.tenantId, pipelineId, "config");
+      await this.d.alert({ tenantId: job.tenantId, pipelineId, category: "config", reason });
+      return "failed";
+    }
+
     if (!(await repo.acquireSyncLease(job.tenantId, pipelineId, job.id, this.o.leaseMs))) {
       await this.reschedule(job, this.o.leaseBusyDelayMs, payload, "sync_lease_busy");
       return "busy";
@@ -514,7 +537,9 @@ export class SyncWorker {
     const run: Run = {
       job, tenantId: job.tenantId, pipelineId, ctx, target, mode,
       forceRewrite: (ctx.effectiveMode ?? null) !== null && ctx.effectiveMode !== mode,
-      writer: target.kind === "booking" ? new BookingWriter() : new GraphCalendarWriter(this.caller(job.tenantId, pipelineId, ctx, target), target.mailbox ?? "", target.entraTenantId),
+      writer: target.kind === "booking" ? new BookingWriter()
+        : workspace ? new GoogleCalendarWriter(this.googleCaller(job.tenantId, pipelineId, ctx, target, workspace.serviceAccountEmail), target.mailbox ?? "")
+        : new GraphCalendarWriter(this.caller(job.tenantId, pipelineId, ctx, target), target.mailbox ?? "", target.entraTenantId),
       stats: { pages: 0, created: 0, updated: 0, deleted: 0, unchanged: 0, loopSkipped: 0, rejected: 0, pruned: 0, archived: 0, resets: 0 },
       deadline: this.now().getTime() + this.o.runBudgetMs,
     };
@@ -522,7 +547,7 @@ export class SyncWorker {
       if (target.kind === "account") await this.ensureIdentity(run);
       await this.sync(run, payload.full);
       await queue.complete(job.id, workerId);
-      this.d.log?.({ level: "info", msg: "sync_done", pipelineId, target: target.kind, full: payload.full, ...run.stats });
+      this.d.log?.({ level: "info", msg: "sync_done", pipelineId, target: target.kind, provider: target.provider ?? "microsoft", full: payload.full, ...run.stats });
       return "synced";
     } catch (err) {
       if (err instanceof ShuttingDown) {
@@ -557,9 +582,8 @@ export class SyncWorker {
     // Netzwerk/Timeout/DB: nur der Fehlername (Meldungen können URLs mit IDs enthalten)
     else failure = { status: 0, body: err instanceof Error ? err.name : "error", retryAfter: null };
 
-    const decision = classifyGraphError(failure, {
-      now: this.now(), grantedAt: run.ctx.createdAt, attempts: payload.attempts ?? {}, random: this.d.random,
-    });
+    const cctx = { now: this.now(), grantedAt: run.ctx.createdAt, attempts: payload.attempts ?? {}, random: this.d.random };
+    const decision = err instanceof GraphCallError ? classifyProviderError(err, cctx) : classifyGraphError(failure, cctx);
     this.d.log?.({ level: decision.action === "retry" ? "warn" : "error", msg: "sync_failed", pipelineId: run.pipelineId,
       status: failure.status, category: decision.category, action: decision.action, ...run.stats });
 
@@ -596,6 +620,11 @@ export class SyncWorker {
       () => this.checkpoint(tenantId, pipelineId, ctx, target));
   }
 
+  private googleCaller(tenantId: string, pipelineId: string, ctx: SyncContext, target: ResolvedTarget, serviceAccountEmail: string): GoogleCaller {
+    return createGoogleCaller(this.d.googleTokens as GoogleTokenSource, this.d.fetchFn, serviceAccountEmail, this.o.requestTimeoutMs,
+      () => this.checkpoint(tenantId, pipelineId, ctx, target));
+  }
+
   /**
    * account: "dieselbe Person" per Graph – vor dem ersten Schreiben, nach Wechsel des Merkmals und spätestens
    * alle identityMaxAgeMs. Jeder Aufruf läuft über den Checkpoint (Pipeline noch aktiv?).
@@ -605,9 +634,17 @@ export class SyncWorker {
     if (attribute === "localPart") return; // Opt-in ohne Graph (syncTargets.ts)
     const at = run.ctx.identityVerifiedAt ?? null;
     if (at && run.ctx.identityAttribute === attribute && this.now().getTime() - at.getTime() < this.o.identityMaxAgeMs) return;
-    const verdict = await verifyIdentity(this.caller(run.tenantId, run.pipelineId, run.ctx, run.target), {
-      ownerObjectId: run.ctx.ownerEntraObjectId ?? "", mailbox: run.target.mailbox ?? "", entraTenantId: run.target.entraTenantId, attribute,
-    });
+    const graph = this.caller(run.tenantId, run.pipelineId, run.ctx, run.target);
+    const ws = googleWorkspaceFor(this.d.allowlist, run.target);
+    const verdict = ws
+      // Google: Directory API (Subjekt = directoryAdminSubject, nur Lesen) gegen Graph-employeeId des Inhabers
+      ? await verifyGoogleIdentity(graph, this.googleCaller(run.tenantId, run.pipelineId, run.ctx, run.target, ws.serviceAccountEmail), {
+        ownerObjectId: run.ctx.ownerEntraObjectId ?? "", mailbox: run.target.mailbox ?? "",
+        directoryAdminSubject: ws.directoryAdminSubject ?? null, attribute: "employeeId",
+      })
+      : await verifyIdentity(graph, {
+        ownerObjectId: run.ctx.ownerEntraObjectId ?? "", mailbox: run.target.mailbox ?? "", entraTenantId: run.target.entraTenantId, attribute,
+      });
     if (verdict.kind === "unavailable") throw new GraphCallError(verdict.status, verdict.body, verdict.retryAfter);
     if (verdict.kind === "rejected") throw new IdentityRejected(verdict.why);
     await this.d.repo.markIdentityVerified(run.tenantId, run.pipelineId, attribute);
@@ -668,7 +705,7 @@ export class SyncWorker {
       for (const row of await repo.listMappings(run.pipelineId)) {
         if (seen.has(row.sourceEventId)) continue;
         if (row.archived) {
-          if (run.forceRewrite && row.targetEventId && run.writer.kind === "graph") await this.rewriteArchived(run, row.targetEventId);
+          if (run.forceRewrite && row.targetEventId && run.writer.kind !== "booking") await this.rewriteArchived(run, row.targetEventId);
           continue;
         }
         if (row.endAt.getTime() < windowStart.getTime()) {
@@ -736,7 +773,7 @@ export class SyncWorker {
   }
 
   private async removeBlock(run: Run, sourceEventId: string, row: MapRow): Promise<void> {
-    if (run.writer.kind === "graph") {
+    if (run.writer.kind !== "booking") {
       const id = row.targetEventId ?? (await run.writer.findByRef(sourceRef(run.pipelineId, sourceEventId)));
       if (id) await run.writer.delete(id);
     }

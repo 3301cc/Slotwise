@@ -634,3 +634,65 @@ test("Route: identity_unavailable → 503 identity_check_unavailable mit Retry-A
     assert.deepEqual([r.status, r.json.error, r.headers["retry-after"]], [503, "identity_check_unavailable", "17"]);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------
+// Google Workspace als Ziel (account + provider google)
+// ---------------------------------------------------------------------------------------------------
+const GALLOW: SyncAllowlist = { ...ALLOW, googleWorkspaces: [{ id: "acme-google", label: "Acme Google", domains: ["acme-g.example"],
+  serviceAccountEmail: "calensync-dwd@calensync-acme.iam.gserviceaccount.com", identityAttribute: "employeeId", directoryAdminSubject: "dir@acme-g.example" }] };
+const gTarget = (o: Record<string, unknown> = {}) => ({ kind: "account" as const, provider: "google" as const, workspaceId: "acme-google", mailbox: "max.muster@acme-g.example", entraTenantId: null, ...o });
+
+test("Google: Anlage nach Allowlist + Prüfung dieselbe Person (Dispatcher bekommt provider/workspaceId); Spalten target_provider/target_workspace_id; Replay/Konflikt", async () => {
+  const st = state();
+  const seen: unknown[] = [];
+  const at = new Date("2026-10-01T09:00:00Z");
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, GALLOW, async (t, subj) => { seen.push(subj); return verifier(t, subj); }, () => at);
+  const r = await store.createPipeline(input({ target: gTarget() }));
+  assert.equal(r.kind, "created");
+  assert.deepEqual(r.kind === "created" && r.pipeline.target, { kind: "account", label: "Google: Acme Google", provider: "google" });
+  assert.deepEqual(seen, [{ ownerObjectId: "oid-42", mailbox: "max.muster@acme-g.example", entraTenantId: null, attribute: "employeeId", provider: "google", workspaceId: "acme-google" }]);
+  const row = st.pipelines[0] as unknown as Record<string, unknown>;
+  assert.deepEqual([row.targetKind, row.targetMailbox, row.targetEntraTenantId, row.targetProvider, row.targetWorkspaceId, row.identityAttribute, row.identityVerifiedAt],
+    ["account", "max.muster@acme-g.example", null, "google", "acme-google", "employeeId", at]);
+  assert.equal((await store.createPipeline(input({ target: gTarget() }))).kind, "replayed");
+  // gleicher Key, gleiches Postfach, aber Microsoft statt Google → Konflikt (nie still die Google-Pipeline zurückgeben)
+  assert.equal((await new PrismaPipelineStore(fakePrisma(st), 5, ids, { ...GALLOW, ownDomains: ["acme-g.example"] }, verifier)
+    .createPipeline(input({ target: { kind: "account", mailbox: "max.muster@acme-g.example", entraTenantId: null } }))).kind, "idempotency_conflict");
+  // Microsoft-Pipelines bekommen ausdrücklich provider microsoft
+  const ms = state();
+  await new PrismaPipelineStore(fakePrisma(ms), 5, ids, GALLOW, verifier).createPipeline(input());
+  assert.deepEqual([(ms.pipelines[0] as unknown as Record<string, unknown>).targetProvider, (ms.pipelines[0] as unknown as Record<string, unknown>).targetWorkspaceId], ["microsoft", null]);
+
+  for (const [target, reason, allow] of [
+    [gTarget({ mailbox: "max.muster@acme-alias.example" }), "domain_not_allowed"],
+    [gTarget({ workspaceId: "fremd" }), "workspace_not_linked"],
+    [gTarget(), "workspace_not_linked", ALLOW],
+    [gTarget({ mailbox: "eva@acme-g.example" }), "identity_unverified"],
+  ] as const) {
+    const s2 = state();
+    const res = await new PrismaPipelineStore(fakePrisma(s2), 5, ids, allow ?? GALLOW, verifier).createPipeline(input({ target }));
+    assert.deepEqual(res, { kind: "target_not_allowed", reason }, JSON.stringify(target));
+    assert.deepEqual([s2.pipelines.length, s2.jobs.length], [0, 0]);
+  }
+  const down = new PrismaPipelineStore(fakePrisma(state()), 5, ids, GALLOW, async () => ({ kind: "unavailable", status: 503, body: "", retryAfter: "4" }));
+  assert.deepEqual(await down.createPipeline(input({ target: gTarget() })), { kind: "identity_unavailable", retryAfterSeconds: 4 });
+});
+
+test("Route Google: Body { kind, provider, workspaceId, mailbox } wird geprüft und unverändert an den Store gegeben; kaputte Google-Ziele → 400", async () => {
+  const m = mockStore({ kind: "target_not_allowed", reason: "workspace_not_linked" });
+  await withApi(m.store, async (port) => {
+    for (const [target, error] of [
+      [{ kind: "account", provider: "google", mailbox: "max@acme-g.example" }, "target_workspace_id_invalid"],
+      [{ kind: "account", provider: "google", workspaceId: "acme-google", mailbox: "max@acme-g.example", entraTenantId: LINKED }, "target_entra_tenant_id_invalid"],
+      [{ kind: "account", provider: "gmail", mailbox: "max@acme-g.example" }, "target_provider_invalid"],
+      [{ kind: "account", workspaceId: "acme-google", mailbox: "max@acme-g.example" }, "target_workspace_id_invalid"],
+    ] as const) {
+      const r = await post(port, ok(), JSON.stringify({ mode: "busy", target }));
+      assert.deepEqual([r.status, r.json.error], [400, error], JSON.stringify(target));
+    }
+    assert.equal(m.calls.length, 0);
+    const na = await post(port, ok(), JSON.stringify({ mode: "busy", target: { kind: "account", provider: "google", workspaceId: "acme-google", mailbox: "Max@ACME-G.example" } }));
+    assert.deepEqual([na.status, na.json], [422, { error: "target_not_allowed", reason: "workspace_not_linked" }]);
+    assert.deepEqual(m.calls[0]?.target, { kind: "account", provider: "google", workspaceId: "acme-google", mailbox: "max@acme-g.example", entraTenantId: null });
+  });
+});
