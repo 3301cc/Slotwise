@@ -160,11 +160,11 @@ resource "aws_lb" "this" {
 }
 
 resource "aws_lb_target_group" "app" {
-  name                 = substr("${local.name}-app", 0, 32)
-  port                 = var.app_port
-  protocol             = "HTTP"
-  target_type          = "ip"
-  vpc_id               = aws_vpc.this.id
+  name        = substr("${local.name}-app", 0, 32)
+  port        = var.app_port
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = aws_vpc.this.id
   # Muss länger sein als der längste Request (Webhook-Annahme < 3 s, API-Calls < 30 s): laufende Requests
   # eines Tasks, der beim Rolling Update ersetzt wird, laufen zu Ende, bevor die Verbindung getrennt wird.
   deregistration_delay = 60

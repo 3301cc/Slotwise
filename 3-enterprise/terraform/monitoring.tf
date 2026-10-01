@@ -93,11 +93,11 @@ locals {
   log_metric_namespace = "CalenSync/${var.tenant_id}"
 
   log_metrics = {
-    SecurityEvents     = "{ $.level = \"security\" }"
-    SecretMismatch     = "{ $.level = \"security\" && ($.event = \"client_state_mismatch\" || $.reason = \"token_mismatch\") }"
-    AlertEvents        = "{ $.level = \"alert\" }"
-    ErrorEvents        = "{ $.level = \"error\" }"
-    LogLinesDropped    = "{ $.msg = \"log_lines_dropped\" }"
+    SecurityEvents  = "{ $.level = \"security\" }"
+    SecretMismatch  = "{ $.level = \"security\" && ($.event = \"client_state_mismatch\" || $.reason = \"token_mismatch\") }"
+    AlertEvents     = "{ $.level = \"alert\" }"
+    ErrorEvents     = "{ $.level = \"error\" }"
+    LogLinesDropped = "{ $.msg = \"log_lines_dropped\" }"
   }
 
   # Metrik → [Schwelle, Zeitraum in s, Beschreibung]
