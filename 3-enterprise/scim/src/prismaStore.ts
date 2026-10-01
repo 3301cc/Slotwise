@@ -3,7 +3,7 @@
  *
  * Bewusst gegen ein strukturelles Minimal-Interface typisiert statt gegen den generierten PrismaClient:
  * so kompiliert dieses Modul unabhängig vom generierten Client, und jeder echte PrismaClient mit dem Schema
- * aus prisma/scim.prisma erfüllt das Interface.
+ * aus prisma/schema.prisma (Repo-Root) erfüllt das Interface.
  *
  * Kern-Garantie (transaktionale Outbox): Kappung und Teardown-Auftrag sind EIN Commit.
  *   pipelines → 'revoked' · provider_tokens → gelöscht · webhook_channels → stop_requested
@@ -50,7 +50,10 @@ import {
   StoreBusyError,
 } from "./types.js";
 
-type Args = Record<string, unknown>;
+// any statt Record<string, unknown>: Prismas generierte Delegates verlangen exakte Argument-Typen (SelectSubset),
+// ein Record mit Index-Signatur wäre dem echten PrismaClient nicht zuweisbar (Rückgabetypen bleiben geprüft).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Args = any;
 
 interface CountResult {
   count: number;
@@ -235,9 +238,12 @@ async function revokeInTx(
   now: Date,
   purgeUser: boolean,
 ): Promise<RevocationResult> {
+  // Bereinigung des Zielkalenders im selben Commit anfordern (Job unten). Zielpostfach und Termin-IDs bleiben
+  // dafür stehen – auch nach DELETE; genullt bzw. gelöscht werden sie von der Bereinigung, spätestens mit dem
+  // Purge des Tombstones (Notbremse 8 Tage, core/src/teardownJob.ts).
   const pipelines = await tx.pipeline.updateMany({
     where: { tenantId, ownerUserId: userId, status: { not: "revoked" } },
-    data: { status: "revoked", revokedReason: reason, revokedAt: now },
+    data: { status: "revoked", revokedReason: reason, revokedAt: now, cleanupRequestedAt: now },
   });
   const tokens = await tx.providerToken.deleteMany({ where: { tenantId, userId } });
   const channels = await tx.webhookChannel.updateMany({
@@ -250,6 +256,15 @@ async function revokeInTx(
   const inserted = await tx.$executeRaw`
     INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at)
     VALUES (${tenantId}, ${TEARDOWN_JOB_KIND}, ${teardownDedupeKey(userId, purgeUser)}, ${payload}::jsonb, now())
+    ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING`;
+  // Je Pipeline mit offener Bereinigung ein Job "pipeline.target_cleanup" (dedupe je Pipeline). Erfasst auch
+  // früher widerrufene Pipelines, deren Bereinigung noch offen ist (z. B. DELETE nach Deaktivierung).
+  await tx.$executeRaw`
+    INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at)
+    SELECT p.tenant_id, 'pipeline.target_cleanup', 'cleanup:' || p.id, jsonb_build_object('pipelineId', p.id), now()
+      FROM pipelines p
+     WHERE p.tenant_id = ${tenantId} AND p.owner_user_id = ${userId}
+       AND p.cleanup_requested_at IS NOT NULL AND p.cleanup_done_at IS NULL
     ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING`;
   return {
     pipelinesRevoked: pipelines.count,

@@ -6,6 +6,8 @@
  *   1. alle offenen Abos des Users beim Provider beenden (Budget 15 s, parallel)
  *   2. noch offene Abos?  → Job mit Backoff (±15 % Jitter) zurückstellen
  *      keine mehr offen?  → bei purgeUser: Tombstone endgültig löschen, Audit, Job abschließen
+ *   2b. purgeUser und noch offene Bereinigung des Zielkalenders (pipeline.target_cleanup)? → zurückstellen; der
+ *      Tombstone hält bis dahin Zielpostfach und Termin-IDs, die die Bereinigung braucht.
  *   3. Notbremse: Nach maxWaitMs (Default 8 Tage) wird trotzdem gelöscht und alarmiert. Graph-Abos auf
  *      Outlook-Events leben höchstens 10 080 min (< 7 Tage) und werden nicht mehr verlängert – danach ist
  *      sicher nichts mehr aktiv. Der Webhook-Guard verwirft bis dahin jede Notification.
@@ -32,6 +34,11 @@ export interface UserPurger {
   purgeDeletedUser(tenantId: string, userId: string): Promise<boolean>;
 }
 
+/** Offene Bereinigungen der Zielkalender eines Nutzers (core/src/cleanupWorker.ts) */
+export interface PendingCleanups {
+  pendingCleanupsForUser(tenantId: string, userId: string): Promise<number>;
+}
+
 export interface TeardownAuditEvent {
   tenantId: string;
   jobId: string;
@@ -47,7 +54,9 @@ export interface TeardownJobDeps {
   channels: Pick<ChannelRepo, "listOpenForUser">;
   users: UserPurger;
   audit: (e: TeardownAuditEvent) => Promise<void>;
-  alert: (e: { tenantId: string; userId: string; kind: "teardown_deadline" | "teardown_permanent_failure"; detail: string }) => Promise<void>;
+  alert: (e: { tenantId: string; userId: string; kind: "teardown_deadline" | "teardown_permanent_failure" | "cleanup_deadline"; detail: string }) => Promise<void>;
+  /** Purge wartet auf offene Zielkalender-Bereinigungen (bis zur Notbremse). Fehlt es, wird nicht gewartet. */
+  cleanups?: PendingCleanups;
   workerId: string;
   now?: () => Date;
   random?: () => number;
@@ -107,6 +116,21 @@ export class TeardownJobWorker {
       stillOpen: pending.length, permanentFailures: permanent, attempt: job.attempts,
     };
 
+    const waitedMs = this.now().getTime() - Date.parse(requestedAt);
+    const maxWaitMs = this.d.maxWaitMs ?? 8 * 24 * 60 * 60_000;
+
+    if (pending.length === 0 && purgeUser && this.d.cleanups) {
+      const openCleanups = await this.d.cleanups.pendingCleanupsForUser(tenantId, userId);
+      if (openCleanups > 0) {
+        if (waitedMs <= maxWaitMs) {
+          await rescheduleWithBackoff(queue, job, workerId, SUBSCRIPTION_STOP, `${openCleanups} Zielkalender-Bereinigung(en) offen`, { random: this.d.random });
+          return "rescheduled";
+        }
+        // Notbremse: Tombstone samt Zielpostfach/Termin-IDs wird trotzdem gelöscht (Cascade), Alarm für Nacharbeit
+        await this.d.alert({ tenantId, userId, kind: "cleanup_deadline", detail: `${openCleanups} Zielkalender-Bereinigung(en) nach ${Math.round(waitedMs / 3_600_000)} h offen` });
+      }
+    }
+
     if (pending.length === 0) {
       await this.d.audit({ tenantId, jobId: job.id, userId, action: "scim.user.subscriptions_terminated", outcome: permanent === 0 ? "success" : "failure", detail: summary });
       if (permanent > 0) {
@@ -120,8 +144,7 @@ export class TeardownJobWorker {
       return purgeUser ? "purged" : "completed";
     }
 
-    const waitedMs = this.now().getTime() - Date.parse(requestedAt);
-    if (waitedMs > (this.d.maxWaitMs ?? 8 * 24 * 60 * 60_000)) {
+    if (waitedMs > maxWaitMs) {
       await this.d.alert({ tenantId, userId, kind: "teardown_deadline", detail: `${pending.length} Abo(s) nach ${Math.round(waitedMs / 3_600_000)} h noch offen` });
       await this.d.audit({ tenantId, jobId: job.id, userId, action: "scim.user.subscriptions_terminated", outcome: "failure", detail: { ...summary, deadline: true } });
       if (purgeUser) {

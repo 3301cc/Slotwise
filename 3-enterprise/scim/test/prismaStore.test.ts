@@ -26,7 +26,7 @@ function apply(row: Row, data: Row) {
 
 function fakeDb() {
   const t = { scimUser: [] as Row[], pipeline: [] as Row[], providerToken: [] as Row[], webhookChannel: [] as Row[],
-    jobs: [] as Row[], audit: [] as Row[], ops: [] as string[], txOptions: [] as unknown[] };
+    jobs: [] as Row[], audit: [] as Row[], ops: [] as string[], txOptions: [] as unknown[], cleanupInserts: [] as string[][] };
   let transactions = 0;
   const updateMany = (rows: Row[], name = "?") => async (a: Row) => {
     t.ops.push(name);
@@ -74,6 +74,12 @@ function fakeDb() {
       if (sql.includes("pg_advisory_xact_lock(hashtext($), hashtext($))")) { t.ops.push(`user_lock:${v.join("/")}`); return 1; }
       if (sql.includes("INSERT INTO job_queue")) t.ops.push("job_queue");
       if (!sql.includes("INSERT INTO job_queue")) return 0;
+      if (sql.includes("pipeline.target_cleanup")) {
+        // INSERT … SELECT je Pipeline mit offener Bereinigung (echtes SQL: app/test/sync.pg.test.ts)
+        assert.match(sql, /ON CONFLICT \(kind, dedupe_key\) WHERE status = 'queued' DO NOTHING/);
+        t.cleanupInserts.push(v as string[]);
+        return 0;
+      }
       assert.match(sql, /ON CONFLICT \(kind, dedupe_key\) WHERE status = 'queued' DO NOTHING/);
       const [tenantId, kind, dedupeKey, payload] = v as string[];
       if (t.jobs.some((j) => j.kind === kind && j.dedupeKey === dedupeKey && j.status === "queued")) return 0;
@@ -129,6 +135,24 @@ describe("PrismaScimStore", () => {
     const r2 = await store.revokeSyncForUser("acme", "u1", "scim_deactivated");
     assert.deepEqual(r2, { pipelinesRevoked: 0, tokensDestroyed: 0, subscriptionsQueuedForStop: 0, teardownJobQueued: false });
     assert.equal(t.jobs.length, 1, "kein zweiter wartender Teardown-Job");
+  });
+
+  it("Kappung fordert die Zielkalender-Bereinigung im selben Commit an (Pipeline markiert + Job je Pipeline); DELETE löscht Ziel/IDs NICHT vorab", async () => {
+    const { db, t, transactions } = fakeDb();
+    t.scimUser.push({ tenantId: "acme", id: "u1", version: 1, deletionRequestedAt: null, deprovisionedAt: null });
+    t.pipeline.push({ tenantId: "acme", ownerUserId: "u1", status: "active", targetKind: "team", targetMailbox: "vertrieb@acme.example" });
+    const store = new PrismaScimStore(db);
+    await store.revokeSyncForUser("acme", "u1", "scim_deactivated");
+    assert.equal(transactions(), 1);
+    assert.ok(t.pipeline[0].cleanupRequestedAt instanceof Date);
+    assert.deepEqual(t.cleanupInserts, [["acme", "u1"]]);
+    const o = t.ops.filter((x) => x !== "lock_timeout" && !x.startsWith("user_lock"));
+    assert.deepEqual(o, ["pipelines", "provider_tokens", "webhook_channels", "job_queue", "job_queue"]);
+
+    t.ops.length = 0;
+    await store.markDeletedAndEnqueueTeardown("acme", "u1", "2026-10-01T11:00:00.000Z");
+    assert.equal(t.pipeline[0].targetMailbox, "vertrieb@acme.example", "Zielpostfach bleibt bis zur Bereinigung");
+    assert.equal(t.cleanupInserts.length, 2, "offene Bereinigung wird beim DELETE erneut eingestellt (dedupe)");
   });
 
   it("markDeletedAndEnqueueTeardown: Tombstone ohne PII + Kappung + Purge-Job in EINER Transaktion", async () => {

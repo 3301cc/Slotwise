@@ -7,7 +7,24 @@
  *   *    /scim/v2/Users…        SCIM 2.0 für Entra/Okta (Bearer-Token), KEIN CORS, Browser-Origin → 403
  *   *    /api/v1/…              Dashboard-API für das Frontend: strikte CORS-Allowlist + Entra-Token
  *        GET  /api/v1/me/sync-status   (Scope Sync.Read)
- *        POST /api/v1/me/pipelines     (Scope Sync.Write, Idempotency-Key Pflicht)
+ *        GET  /api/v1/me/sync-targets  (Scope Sync.Read) wählbare Ziele laut Admin-Allowlist
+ *        POST /api/v1/me/pipelines     (Scope Sync.Write, Idempotency-Key Pflicht, Body { mode, busyLabel?, target })
+ *        DELETE /api/v1/me/pipelines/{id} (Scope Sync.Write) eigene Pipeline beenden → 202 bzw. 200 (schon beendet)
+ *        GET  /api/v1/availability/busy?from&to   Buchungsseite, statisches Bearer-Token (kein Entra), ≤ 62 Tage
+ *
+ * Fehlercodes der API ({ error, … }):
+ *   400 idempotency_key_required · invalid_json · body_must_be_object · unknown_field:<f> · mode_must_be_busy_or_full
+ *       busyLabel_* · target_invalid · target_kind_invalid · unknown_field:target.<f> · target_mailbox_invalid
+ *       target_entra_tenant_id_invalid · target_team_id_invalid · invalid_range · bad_path
+ *   401 missing_bearer_token · token_expired · … (Entra) · invalid_token (Busy-API)
+ *   403 insufficient_scope · origin_not_allowed
+ *   404 not_found · user_not_provisioned · pipeline_not_found · booking_api_disabled
+ *   409 pipeline_limit_reached
+ *   413 payload_too_large   415 unsupported_media_type
+ *   422 idempotency_key_reused · target_required · target_not_allowed (+ reason: tenant_not_linked | domain_not_allowed |
+ *       not_same_person | target_is_source | own_mailboxes_not_configured | team_not_found | booking_disabled | owner_unknown |
+ *       identity_unverified | full_mode_not_allowed) · range_too_large
+ *   503 temporarily_unavailable (+ Retry-After) · identity_check_unavailable (+ Retry-After) · busy_too_many
  *
  * Pfade werden vor dem Routing geprüft: kodierte Punkte/Slashes oder ../ führen zu 400 – damit kann niemand
  * über /webhooks/../api an der WAF-Regel für /webhooks/ vorbei auf die API zugreifen.
@@ -23,6 +40,10 @@ import { applyCors, type CorsPolicy } from "./cors.js";
 import { AuthError, type EntraTokenVerifier } from "./entraAuth.js";
 import type { StatusRepo } from "./statusApi.js";
 import { parseCreatePipelineBody, parseIdempotencyKey, type PipelineStore } from "./pipelineStore.js";
+import { syncTargetsFor, type OwnerLookup } from "./statusApi.js";
+import { createBookingTokenCheck, parseBusyRange } from "./availabilityApi.js";
+import type { SyncAllowlist } from "../../core/src/syncTargets.js";
+import { BusyTooManyError, mergeBusyIntervals, type BusyRepo } from "../../core/src/pgSyncRepo.js";
 import type { Logger, SecurityEventName } from "../../core/src/logger.js";
 
 export interface AppServerDeps {
@@ -40,6 +61,10 @@ export interface AppServerDeps {
   pipelines: PipelineStore;
   /** Scope für schreibende Routen, Default Sync.Write */
   writeScope?: string;
+  /** GET /api/v1/me/sync-targets; fehlt es → 404 */
+  syncTargets?: { allowlist: SyncAllowlist; owners: OwnerLookup };
+  /** GET /api/v1/availability/busy; token null oder fehlt → 404 booking_api_disabled */
+  booking?: { token: string | null; repo: BusyRepo };
   log: (entry: Record<string, unknown>) => void;
   /** Sicherheits-Ereignisse (bad_path, CORS, Auth-Fehler, SCIM-Browserzugriff) – strukturiert, ohne Secrets */
   security?: Pick<Logger, "security">;
@@ -85,6 +110,7 @@ async function readLimited(req: IncomingMessage, limit: number): Promise<Buffer 
 
 export function createAppServer(d: AppServerDeps): AppServer {
   let draining = false;
+  const bookingAuth = d.booking?.token ? createBookingTokenCheck(d.booking.token) : null;
   const webhook = createGraphWebhookListener(d.webhook, d.webhookOptions);
   const googleWebhook = createGoogleWebhookListener(d.googleWebhook, {
     ...d.googleWebhookOptions,
@@ -112,6 +138,33 @@ export function createAppServer(d: AppServerDeps): AppServer {
         if (!status) return json(res, 404, { error: "user_not_provisioned" });
         return json(res, 200, status);
       }
+      if (path === "/api/v1/me/sync-targets" && req.method === "GET") {
+        const who = await d.auth.verifyAuthorizationHeader(req.headers.authorization);
+        if (!d.syncTargets) return json(res, 404, { error: "not_found" });
+        const userName = await d.syncTargets.owners.getActiveUserName(d.tenantId, who.oid);
+        if (userName === null) return json(res, 404, { error: "user_not_provisioned" });
+        return json(res, 200, syncTargetsFor(d.syncTargets.allowlist, userName));
+      }
+      if (path === "/api/v1/availability/busy" && req.method === "GET") {
+        if (!bookingAuth || !d.booking) return json(res, 404, { error: "booking_api_disabled" });
+        const a = bookingAuth(req.headers.authorization);
+        if (a !== "ok") {
+          sec("api_auth_failed", { code: a === "missing" ? "booking_token_missing" : "booking_token_invalid" });
+          return json(res, 401, { error: "invalid_token" }, { "WWW-Authenticate": 'Bearer error="invalid_token"' });
+        }
+        const range = parseBusyRange(req.url ?? "");
+        if (!range.ok) return json(res, range.error === "range_too_large" ? 422 : 400, { error: range.error });
+        let rows;
+        try {
+          rows = await d.booking.repo.busyIntervals(d.tenantId, range.from, range.to);
+        } catch (err) {
+          // Mehr zusammengefasste Intervalle als die Obergrenze: nie stilles Abschneiden
+          if (err instanceof BusyTooManyError) return json(res, 503, { error: "busy_too_many", max: err.max });
+          throw err;
+        }
+        const busy = mergeBusyIntervals(rows, range.from, range.to).map((b) => ({ start: b.start.toISOString(), end: b.end.toISOString() }));
+        return json(res, 200, { busy });
+      }
       if (path === "/api/v1/me/pipelines" && req.method === "POST") {
         // Erst authentisieren, dann Body lesen: Unangemeldete bekommen keine Parser-Arbeit
         const who = await d.auth.verifyAuthorizationHeader(req.headers.authorization, d.writeScope ?? "Sync.Write");
@@ -133,15 +186,32 @@ export function createAppServer(d: AppServerDeps): AppServer {
           return json(res, 400, { error: "invalid_json" });
         }
         const input = parseCreatePipelineBody(raw);
-        if (!input.ok) return json(res, 400, { error: input.error });
+        if (!input.ok) return json(res, input.status ?? 400, { error: input.error });
         const r = await d.pipelines.createPipeline({ tenantId: d.tenantId, entraObjectId: who.oid, mode: input.mode,
-          busyLabel: input.busyLabel, idempotencyKey: key });
+          busyLabel: input.busyLabel, idempotencyKey: key, target: input.target });
         switch (r.kind) {
           case "created": return json(res, 201, r.pipeline, { Location: `/api/v1/me/pipelines/${r.pipeline.id}` });
           case "replayed": return json(res, 200, r.pipeline, { "Idempotent-Replayed": "true" });
           case "user_not_provisioned": return json(res, 404, { error: "user_not_provisioned" });
           case "idempotency_conflict": return json(res, 422, { error: "idempotency_key_reused" });
           case "limit_reached": return json(res, 409, { error: "pipeline_limit_reached", limit: r.limit });
+          case "target_not_allowed": return json(res, 422, { error: "target_not_allowed", reason: r.reason });
+          case "identity_unavailable":
+            return json(res, 503, { error: "identity_check_unavailable" }, { "Retry-After": String(r.retryAfterSeconds) });
+        }
+      }
+      const end = /^\/api\/v1\/me\/pipelines\/([^/]+)$/.exec(path);
+      if (end && req.method === "DELETE") {
+        const who = await d.auth.verifyAuthorizationHeader(req.headers.authorization, d.writeScope ?? "Sync.Write");
+        req.resume();
+        if (!d.pipelines.endPipeline) return json(res, 404, { error: "not_found" });
+        if (!/^[A-Za-z0-9_-]{1,64}$/.test(end[1])) return json(res, 404, { error: "pipeline_not_found" });
+        const r = await d.pipelines.endPipeline({ tenantId: d.tenantId, entraObjectId: who.oid, pipelineId: end[1] });
+        switch (r.kind) {
+          case "ended": return json(res, 202, r.pipeline);
+          case "already_ended": return json(res, 200, r.pipeline);
+          case "user_not_provisioned": return json(res, 404, { error: "user_not_provisioned" });
+          case "not_found": return json(res, 404, { error: "pipeline_not_found" });
         }
       }
       return json(res, 404, { error: "not_found" });

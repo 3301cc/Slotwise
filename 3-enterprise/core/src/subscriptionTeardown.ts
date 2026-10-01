@@ -20,7 +20,10 @@ import { stopProviderSubscription } from "./providerApi.js";
 import type { AppTokenProvider, FetchLike, ProviderOutcome, WebhookChannel } from "./types.js";
 
 export interface ChannelRepo {
-  /** Alle Channels des Users mit stopped_at IS NULL (unabhängig von stop_requested_at). */
+  /**
+   * Channels des Users mit stopped_at IS NULL, die gestoppt werden sollen: stop_requested_at gesetzt ODER Pipeline
+   * nicht (mehr) aktiv. Abos aktiver Pipelines ohne Stop-Anforderung bleiben unberührt.
+   */
   listOpenForUser(tenantId: string, userId: string): Promise<WebhookChannel[]>;
   /** stop_requested_at gesetzt, stopped_at NULL, next_stop_attempt_at fällig. In Postgres: FOR UPDATE SKIP LOCKED. */
   claimDueStops(nowIso: string, limit: number): Promise<WebhookChannel[]>;

@@ -4,6 +4,7 @@
  * Alles andere bekommt das fertige config-Objekt übergeben.
  */
 const { parseTenants } = require("./tenants");
+const { parseBusySource } = require("./agent/calendar");
 
 const REQUIRED_SECRET_LENGTH = 32;
 
@@ -43,6 +44,9 @@ function fromEnv(env = process.env) {
       hostName: env.AGENT_HOST_NAME || "der Host",
       timezone: env.AGENT_TIMEZONE || "Europe/Berlin",
       escalationPhone: env.AGENT_ESCALATION_PHONE || "",
+      // Belegte Zeiten aus CalenSync Enterprise (Ziel „Buchungsseite“), z. B. https://acme.calensync.de/api/v1/availability/busy.
+      // Beide leer = aus. Mit TENANTS_JSON gilt das nur für den Einzelbetrieb; Mandanten tragen eigene Werte ein (tenants.js).
+      enterpriseBusy: parseBusySource(env.ENTERPRISE_BUSY_URL, env.ENTERPRISE_BUSY_TOKEN),
     },
   };
 }

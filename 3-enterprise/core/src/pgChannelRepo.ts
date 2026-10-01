@@ -71,7 +71,13 @@ export class PgChannelRepo implements ChannelRepo, GuardRepo, GoogleGuardRepo, R
 
   async listOpenForUser(tenantId: string, userId: string): Promise<WebhookChannel[]> {
     const res = await this.pool.query<Row>(
-      `SELECT ${COLS} FROM webhook_channels c WHERE c.tenant_id = $1 AND c.user_id = $2 AND c.stopped_at IS NULL`,
+      // Abos weiterhin AKTIVER Pipelines ohne Stop-Anforderung bleiben unberührt: Beendet ein Nutzer nur eine seiner
+      // Pipelines, darf der (nutzerweite) Teardown die Abos der übrigen nicht stoppen. Bei SCIM-Kappung sind alle
+      // Abos stop_requested und alle Pipelines revoked – dort ändert sich nichts.
+      `SELECT ${COLS} FROM webhook_channels c
+        WHERE c.tenant_id = $1 AND c.user_id = $2 AND c.stopped_at IS NULL
+          AND (c.stop_requested_at IS NOT NULL
+               OR NOT EXISTS (SELECT 1 FROM pipelines p WHERE p.id = c.pipeline_id AND p.status = 'active'))`,
       [tenantId, userId],
     );
     return res.rows.map(toChannel);

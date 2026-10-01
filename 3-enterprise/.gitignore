@@ -1,0 +1,5 @@
+# Build-/Install-Artefakte (package-lock.json bleibt eingecheckt)
+node_modules/
+dist/
+dist-frontend-test/
+*.tsbuildinfo

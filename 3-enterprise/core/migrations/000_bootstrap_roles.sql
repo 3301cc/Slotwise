@@ -12,10 +12,24 @@ BEGIN
   END IF;
 END $$;
 
-GRANT rds_iam TO calensync_migrator;
-GRANT rds_iam TO calensync_app;
+-- IAM-Login: rds_iam gibt es nur auf Amazon RDS/Aurora (dort identisch zu früher). Auf einfachem PostgreSQL
+-- (lokal, CI) fehlt die Rolle; dann ohne IAM weiter, Anmeldung dort per Passwort/pg_hba.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rds_iam') THEN
+    GRANT rds_iam TO calensync_migrator;
+    GRANT rds_iam TO calensync_app;
+  ELSE
+    RAISE NOTICE 'Rolle rds_iam fehlt (kein Amazon RDS) – IAM-Login für calensync_migrator/calensync_app nicht eingerichtet';
+  END IF;
+END $$;
 
-GRANT CONNECT ON DATABASE calensync TO calensync_migrator, calensync_app;
+-- Datenbank, mit der der Bootstrap-Task verbunden ist (DB_NAME; in Terraform "calensync")
+DO $$
+BEGIN
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO calensync_migrator, calensync_app', current_database());
+END $$;
+
 GRANT USAGE, CREATE ON SCHEMA public TO calensync_migrator;
 GRANT USAGE ON SCHEMA public TO calensync_app;
 
@@ -28,3 +42,12 @@ ALTER DEFAULT PRIVILEGES FOR ROLE calensync_migrator IN SCHEMA public
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO calensync_app;
 ALTER DEFAULT PRIVILEGES FOR ROLE calensync_migrator IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO calensync_app;
+
+-- Protokolltabelle des Runners (app/src/migrations.ts): dieser Bootstrap-Lauf legt sie als Master-User an,
+-- danach muss der Migrator sie lesen und fortschreiben (sonst: permission denied beim ersten Migrator-Lauf)
+DO $$
+BEGIN
+  IF to_regclass('calensync_schema_migrations') IS NOT NULL THEN
+    GRANT SELECT, INSERT ON calensync_schema_migrations TO calensync_migrator;
+  END IF;
+END $$;

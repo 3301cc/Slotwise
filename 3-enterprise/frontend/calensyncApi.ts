@@ -18,20 +18,40 @@
  *     }),
  *   });
  *   const status = await api.getSyncStatus();
+ *   const targets = await api.getSyncTargets();                       // erlaubte Ziele für den Dialog
  *   const key = crypto.randomUUID();                                  // einmal pro Dialog
- *   const p = await api.createPipeline({ mode: "busy", busyLabel: "Termin" }, key);
+ *   const p = await api.createPipeline({ target: { kind: "team", teamId: "vertrieb" }, mode: "busy", busyLabel: "Termin" }, key);
  *
  * Für createPipeline braucht die SPA zusätzlich den Scope Sync.Write (api://calensync-acme/Sync.Write).
+ * Labels, Postfächer und Fehlercodes kommen vom Server – in der UI immer escapen (z. B. textContent statt innerHTML).
+ *
+ * Eine Portierung ohne Build-Schritt liegt in slotwise-website-online/dashboard/enterprise.js – Änderungen dort mitziehen.
  */
 import { InteractionRequiredAuthError, PublicClientApplication, type AccountInfo } from "@azure/msal-browser";
 
 // ---------------------------------------------------------------------------------------------------
 // Typen (entsprechen app/src/statusApi.ts im Backend)
 // ---------------------------------------------------------------------------------------------------
+export type SyncTargetKind = "account" | "team" | "booking";
+
 export interface PipelineStatus {
   id: string;
   status: "active" | "pending" | "pending_scope" | "paused" | "revoked" | "blocked_scope" | "config_error" | "error" | string;
   subscription: { active: boolean; expiresAt: string | null };
+  /** Ziel des Abgleichs; label kommt aus der Serverkonfiguration (nicht vertrauenswürdig → escapen) */
+  target?: { kind: SyncTargetKind | string; label: string | null };
+  /** ISO-Zeitpunkt des letzten erfolgreichen Abgleichs */
+  lastSyncedAt?: string | null;
+  /** Fehlercode des letzten Abgleichs (siehe pipelineErrorMessage) */
+  lastError?: string | null;
+  /** Aufräumen im Zielkalender nach dem Beenden */
+  cleanup?: "pending" | "done" | null;
+}
+
+export interface EndedPipeline {
+  id: string;
+  status: "revoked";
+  cleanup: "pending" | "done";
 }
 
 export interface SyncStatus {
@@ -39,7 +59,38 @@ export interface SyncStatus {
   pipelines: PipelineStatus[];
 }
 
+/** GET /api/v1/me/sync-targets – was der Nutzer als Ziel wählen darf */
+export interface SyncTargets {
+  /**
+   * Vorschläge aus lokalem Teil × freigegebenen Domains – verified ist immer false: ob das Postfach wirklich
+   * derselben Person gehört, prüft der Server erst beim Anlegen per Microsoft Graph (sonst 422 identity_unverified).
+   */
+  account: { allowed: boolean; suggestions: { entraTenantId: string | null; label: string; mailbox: string; verified: boolean }[] };
+  /** fullMode: „Mit Details“ (Betreff + Ort) ist für diesen Team-Kalender freigegeben; sonst nur „Nur belegt“ anbieten */
+  team: { id: string; label: string; fullMode: boolean }[];
+  booking: { enabled: boolean };
+}
+
+/** reason bei 422 target_not_allowed → deutsche Meldung */
+export const TARGET_REJECTION_MESSAGES: Record<string, string> = {
+  identity_unverified: "Das Postfach konnte nicht eindeutig Ihnen zugeordnet werden. Bitte wenden Sie sich an Ihre IT.",
+  full_mode_not_allowed: "Für diesen Team-Kalender ist nur „Nur belegt“ freigegeben.",
+  not_same_person: "Das Postfach gehört nicht zu Ihrem Konto.",
+  tenant_not_linked: "Dieser Mandant ist nicht freigegeben.",
+  domain_not_allowed: "Diese Domain ist nicht freigegeben.",
+  target_is_source: "Das ist bereits Ihr Quellkalender.",
+  own_mailboxes_not_configured: "Zweite Konten im eigenen Unternehmen sind nicht freigegeben.",
+  team_not_found: "Dieser Team-Kalender ist nicht (mehr) freigegeben.",
+  booking_disabled: "Die Buchungsseite ist nicht freigegeben.",
+};
+
+export type SyncTarget =
+  | { kind: "account"; mailbox: string; entraTenantId: string | null }
+  | { kind: "team"; teamId: string }
+  | { kind: "booking" };
+
 export interface CreatePipelineRequest {
+  target: SyncTarget;
   mode: "busy" | "full";
   /** nur bei mode "busy"; 1–64 Zeichen, keine Steuerzeichen/HTML */
   busyLabel?: string;
@@ -66,9 +117,95 @@ export type ApiErrorKind =
   | "unexpected";
 
 export class CalensyncApiError extends Error {
-  constructor(readonly kind: ApiErrorKind, message: string, readonly status: number | null = null, readonly requestId: string | null = null) {
+  constructor(
+    readonly kind: ApiErrorKind,
+    message: string,
+    readonly status: number | null = null,
+    readonly requestId: string | null = null,
+    /** Fehlercode aus dem Antwort-Body ({"error": "..."}), z. B. target_not_allowed */
+    readonly code: string | null = null,
+  ) {
     super(message);
     this.name = "CalensyncApiError";
+  }
+}
+
+// Nur eigene Schlüssel: Codes kommen vom Server ("constructor" o. Ä. dürfen nichts finden)
+const lookup = (map: Record<string, string>, key: unknown): string | null =>
+  typeof key === "string" && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+
+/** Fehlercodes von POST /me/pipelines (400/422) → deutsche Meldung */
+export const REQUEST_ERROR_MESSAGES: Record<string, string> = {
+  target_required: "Bitte wählen Sie aus, wohin Ihr Kalender abgeglichen werden soll.",
+  target_not_allowed: "Dieses Ziel ist für Ihr Konto nicht freigegeben. Bitte wählen Sie ein anderes Ziel.",
+  invalid_target: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+  target_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+  target_kind_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+  target_team_id_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+  target_mailbox_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+  target_entra_tenant_id_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+  idempotency_key_reused: "Zu diesem Vorgang gibt es schon eine Anfrage mit anderen Angaben. Bitte brechen Sie ab und laden Sie den Status neu.",
+  busyLabel_length_1_64: "Der Titel muss 1 bis 64 Zeichen lang sein.",
+  busyLabel_invalid_characters: "Der Titel enthält unzulässige Zeichen.",
+  busyLabel_only_for_busy: "Ein Titel ist nur bei „Nur belegt“ möglich.",
+  mode_must_be_busy_or_full: "Bitte wählen Sie, was im Zielkalender stehen soll.",
+};
+
+/** lastError-Codes einer Pipeline → deutsche Meldung */
+export const PIPELINE_ERROR_MESSAGES: Record<string, string> = {
+  target_not_allowed: "Das Ziel ist nicht mehr freigegeben.",
+  // Codes des Sync-Workers (core/src/syncWorker.ts, FailureCategory)
+  target_missing: "Das Ziel ist nicht mehr hinterlegt.",
+  scope_propagation: "Die Freigabe wird gerade bei Microsoft wirksam – der Abgleich wird automatisch wiederholt.",
+  transient: "Vorübergehender Fehler – der Abgleich wird automatisch wiederholt.",
+  token: "Die Anmeldung bei Microsoft 365 wird erneuert – der Abgleich wird automatisch wiederholt.",
+  blocked_scope: "Kein Zugriff auf das Zielpostfach – bitte die IT um Freigabe bitten.",
+  config: "Konfigurationsfehler – bitte an Ihre IT wenden.",
+  invalid_request: "Microsoft 365 hat den Abgleich abgelehnt – bitte an Ihre IT wenden.",
+  exhausted: "Abgleich nach mehreren Versuchen abgebrochen – bitte an Ihre IT wenden.",
+  event_rejected: "Ein einzelner Termin wurde vom Zielkalender abgelehnt; die übrigen werden abgeglichen.",
+  identity_unverified: "Das Zielpostfach konnte nicht (mehr) eindeutig Ihnen zugeordnet werden – der Abgleich ist angehalten. Bitte an Ihre IT wenden.",
+  full_mode_not_allowed: "Für diesen Team-Kalender sind nur Belegt-Zeiten freigegeben; Details werden nicht übertragen.",
+  cleanup_failed: "Die Termine im Zielkalender konnten nicht vollständig entfernt werden – Ihre IT ist informiert.",
+  cleanup_target_not_allowed: "Die Termine im Zielkalender können nicht entfernt werden, weil das Ziel nicht mehr freigegeben ist – Ihre IT ist informiert.",
+  cleanup_transient: "Das Entfernen der Termine im Zielkalender wird automatisch wiederholt.",
+  target_not_found: "Der Zielkalender existiert nicht mehr.",
+  mailbox_not_found: "Das Zielpostfach wurde nicht gefunden.",
+  calendar_not_found: "Der Kalender wurde nicht gefunden.",
+  access_denied: "Kein Zugriff auf den Kalender – bitte die IT um Freigabe bitten.",
+  consent_required: "Die Freigabe durch Ihre IT fehlt noch.",
+  token_expired: "Die Verbindung zum Konto ist abgelaufen.",
+  throttled: "Microsoft drosselt gerade die Anfragen – der Abgleich wird automatisch wiederholt.",
+  upstream_unavailable: "Microsoft 365 war nicht erreichbar – der Abgleich wird automatisch wiederholt.",
+  timeout: "Zeitüberschreitung beim Abgleich – wird automatisch wiederholt.",
+  subscription_failed: "Benachrichtigungen konnten nicht eingerichtet werden.",
+  quota_exceeded: "Das Zielpostfach ist voll.",
+  internal_error: "Interner Fehler bei CalenSync.",
+};
+
+/** Lesbare Meldung zu PipelineStatus.lastError; unbekannte Codes werden als Code angezeigt */
+export function pipelineErrorMessage(code: string): string {
+  return lookup(PIPELINE_ERROR_MESSAGES, code) ?? `Fehler: ${String(code).slice(0, 80)}`;
+}
+
+const TARGET_KINDS: Record<string, string> = { account: "Zweites Konto", team: "Team-Kalender", booking: "Buchungsseite" };
+
+/** "Zweites Konto: Tochter GmbH", "Team-Kalender: Vertrieb", "Buchungsseite" (Rückgabe ist Klartext → escapen) */
+export function targetLabel(t: PipelineStatus["target"] | null | undefined): string {
+  if (!t || typeof t !== "object") return "Kalender-Abgleich";
+  const kind = lookup(TARGET_KINDS, t.kind);
+  const label = typeof t.label === "string" ? t.label.trim().slice(0, 120) : "";
+  if (!kind) return label || "Kalender-Abgleich";
+  return t.kind === "booking" || !label ? kind : `${kind}: ${label}`;
+}
+
+/** Nur die Felder, die der Server erwartet (unbekannte Felder lehnt er mit 400 ab) */
+function targetBody(t: SyncTarget | undefined): SyncTarget | undefined {
+  if (!t) return undefined;
+  switch (t.kind) {
+    case "account": return { kind: "account", mailbox: t.mailbox, entraTenantId: t.entraTenantId ?? null };
+    case "team": return { kind: "team", teamId: t.teamId };
+    default: return { kind: t.kind };
   }
 }
 
@@ -100,7 +237,7 @@ export function createCalensyncApi(o: CalensyncApiOptions) {
    * GET: wiederholt 429/503. POST: nur mit Idempotency-Key – dann sind Wiederholungen nach 429/503,
    * Timeout und Netzwerkfehler sicher, weil der Server denselben Key auf dieselbe Pipeline abbildet.
    */
-  async function request<T>(path: string, signal?: AbortSignal, post?: { body: string; idempotencyKey: string }): Promise<{ body: T; res: Response }> {
+  async function request<T>(path: string, signal?: AbortSignal, post?: { body: string; idempotencyKey: string }, method?: "DELETE"): Promise<{ body: T; res: Response }> {
     let forceRefresh = false;
     for (let attempt = 0; ; attempt++) {
       const token = await o.getAccessToken({ forceRefresh });
@@ -114,7 +251,7 @@ export function createCalensyncApi(o: CalensyncApiOptions) {
       let res: Response;
       try {
         res = await doFetch(`${base}${path}`, {
-          method: post ? "POST" : "GET",
+          method: method ?? (post ? "POST" : "GET"),
           mode: "cors",
           credentials: "omit",
           headers,
@@ -144,7 +281,7 @@ export function createCalensyncApi(o: CalensyncApiOptions) {
         await backoff(attempt, res.headers.get("retry-after"));
         continue;
       }
-      const code = await res.json().then((b: { error?: string }) => b.error ?? "").catch(() => "");
+      const code = await res.json().then((b: { error?: unknown }) => (typeof b?.error === "string" ? b.error.slice(0, 80) : "")).catch(() => "");
       switch (res.status) {
         case 401: throw new CalensyncApiError("unauthenticated", "Anmeldung abgelaufen", 401, rid);
         case 403: throw new CalensyncApiError("forbidden", code === "origin_not_allowed" ? "Diese Website ist für die API nicht freigegeben" : "Keine Berechtigung", 403, rid);
@@ -153,7 +290,7 @@ export function createCalensyncApi(o: CalensyncApiOptions) {
         case 400:
         case 413:
         case 415:
-        case 422: throw new CalensyncApiError("invalid_request", `Eingabe abgelehnt (${code || res.status})`, res.status, rid);
+        case 422: throw new CalensyncApiError("invalid_request", lookup(REQUEST_ERROR_MESSAGES, code) ?? (code.startsWith("unknown_field:target") ? REQUEST_ERROR_MESSAGES.invalid_target : null) ?? `Eingabe abgelehnt (${code || res.status})`, res.status, rid, code || null);
         case 429:
         case 503: throw new CalensyncApiError("unavailable", "CalenSync ist gerade ausgelastet – bitte gleich erneut versuchen", res.status, rid);
         default: throw new CalensyncApiError("unexpected", `Unerwartete Antwort ${res.status}`, res.status, rid);
@@ -164,12 +301,23 @@ export function createCalensyncApi(o: CalensyncApiOptions) {
   return {
     getSyncStatus: async (signal?: AbortSignal) => (await request<SyncStatus>("/api/v1/me/sync-status", signal)).body,
 
+    /** Erlaubte Ziele für „Kalender verbinden“ (Scope Sync.Read). Nicht verfügbare Optionen in der UI ausblenden. */
+    getSyncTargets: async (signal?: AbortSignal) => (await request<SyncTargets>("/api/v1/me/sync-targets", signal)).body,
+
+    /**
+     * Abgleich beenden (202 neu beendet, 200 schon beendet). Der Server entzieht die Pipeline und entfernt danach
+     * alle von CalenSync angelegten Termine im Zielkalender (cleanup "pending" → "done" in getSyncStatus).
+     */
+    deletePipeline: async (id: string, signal?: AbortSignal): Promise<EndedPipeline> =>
+      (await request<EndedPipeline>(`/api/v1/me/pipelines/${encodeURIComponent(id)}`, signal, undefined, "DELETE")).body,
+
     /**
      * Neue Pipeline anlegen. idempotencyKey pro Nutzeraktion EINMAL erzeugen (z. B. beim Öffnen des Dialogs)
      * und bei manuellem „Erneut versuchen“ wiederverwenden – dann entsteht nie eine doppelte Pipeline.
      */
     createPipeline: async (req: CreatePipelineRequest, idempotencyKey: string = crypto.randomUUID(), signal?: AbortSignal): Promise<CreatedPipeline> => {
-      const body = JSON.stringify(req.mode === "busy" && req.busyLabel !== undefined ? { mode: "busy", busyLabel: req.busyLabel } : { mode: req.mode });
+      const target = targetBody(req.target);
+      const body = JSON.stringify(req.mode === "busy" && req.busyLabel !== undefined ? { target, mode: "busy", busyLabel: req.busyLabel } : { target, mode: req.mode });
       const r = await request<Omit<CreatedPipeline, "replayed">>("/api/v1/me/pipelines", signal, { body, idempotencyKey });
       return { ...r.body, replayed: r.res.headers.get("idempotent-replayed") === "true" };
     },

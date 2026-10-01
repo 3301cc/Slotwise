@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { generateKeyPairSync, sign, randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { createServer } from "node:http";
-import { createCalensyncApi, CalensyncApiError } from "./calensyncApi.js";
+import { createCalensyncApi, CalensyncApiError, pipelineErrorMessage, targetLabel, type SyncTarget } from "./calensyncApi.js";
 import { createAppServer } from "../app/src/server.js";
 import { createCorsPolicy } from "../app/src/cors.js";
 import { EntraTokenVerifier } from "../app/src/entraAuth.js";
@@ -69,22 +69,26 @@ test("Frontend-Client: 503 mit Retry-After wird wiederholt, dann Erfolg; Netzwer
 
 /** In-Memory-Store mit derselben Idempotenz-/Limit-Semantik wie PrismaPipelineStore */
 function memoryPipelines(limit = 2) {
-  const rows = new Map<string, { id: string; status: string; mode: "busy" | "full"; busyLabel: string | null }>();
+  const rows = new Map<string, { id: string; status: string; mode: "busy" | "full"; busyLabel: string | null; target: string }>();
   const seen: CreatePipelineInput[] = [];
   const store: PipelineStore = {
     createPipeline: async (i): Promise<CreatePipelineResult> => {
       seen.push(i);
       const hit = rows.get(i.idempotencyKey);
-      if (hit) return hit.mode === i.mode && hit.busyLabel === i.busyLabel ? { kind: "replayed", pipeline: hit } : { kind: "idempotency_conflict" };
+      // Backend übergibt das Ziel künftig mit (CreatePipelineInput.target) – gleiches Ziel gehört zur gleichen Nutzlast
+      const target = JSON.stringify((i as { target?: unknown }).target ?? null);
+      const dto = (r: { id: string; status: string; mode: "busy" | "full"; busyLabel: string | null }) => ({ id: r.id, status: r.status, mode: r.mode, busyLabel: r.busyLabel });
+      if (hit) return hit.mode === i.mode && hit.busyLabel === i.busyLabel && hit.target === target ? { kind: "replayed", pipeline: dto(hit) } : { kind: "idempotency_conflict" };
       if (rows.size >= limit) return { kind: "limit_reached", limit };
-      const row = { id: randomUUID(), status: "pending", mode: i.mode, busyLabel: i.busyLabel };
+      const row = { id: randomUUID(), status: "pending", mode: i.mode, busyLabel: i.busyLabel, target };
       rows.set(i.idempotencyKey, row);
-      return { kind: "created", pipeline: row };
+      return { kind: "created", pipeline: dto(row) };
     },
   };
   return { store, rows, seen };
 }
 const writeTok = () => tok({ scp: "Sync.Read Sync.Write" });
+const TEAM: SyncTarget = { kind: "team", teamId: "vertrieb" };
 
 test("Frontend-Client: createPipeline – Anlage, Replay mit gleichem Key, Limit, Eingabefehler, fehlender Scope", async () => {
   const m = memoryPipelines(2);
@@ -92,15 +96,15 @@ test("Frontend-Client: createPipeline – Anlage, Replay mit gleichem Key, Limit
   try {
     const api = createCalensyncApi({ apiBaseUrl: s.url, getAccessToken: async () => writeTok() });
     const key = randomUUID();
-    const a = await api.createPipeline({ mode: "busy", busyLabel: "Termin" }, key);
+    const a = await api.createPipeline({ target: TEAM, mode: "busy", busyLabel: "Termin" }, key);
     assert.deepEqual([a.status, a.mode, a.busyLabel, a.replayed], ["pending", "busy", "Termin", false]);
-    const b = await api.createPipeline({ mode: "busy", busyLabel: "Termin" }, key);
+    const b = await api.createPipeline({ target: TEAM, mode: "busy", busyLabel: "Termin" }, key);
     assert.deepEqual([b.id, b.replayed], [a.id, true]);
-    await assert.rejects(api.createPipeline({ mode: "full" }, key), (e: unknown) => e instanceof CalensyncApiError && e.kind === "invalid_request" && e.status === 422);
-    await api.createPipeline({ mode: "full" });
-    await assert.rejects(api.createPipeline({ mode: "full" }), (e: unknown) => e instanceof CalensyncApiError && e.kind === "limit_reached");
-    await assert.rejects(api.createPipeline({ mode: "busy", busyLabel: "<script>" }), (e: unknown) => e instanceof CalensyncApiError && e.kind === "invalid_request" && e.status === 400);
-    await assert.rejects(createCalensyncApi({ apiBaseUrl: s.url, getAccessToken: async () => tok() }).createPipeline({ mode: "full" }),
+    await assert.rejects(api.createPipeline({ target: TEAM, mode: "full" }, key), (e: unknown) => e instanceof CalensyncApiError && e.kind === "invalid_request" && e.status === 422 && e.code === "idempotency_key_reused");
+    await api.createPipeline({ target: { kind: "booking" }, mode: "full" });
+    await assert.rejects(api.createPipeline({ target: TEAM, mode: "full" }), (e: unknown) => e instanceof CalensyncApiError && e.kind === "limit_reached");
+    await assert.rejects(api.createPipeline({ target: TEAM, mode: "busy", busyLabel: "<script>" }), (e: unknown) => e instanceof CalensyncApiError && e.kind === "invalid_request" && e.status === 400);
+    await assert.rejects(createCalensyncApi({ apiBaseUrl: s.url, getAccessToken: async () => tok() }).createPipeline({ target: TEAM, mode: "full" }),
       (e: unknown) => e instanceof CalensyncApiError && e.kind === "forbidden");
     assert.equal(m.rows.size, 2);
   } finally { s.close(); }
@@ -120,10 +124,75 @@ test("Frontend-Client: Antwort geht verloren → Retry mit demselben Key, genau 
       if (init?.method === "POST" && lost++ === 0) { await res.arrayBuffer(); throw new TypeError("fetch failed"); }
       return res;
     };
-    const p = await createCalensyncApi({ apiBaseUrl: s.url, getAccessToken: async () => writeTok(), fetchFn: flaky }).createPipeline({ mode: "full" });
+    const p = await createCalensyncApi({ apiBaseUrl: s.url, getAccessToken: async () => writeTok(), fetchFn: flaky }).createPipeline({ target: TEAM, mode: "full" });
     assert.equal(p.replayed, true, "zweiter Versuch bekommt die bereits angelegte Pipeline");
     assert.equal(m.rows.size, 1);
     assert.equal(keys.length, 2);
     assert.equal(keys[0], keys[1], "derselbe Idempotency-Key bei der Wiederholung");
   } finally { s.close(); }
+});
+
+// Ohne Server (eigener fetch): Vertrag für Ziele, Request-Body und Fehlercodes – unabhängig vom Backend-Stand
+function fakeApi(handler: (url: string, init: RequestInit) => { status: number; body: unknown; headers?: Record<string, string> }) {
+  const seen: { url: string; init: RequestInit }[] = [];
+  const fetchFn: typeof fetch = async (input, init) => {
+    const url = String(input);
+    seen.push({ url, init: init ?? {} });
+    const r = handler(url, init ?? {});
+    return new Response(JSON.stringify(r.body), { status: r.status, headers: { "content-type": "application/json", ...(r.headers ?? {}) } });
+  };
+  return { api: createCalensyncApi({ apiBaseUrl: "https://acme.calensync.de/", getAccessToken: async () => "t", fetchFn, maxRetries: 0 }), seen };
+}
+
+test("Frontend-Client: getSyncTargets, target im Body, Fehlercodes → deutsche Meldungen", async () => {
+  const targets = { account: { allowed: true, suggestions: [{ entraTenantId: null, label: "Tochter GmbH", mailbox: "jana@tochter.de" }] }, team: [{ id: "vertrieb", label: "Vertrieb" }], booking: { enabled: true } };
+  const { api, seen } = fakeApi((url, init) => {
+    if (url.endsWith("/api/v1/me/sync-targets")) return { status: 200, body: targets };
+    const b = JSON.parse(String(init.body));
+    if (!b.target) return { status: 422, body: { error: "target_required" } };
+    if (b.target.kind === "team" && b.target.teamId !== "vertrieb") return { status: 422, body: { error: "target_not_allowed" } };
+    if (b.target.kind === "nope") return { status: 400, body: { error: "invalid_target" } };
+    return { status: 201, body: { id: "p1", status: "pending", mode: b.mode, busyLabel: b.busyLabel ?? null } };
+  });
+  assert.deepEqual(await api.getSyncTargets(), targets);
+  assert.equal(seen[0].url, "https://acme.calensync.de/api/v1/me/sync-targets");
+  assert.equal(seen[0].init.method, "GET");
+
+  const bodies: unknown[] = [];
+  for (const target of [
+    { kind: "account", mailbox: "jana@tochter.de", entraTenantId: null, extra: "weg" } as SyncTarget,
+    { kind: "account", mailbox: "jana@tochter.de", entraTenantId: "11111111-2222-3333-4444-555555555555" } as SyncTarget,
+    TEAM,
+    { kind: "booking" } as SyncTarget,
+  ]) {
+    await api.createPipeline({ target, mode: "busy", busyLabel: "Termin" }, randomUUID());
+    bodies.push(JSON.parse(String(seen.at(-1)!.init.body)));
+  }
+  assert.deepEqual(bodies, [
+    { target: { kind: "account", mailbox: "jana@tochter.de", entraTenantId: null }, mode: "busy", busyLabel: "Termin" },
+    { target: { kind: "account", mailbox: "jana@tochter.de", entraTenantId: "11111111-2222-3333-4444-555555555555" }, mode: "busy", busyLabel: "Termin" },
+    { target: { kind: "team", teamId: "vertrieb" }, mode: "busy", busyLabel: "Termin" },
+    { target: { kind: "booking" }, mode: "busy", busyLabel: "Termin" },
+  ]);
+  await api.createPipeline({ target: { kind: "booking" }, mode: "full" });
+  assert.deepEqual(JSON.parse(String(seen.at(-1)!.init.body)), { target: { kind: "booking" }, mode: "full" });
+  assert.equal(new Headers(seen.at(-1)!.init.headers).get("content-type"), "application/json");
+
+  const err = async (p: Promise<unknown>) => { try { await p; } catch (e) { return e as CalensyncApiError; } throw new Error("kein Fehler"); };
+  const notAllowed = await err(api.createPipeline({ target: { kind: "team", teamId: "einkauf" }, mode: "full" }));
+  assert.deepEqual([notAllowed.kind, notAllowed.status, notAllowed.code], ["invalid_request", 422, "target_not_allowed"]);
+  assert.match(notAllowed.message, /nicht freigegeben/);
+  const missing = await err(api.createPipeline({ mode: "full" } as never));
+  assert.deepEqual([missing.code, missing.message], ["target_required", "Bitte wählen Sie aus, wohin Ihr Kalender abgeglichen werden soll."]);
+  const invalid = await err(api.createPipeline({ target: { kind: "nope" } as never, mode: "full" }));
+  assert.deepEqual([invalid.status, invalid.code], [400, "invalid_target"]);
+  assert.match(invalid.message, /ungültig/);
+
+  assert.equal(targetLabel({ kind: "account", label: "Tochter GmbH" }), "Zweites Konto: Tochter GmbH");
+  assert.equal(targetLabel({ kind: "team", label: "Vertrieb" }), "Team-Kalender: Vertrieb");
+  assert.equal(targetLabel({ kind: "booking", label: "egal" }), "Buchungsseite");
+  assert.equal(targetLabel(undefined), "Kalender-Abgleich");
+  assert.equal(pipelineErrorMessage("mailbox_not_found"), "Das Zielpostfach wurde nicht gefunden.");
+  assert.equal(pipelineErrorMessage("constructor"), "Fehler: constructor");
+  assert.equal(pipelineErrorMessage("neuer_code"), "Fehler: neuer_code");
 });

@@ -28,7 +28,7 @@ Ein Globaler Administrator oder Privileged Role Administrator öffnet:
 https://login.microsoftonline.com/<TENANT-ID>/adminconsent?client_id=<CALENSYNC-CLIENT-ID>
 ```
 
-Im **RBAC-Modus** fordert die App dabei keine Graph-Anwendungsberechtigung für Kalender an, sondern nur, was für den Betrieb nötig ist (z. B. `User.Read.All` für den Abgleich mit den SCIM-Daten, falls genutzt). Ergebnis: ein Service Principal unter *Unternehmensanwendungen*. Notieren: **Application (client) ID** und **Object ID** des Service Principals (nicht der App-Registrierung).
+Im **RBAC-Modus** fordert die App dabei keine Graph-Anwendungsberechtigung für Kalender an, sondern nur, was für den Betrieb nötig ist (`User.Read.All` bzw. `User.ReadBasic.All` ist **erforderlich**, wenn das Ziel „zweites Konto“ genutzt wird: CalenSync prüft damit vor dem Schreiben, dass Quell- und Zielpostfach derselben Person gehören; nötig im eigenen und in jedem verbundenen Tochter-Mandanten. Die Berechtigung wirkt mandantenweit auf Verzeichnisdaten, nicht auf Postfächer). Ergebnis: ein Service Principal unter *Unternehmensanwendungen*. Notieren: **Application (client) ID** und **Object ID** des Service Principals (nicht der App-Registrierung).
 
 **3. Anmeldung der App absichern**
 - Unternehmensanwendung → *Eigenschaften* → **„Zuweisung erforderlich“ = Ja**, nur die Gruppe aus Schritt 4 zuweisen (steuert SSO und SCIM-Scope).

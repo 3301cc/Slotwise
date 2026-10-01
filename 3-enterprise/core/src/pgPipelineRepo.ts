@@ -34,7 +34,7 @@ export class PgPipelineRepo implements PipelineRepo {
   }
 
   /**
-   * Channel anlegen + Pipeline aktivieren in EINER Anweisung (datenmodifizierende CTE).
+   * Channel anlegen + Pipeline aktivieren + ersten Sync-Job einstellen in EINER Anweisung (datenmodifizierende CTE).
    *
    * Offboarding-Race: Zwischen getHandshakeTarget und hier liegt der Graph-POST (Sekunden). Deaktiviert SCIM
    * den User in dieser Zeit, setzt es im selben Commit die Pipeline auf revoked. FOR UPDATE auf der Pipeline-
@@ -62,6 +62,12 @@ export class PgPipelineRepo implements PipelineRepo {
          UPDATE pipelines SET status = 'active'
           WHERE tenant_id = $1 AND id = (SELECT pipeline_id FROM ins)
          RETURNING id
+       ), first_sync AS (
+         -- Erster voller Abgleich im selben Statement (Outbox): ohne ihn käme der erste Sync erst mit der
+         -- ersten Änderung im Postfach. Dedupe wie der Webhook-Eingang (delta:<pipelineId>).
+         INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at)
+         SELECT $1, 'pipeline.delta_sync', 'delta:' || upd.id, jsonb_build_object('pipelineId', upd.id, 'full', true), now() FROM upd
+         ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING
        )
        SELECT (SELECT count(*) FROM upd) AS activated`,
       [tenantId, pipelineId, ch.userId, ch.providerSubscriptionId, ch.clientState, ch.expiresAt],

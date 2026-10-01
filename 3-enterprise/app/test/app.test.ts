@@ -112,7 +112,7 @@ async function withApp(fn: (port: number) => Promise<void>) {
     providerResourceId: null, clientState: "cs-1", expiresAt: null, stopRequestedAt: null, stoppedAt: null, stopAttempts: 0,
     nextStopAttemptAt: null, lastStopError: null, pipelineId: "p1", pipelineStatus: "active" };
   const status: StatusRepo = {
-    getSyncStatus: async (_t, oid) => (oid === "oid-42" ? { user: { active: true }, pipelines: [{ id: "p1", status: "active", subscription: { active: true, expiresAt: null } }] } : null),
+    getSyncStatus: async (_t, oid) => (oid === "oid-42" ? { user: { active: true }, pipelines: [{ id: "p1", status: "active", subscription: { active: true, expiresAt: null }, target: null, lastSyncedAt: null, lastError: null, cleanup: null }] } : null),
   };
   const pepper = "p".repeat(40);
   const app = createAppServer({
