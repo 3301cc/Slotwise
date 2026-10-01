@@ -4,7 +4,10 @@
  *
  * Konfiguration über TENANTS_JSON (siehe config.js), z. B.:
  *   [{"id":"praxis-berger","company":"Praxis Dr. Berger","hostName":"Dr. Berger","adminToken":"<mind. 24 Zeichen>",
- *     "phoneNumbers":["+4921112345678"],"escalationPhone":"+492119876543"}]
+ *     "phoneNumbers":["+4921112345678"],"escalationPhone":"+492119876543",
+ *     "enterpriseBusyUrl":"https://acme.calensync.de/api/v1/availability/busy","enterpriseBusyToken":"<Token>"}]
+ * enterpriseBusyUrl/-Token sind optional (CalenSync-Belegungen für die Buchung, siehe agent/calendar.js). Mandanten erben
+ * ENTERPRISE_BUSY_URL/-TOKEN bewusst NICHT – sonst würde der Kalender einer Firma die Termine einer anderen sperren.
  *
  * Ohne TENANTS_JSON bleibt alles wie bisher: ein Mandant "default", Zugang über WAITLIST_ADMIN_TOKEN.
  *
@@ -17,6 +20,7 @@
  * später echte Konten mit Rollen und Protokoll.
  */
 const crypto = require("node:crypto");
+const { parseBusySource } = require("./agent/calendar");
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const E164 = /^\+[1-9][0-9]{6,14}$/;
@@ -44,6 +48,7 @@ function parseTenants(raw, log = console) {
       adminToken: String(t.adminToken),
       phoneNumbers: (Array.isArray(t.phoneNumbers) ? t.phoneNumbers : []).map(String).filter((n) => E164.test(n)),
       escalationPhone: E164.test(String(t.escalationPhone || "")) ? String(t.escalationPhone) : "",
+      enterpriseBusy: parseBusySource(t.enterpriseBusyUrl, t.enterpriseBusyToken, log),
     });
   }
   return out;
@@ -71,7 +76,7 @@ function tenantConfig(config, tenant) {
     ...config,
     tenantId: tenant.id,
     adminToken: tenant.adminToken,
-    agent: { ...config.agent, company: tenant.company, hostName: tenant.hostName, escalationPhone: tenant.escalationPhone || config.agent.escalationPhone },
+    agent: { ...config.agent, company: tenant.company, hostName: tenant.hostName, escalationPhone: tenant.escalationPhone || config.agent.escalationPhone, enterpriseBusy: tenant.enterpriseBusy || null },
   };
 }
 

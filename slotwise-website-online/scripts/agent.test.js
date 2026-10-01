@@ -163,6 +163,114 @@ test("Kalender: Arbeitszeit, Blocker und Tageslimit; Freigabe verschiebt Vorschl
   assert.deepStrictEqual(week.map((s) => s.kind).sort(), ["blocked", "booked"]);
 });
 
+// ---------- CalenSync Enterprise: Belegungen für die Buchung (ENTERPRISE_BUSY_URL) ----------
+const { parseBusySource } = require("../api/_lib/core/agent/calendar");
+const { parseTenants, tenantConfig } = require("../api/_lib/core/tenants");
+const BUSY_URL = "https://acme.calensync.de/api/v1/availability/busy";
+/** Fake-fetch: protokolliert Aufrufe; reply(url, init) liefert { status, body } oder wirft */
+function fakeBusyFetch(reply) {
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push({ url: new URL(url), init });
+    const r = await reply(new URL(url), init);
+    return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => (typeof r.body === "string" ? JSON.parse(r.body) : r.body) };
+  };
+  return { fetch, calls };
+}
+
+test("CalenSync-Belegungen: blockieren Slots, Abruf mit Token und Fenster, 60-s-Zwischenspeicher, letzte Prüfung frisch", async () => {
+  let clock = Date.parse("2026-09-28T06:00:00Z"); // Montag 08:00 Berlin
+  const busy = [{ start: "2026-09-28T07:00:00Z", end: "2026-09-28T08:00:00Z" }, { start: "kaputt", end: "x" }];
+  const f = fakeBusyFetch(() => ({ status: 200, body: { busy } }));
+  const cal = createCalendar(memoryStore(), { timezone: "Europe/Berlin", now: () => clock, log: quiet, busySource: parseBusySource(BUSY_URL, "tok-cache"), fetch: f.fetch });
+  const win = { from: "2026-09-28T06:00:00Z", to: "2026-09-29T00:00:00Z", durationMinutes: 30, limit: 3 };
+  const slots = await cal.findAvailability(win);
+  assert.strictEqual(slots[0].start, "2026-09-28T08:00:00.000Z", "09:00–10:00 Berlin aus Outlook belegt → erst 10:00");
+  assert.strictEqual(f.calls.length, 1);
+  const c = f.calls[0];
+  assert.strictEqual(c.url.origin + c.url.pathname, BUSY_URL);
+  assert.strictEqual(c.init.headers.Authorization, "Bearer tok-cache");
+  assert.ok(c.init.signal instanceof AbortSignal, "Timeout-Signal gesetzt");
+  const from = Date.parse(c.url.searchParams.get("from")), to = Date.parse(c.url.searchParams.get("to"));
+  assert.ok(from <= Date.parse(win.from) + 3600000 && to >= Date.parse(win.to) && to - from <= 62 * 86400000, "Fenster deckt die Suche ab, höchstens 62 Tage");
+  await cal.findAvailability(win);
+  assert.strictEqual(f.calls.length, 1, "zweite Suche innerhalb 60 s aus dem Zwischenspeicher");
+  clock += 61_000;
+  await cal.findAvailability(win);
+  assert.strictEqual(f.calls.length, 2, "nach 60 s neu abgefragt");
+  const hit = await cal.conflictFor("2026-09-28T07:30:00Z", "2026-09-28T08:00:00Z");
+  assert.strictEqual(f.calls.length, 3, "conflictFor fragt immer frisch");
+  assert.deepStrictEqual([hit.source, hit.kind, hit.title], ["microsoft", "blocked", "Belegt"]);
+  assert.strictEqual(await cal.conflictFor("2026-09-28T08:00:00Z", "2026-09-28T08:30:00Z"), null, "angrenzender Slot ist frei");
+  await cal.addBlocked({ start: "2026-09-28T09:00:00Z", end: "2026-09-28T10:00:00Z", title: "Privat", source: "icloud" });
+  const n = f.calls.length;
+  assert.strictEqual((await cal.conflictFor("2026-09-28T09:00:00Z", "2026-09-28T09:30:00Z")).source, "icloud");
+  assert.strictEqual(f.calls.length, n, "lokaler Konflikt reicht, kein Abruf nötig");
+});
+
+test("CalenSync-Belegungen: Ausfall → Suche fail-open, letzte Prüfung fail-closed (Timeout 3 s, HTTP-Fehler, kaputte Antwort)", async () => {
+  const now = () => Date.parse("2026-09-28T06:00:00Z");
+  const win = { from: "2026-09-28T06:00:00Z", to: "2026-09-29T00:00:00Z", durationMinutes: 30, limit: 2 };
+  const cases = {
+    netzwerk: () => { throw new TypeError("fetch failed"); },
+    http500: () => ({ status: 500, body: { error: "x" } }),
+    http401: () => ({ status: 401, body: { error: "invalid_token" } }),
+    ohneListe: () => ({ status: 200, body: { free: [] } }),
+    keinJson: () => ({ status: 200, body: "<html>" }),
+  };
+  for (const [name, reply] of Object.entries(cases)) {
+    const f = fakeBusyFetch(reply);
+    const cal = createCalendar(memoryStore(), { timezone: "Europe/Berlin", now, log: quiet, busySource: parseBusySource(BUSY_URL, `tok-${name}`), fetch: f.fetch });
+    assert.strictEqual((await cal.findAvailability(win)).length, 2, `${name}: Slots trotzdem angeboten`);
+    const c = await cal.conflictFor("2026-09-28T07:00:00Z", "2026-09-28T07:30:00Z");
+    assert.ok(c && c.unverified && c.kind === "unverified", `${name}: Slot gilt als belegt`);
+  }
+  // echter Timeout: Antwort kommt nie, Abbruch nach 3 s über das Signal
+  const hang = fakeBusyFetch((_u, init) => new Promise((_r, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason))));
+  const cal = createCalendar(memoryStore(), { timezone: "Europe/Berlin", now, log: quiet, busySource: parseBusySource(BUSY_URL, "tok-hang"), fetch: hang.fetch });
+  const t0 = Date.now();
+  assert.ok((await cal.conflictFor("2026-09-28T07:00:00Z", "2026-09-28T07:30:00Z")).unverified);
+  const ms = Date.now() - t0;
+  assert.ok(ms >= 2900 && ms < 5000, `Timeout nach ~3 s (${ms} ms)`);
+});
+
+test("CalenSync-Belegungen: Agent bucht bei nicht prüfbarem Kalender nicht und bietet Buchungslink an", async () => {
+  const sms = [], store = memoryStore();
+  const config = fromEnv({ AGENT_MODEL: "fake", WAITLIST_SECRET: SECRET, ENTERPRISE_BUSY_URL: BUSY_URL, ENTERPRISE_BUSY_TOKEN: "tok-agent" });
+  let down = false;
+  const f = fakeBusyFetch(() => { if (down) throw new TypeError("fetch failed"); return { status: 200, body: { busy: [] } }; });
+  const agent = createAgent(config, { store, log: quiet, fetch: f.fetch, sendSms: async (to, text) => { sms.push({ to, text }); } });
+  await agent.settings.save({ autonomy: "auto", maxPerDay: 12 });
+  const t = (u) => agent.turn({ sessionId: "E1", from: "+4915155555555", utterance: u });
+  await t("Termin bitte"); await t("Der erste. Name: Eva Test, eva@test.de, 0151 55555555");
+  assert.ok(f.calls.length >= 1, "Suche hat CalenSync gefragt");
+  down = true;
+  const r = await t(code(sms));
+  assert.match(r.say, /nicht verbindlich bestätigen/);
+  const week = await agent.calendar.week(new Date(Date.now() - 86400000).toISOString(), new Date(Date.now() + 30 * 86400000).toISOString());
+  assert.ok(!week.some((s) => s.kind === "booked" || s.kind === "proposed"), "nichts gebucht oder vorgemerkt");
+  assert.ok((await agent.activity.list()).some((e) => e.kind === "conflict" && /nicht prüfbar/.test(e.text)));
+});
+
+test("CalenSync-Belegungen: Konfiguration nur mit https und Token, Mandanten mit eigenen Werten ohne Vererbung", () => {
+  const silent = { error() {} };
+  assert.deepStrictEqual(parseBusySource(BUSY_URL, "t"), { url: BUSY_URL, token: "t" });
+  assert.strictEqual(parseBusySource("", ""), null);
+  assert.strictEqual(parseBusySource("http://acme.calensync.de/x", "t", silent), null, "kein Klartext-HTTP");
+  assert.strictEqual(parseBusySource("https://u:p@acme.calensync.de/x", "t", silent), null, "keine Zugangsdaten in der URL");
+  assert.strictEqual(parseBusySource(BUSY_URL, "", silent), null, "Token Pflicht");
+  assert.ok(parseBusySource("http://localhost:4000/api/v1/availability/busy", "t"), "lokal erlaubt");
+  assert.strictEqual(fromEnv({}).agent.enterpriseBusy, null);
+  const config = fromEnv({ ENTERPRISE_BUSY_URL: BUSY_URL, ENTERPRISE_BUSY_TOKEN: "global" });
+  const [a, b] = parseTenants(JSON.stringify([
+    { id: "firma-a", adminToken: "a".repeat(32), enterpriseBusyUrl: "https://a.calensync.de/api/v1/availability/busy", enterpriseBusyToken: "tok-a" },
+    { id: "firma-b", adminToken: "b".repeat(32) },
+  ]), silent);
+  assert.deepStrictEqual(tenantConfig(config, a).agent.enterpriseBusy, { url: "https://a.calensync.de/api/v1/availability/busy", token: "tok-a" });
+  assert.strictEqual(tenantConfig(config, b).agent.enterpriseBusy, null, "Mandant ohne eigene Werte erbt nichts");
+  assert.strictEqual(tenantConfig(config, null).agent.enterpriseBusy.token, "global");
+});
+
 // ---------- Praxismodus (Arzt- und Zahnarztpraxen) ----------
 const { detectEmergency, detectMedicalQuestion, EMERGENCY_DE, MEDICAL_REFUSAL_DE, MODIFY_PRAXIS_DE, toolsFor } = require("../api/_lib/core/agent/praxis");
 

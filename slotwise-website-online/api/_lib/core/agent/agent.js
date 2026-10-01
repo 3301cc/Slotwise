@@ -43,7 +43,7 @@ function createAgent(config, deps = {}) {
   const log = deps.log || console;
   const model = deps.model !== undefined ? deps.model : createModel(config);
   const sendSms = deps.sendSms || (config.agent.twilio ? smsSender(config.agent.twilio) : consoleSms(log.log));
-  const calendar = deps.calendar || createCalendar(store, { timezone: config.agent.timezone, now });
+  const calendar = deps.calendar || createCalendar(store, { timezone: config.agent.timezone, now, log, busySource: config.agent.enterpriseBusy || null, fetch: deps.fetch });
   const activity = deps.activity || createActivity(store, now);
   const settings = deps.settings || createSettings(store, now);
   const tasks = deps.tasks || createTasks(store, now);
@@ -80,7 +80,13 @@ function createAgent(config, deps = {}) {
       if (args.patient_status === "new" && cfg.newPatients !== "accept") return { tool: name, booked: false, say: "Über die Aufnahme neuer Patienten entscheidet die Praxis selbst. Ich nehme gern eine Rückrufbitte für Sie auf. Ist das in Ordnung?" };
       const start = args.start, end = new Date(Date.parse(start) + (args.duration_minutes || 30) * 60000).toISOString();
       const label = formatForSpeech(Date.parse(start), calendar.timezone);
-      if (await calendar.conflictFor(start, end)) {
+      const pConflict = await calendar.conflictFor(start, end);
+      if (pConflict && pConflict.unverified) {
+        // CalenSync nicht erreichbar (fail-closed): nichts vormerken, keine ungeprüften Alternativen – Rückruf anbieten
+        await activity.log({ kind: "conflict", text: `Terminwunsch ${label} nicht vorgemerkt: Microsoft-365-Kalender gerade nicht prüfbar – Rückruf angeboten`, channel: session.channel });
+        return { tool: name, booked: false, conflict: true, unverified: true, alternatives: [], say: "Ich kann diesen Termin gerade nicht verbindlich prüfen. Ich nehme gern eine Rückrufbitte für Sie auf. Ist das in Ordnung?" };
+      }
+      if (pConflict) {
         const alt = await calendar.findAvailability({ from: end, to: new Date(Date.parse(end) + 7 * 86400000).toISOString(), durationMinutes: args.duration_minutes || 30, limit: 2, maxPerDay: cfg.maxPerDay });
         await activity.log({ kind: "conflict", text: `Doppelbuchung verhindert: ${label} ist inzwischen belegt – Alternative angeboten`, channel: session.channel });
         return { tool: name, booked: false, conflict: true, alternatives: alt, say: `Dieser Termin ist inzwischen belegt. ${alt.length ? `Frei wäre ${alt.map((a) => a.label).join(" oder ")}.` : "Soll ich einen Rückruf für Sie aufnehmen?"}` };
@@ -98,6 +104,11 @@ function createAgent(config, deps = {}) {
       const start = args.start, end = new Date(Date.parse(start) + (args.duration_minutes || 30) * 60000).toISOString();
       const conflict = await calendar.conflictFor(start, end);
       const who = `${args.name} (${args.email})`;
+      if (conflict && conflict.unverified) {
+        // CalenSync nicht erreichbar (fail-closed): nicht buchen, keine ungeprüften Alternativen – Buchungslink per SMS
+        await activity.log({ kind: "conflict", text: `Buchung ${formatForSpeech(Date.parse(start), calendar.timezone)} für ${who} nicht ausgeführt: Microsoft-365-Kalender gerade nicht prüfbar – Buchungslink angeboten`, channel: session.channel });
+        return { tool: name, booked: false, conflict: true, unverified: true, alternatives: [], say: "Ich kann diesen Termin gerade nicht verbindlich bestätigen. Ich schicke Ihnen den Buchungslink per SMS, dann können Sie es gleich noch einmal versuchen." };
+      }
       if (conflict) {
         const alt = await calendar.findAvailability({ from: end, to: new Date(Date.parse(end) + 7 * 86400000).toISOString(), durationMinutes: args.duration_minutes || 30, limit: 2, maxPerDay: cfg.maxPerDay });
         await activity.log({ kind: "conflict", text: `Doppelbuchung verhindert: ${formatForSpeech(Date.parse(start), calendar.timezone)} kollidiert mit „${conflict.title || "Termin"}“ (${srcLabel(conflict.source)}) – Alternative angeboten`, channel: session.channel });
