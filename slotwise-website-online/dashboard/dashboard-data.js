@@ -105,10 +105,68 @@
     },
   };
 
+  // ---------- Praxismodus (Arzt- und Zahnarztpraxen) ----------
+  // Gleiche Formen wie oben, andere Inhalte. Umschalten über die KI-Einstellungen (industry: "praxis").
+  const PRAXIS = {
+    metrics: [
+      { id: "calls", label: "Anrufe vom Agenten angenommen", value: 46, unit: "count", delta: 9, deltaLabel: "heute, davon 31 erledigt", icon: "trend", tone: "emerald" },
+      { id: "timeSaved", label: "Entlastung der Anmeldung", value: 3.5, unit: "hours", delta: 0.6, deltaLabel: "heute", icon: "clock", tone: "indigo" },
+      { id: "eventTypes", label: "Aktive Terminarten", value: 5, unit: "count", deltaLabel: "", icon: "layers", tone: "slate" },
+      { id: "openTasks", label: "Offene Aufgaben fürs Team", value: 0, unit: "count", deltaLabel: "Rezepte, Überweisungen, Rückrufe", icon: "shield", tone: "emerald" },
+    ],
+    activity: [
+      { id: "p1", kind: "task", text: "Rezeptwunsch von Peter Kühn aufgenommen – Aufgabe für das Praxisteam, Rückruf an +49…78", at: minutesAgo(4) },
+      { id: "p2", kind: "booked", text: "Kontrolltermin mit Maria Lindner telefonisch gebucht, SMS-Bestätigung versendet", at: minutesAgo(11), ref: { type: "slot", id: "q3" } },
+      { id: "p3", kind: "conflict", text: "Notfall-Stichwort erkannt – Anrufer auf 112 / 116 117 verwiesen und an das Praxisteam übergeben", at: minutesAgo(38) },
+      { id: "p4", kind: "info", text: "Medizinische Frage nicht beantwortet – Termin oder Rückruf angeboten", at: minutesAgo(52) },
+      { id: "p5", kind: "task", text: "Terminänderung von Anna Schmidt aufgenommen – Aufgabe für das Praxisteam", at: minutesAgo(70) },
+      { id: "p6", kind: "proposed", text: "Prophylaxe-Recall: Termin für Jonas Weber vorgeschlagen, wartet auf Freigabe", at: minutesAgo(130), ref: { type: "slot", id: "q7" } },
+    ],
+    slots: [
+      { id: "q1", start: at(0, 8, 0), end: at(0, 8, 30), kind: "booked", title: "Akutsprechstunde", with: "Freigegebener Slot", source: "manual" },
+      { id: "q2", start: at(0, 9, 0), end: at(0, 10, 0), kind: "booked", title: "Prophylaxe / PZR", with: "Lena Krüger", source: "ai" },
+      { id: "q3", start: at(1, 8, 30), end: at(1, 9, 0), kind: "booked", title: "Kontrolle", with: "Maria Lindner", source: "ai" },
+      { id: "q4", start: at(1, 12, 0), end: at(1, 14, 0), kind: "blocked", title: "Mittagspause", source: "manual" },
+      { id: "q5", start: at(2, 10, 0), end: at(2, 10, 30), kind: "booked", title: "Vorsorge / Check-up", with: "Peter Kühn", source: "manual" },
+      { id: "q6", start: at(2, 15, 0), end: at(2, 16, 30), kind: "blocked", title: "Teambesprechung", source: "google" },
+      { id: "q7", start: at(3, 9, 0), end: at(3, 10, 0), kind: "proposed", title: "Prophylaxe / PZR", with: "Jonas Weber", source: "ai" },
+      { id: "q8", start: at(3, 11, 0), end: at(3, 11, 15), kind: "booked", title: "Impftermin", with: "Sophie Wagner", source: "ai" },
+      { id: "q9", start: at(4, 8, 0), end: at(4, 8, 30), kind: "booked", title: "Akutsprechstunde", with: "Freigegebener Slot", source: "manual" },
+      { id: "q10", start: at(4, 10, 0), end: at(4, 10, 30), kind: "proposed", title: "Kontrolle", with: "Felix Becker", source: "ai" },
+    ],
+    contacts: [
+      { id: "k1", name: "Peter Kühn", email: "p.kuehn@web.de", phone: "+49 211 5550 1178", company: "", tag: "regular", source: "phone", bookings: 14, noShows: 0, lastAt: daysAgo(40), nextAt: at(2, 10, 0), nextTitle: "Vorsorge / Check-up", smsConsent: true, notes: "Hört schlecht – lieber Rückruf statt SMS.", createdAt: daysAgo(1900), recallDue: null },
+      { id: "k2", name: "Maria Lindner", email: "maria.lindner@gmx.de", phone: "+49 172 5550 221", company: "", tag: "regular", source: "phone", bookings: 6, noShows: 0, lastAt: daysAgo(180), nextAt: at(1, 8, 30), nextTitle: "Kontrolle", smsConsent: true, notes: "", createdAt: daysAgo(900), recallDue: null },
+      { id: "k3", name: "Jonas Weber", email: "j.weber@weber-bau.de", phone: "+49 211 5550 9020", company: "", tag: "regular", source: "page", bookings: 4, noShows: 1, lastAt: daysAgo(190), nextAt: at(3, 9, 0), nextTitle: "Prophylaxe / PZR (Vorschlag)", smsConsent: true, notes: "", createdAt: daysAgo(700), recallDue: daysAgo(10) },
+      { id: "k4", name: "Lena Krüger", email: "lena.krueger@t-online.de", phone: "+49 211 5550 1201", company: "", tag: "regular", source: "manual", bookings: 9, noShows: 0, lastAt: daysAgo(2), nextAt: null, nextTitle: null, smsConsent: true, notes: "", createdAt: daysAgo(1200), recallDue: null },
+      { id: "k5", name: "Anna Schmidt", email: "anna.schmidt@mail.de", phone: "+49 211 5550 1877", company: "", tag: "regular", source: "phone", bookings: 5, noShows: 0, lastAt: daysAgo(200), nextAt: null, nextTitle: null, smsConsent: true, notes: "Möchte Termin am Montag absagen (Aufgabe offen).", createdAt: daysAgo(800), recallDue: daysAgo(20) },
+      { id: "k6", name: "Sophie Wagner", email: "s.wagner@posteo.de", phone: "+49 176 5550 812", company: "", tag: "new", source: "page", bookings: 1, noShows: 0, lastAt: null, nextAt: at(3, 11, 0), nextTitle: "Impftermin", smsConsent: true, notes: "", createdAt: daysAgo(6), recallDue: null },
+      { id: "k7", name: "Felix Becker", email: "felix.becker@web.de", phone: "+49 211 5550 3301", company: "", tag: "new", source: "phone", bookings: 1, noShows: 0, lastAt: null, nextAt: at(4, 10, 0), nextTitle: "Kontrolle (Vorschlag)", smsConsent: false, notes: "", createdAt: daysAgo(3), recallDue: null },
+      { id: "k8", name: "Mehmet Yılmaz", email: "m.yilmaz@gmail.com", phone: "+49 211 5550 7788", company: "", tag: "regular", source: "phone", bookings: 7, noShows: 0, lastAt: daysAgo(170), nextAt: null, nextTitle: null, smsConsent: true, notes: "", createdAt: daysAgo(1500), recallDue: daysAgo(-5) },
+      { id: "k9", name: "Clara Neumann", email: "clara.neumann@icloud.com", phone: "+49 160 5550 290", company: "", tag: "regular", source: "manual", bookings: 3, noShows: 1, lastAt: daysAgo(210), nextAt: null, nextTitle: null, smsConsent: false, notes: "Erinnerung per Mail.", createdAt: daysAgo(600), recallDue: daysAgo(30) },
+      { id: "k10", name: "Ilse Brandt", email: "", phone: "+49 211 5550 4402", company: "", tag: "lead", source: "phone", bookings: 0, noShows: 0, lastAt: null, nextAt: null, nextTitle: null, smsConsent: false, notes: "Neupatientin, Rückruf erbeten.", createdAt: daysAgo(0), recallDue: null },
+    ],
+    eventTypes: [
+      { id: "t1", name: "Akutsprechstunde", slug: "akut", duration: 15, color: "rose", location: "onsite", bufferBefore: 0, bufferAfter: 0, minNoticeHours: 1, active: true, aiBookable: false, description: "Nur in freigegebene Zeitfenster. Der Agent bucht nicht selbst, sondern bietet Rückruf an.", bookings30d: 64 },
+      { id: "t2", name: "Kontrolle", slug: "kontrolle", duration: 30, color: "indigo", location: "onsite", bufferBefore: 0, bufferAfter: 5, minNoticeHours: 4, active: true, aiBookable: true, description: "Regelmäßige Kontrolle bei Bestandspatienten.", bookings30d: 48 },
+      { id: "t3", name: "Prophylaxe / PZR", slug: "prophylaxe", duration: 60, color: "sky", location: "onsite", bufferBefore: 0, bufferAfter: 10, minNoticeHours: 24, active: true, aiBookable: true, description: "Professionelle Zahnreinigung. Recall alle 6 Monate.", bookings30d: 37 },
+      { id: "t4", name: "Vorsorge / Check-up", slug: "vorsorge", duration: 30, color: "emerald", location: "onsite", bufferBefore: 0, bufferAfter: 5, minNoticeHours: 24, active: true, aiBookable: true, description: "Gesundheits-Check-up und Vorsorgeuntersuchungen.", bookings30d: 22 },
+      { id: "t5", name: "Impftermin", slug: "impfung", duration: 15, color: "violet", location: "onsite", bufferBefore: 0, bufferAfter: 0, minNoticeHours: 2, active: true, aiBookable: true, description: "Grippe-, Auffrischungs- und Reiseimpfungen.", bookings30d: 29 },
+      { id: "t6", name: "Beratung Zahnersatz", slug: "zahnersatz", duration: 45, color: "amber", location: "onsite", bufferBefore: 0, bufferAfter: 15, minNoticeHours: 48, active: false, aiBookable: false, description: "Beratung zu Kronen, Brücken und Implantaten.", bookings30d: 0 },
+    ],
+    tasks: [
+      { id: "a1", at: minutesAgo(4), type: "prescription", label: "Rezeptwunsch", name: "Peter Kühn", dateOfBirth: "1958-07-03", phone: "+49 211 5550 1178", note: "Folgerezept Blutdruckmittel", channel: "phone", done: false },
+      { id: "a2", at: minutesAgo(70), type: "change_request", label: "Terminänderung", name: "Anna Schmidt", dateOfBirth: "1981-02-14", phone: "+49 211 5550 1877", note: "Montag absagen", channel: "phone", done: false },
+      { id: "a3", at: minutesAgo(95), type: "referral", label: "Überweisungswunsch", name: "Maria Lindner", dateOfBirth: "1967-11-30", phone: "+49 172 5550 221", note: "Überweisung Orthopädie", channel: "phone", done: false },
+      { id: "a4", at: minutesAgo(140), type: "callback", label: "Rückrufwunsch", name: "Ilse Brandt", dateOfBirth: null, phone: "+49 211 5550 4402", note: "Neupatientin, möchte aufgenommen werden", channel: "phone", done: false },
+    ],
+  };
+
   const delay = (v, ms = 120) => new Promise((r) => setTimeout(() => r(structuredClone(v)), ms));
   const SETTINGS_KEY = "slotwise.dashboard.agentSettings";
-  const CONTACTS_KEY = "slotwise.dashboard.contacts";
-  const EVENTS_KEY = "slotwise.dashboard.eventTypes";
+  const CONTACTS_BASE = "slotwise.dashboard.contacts";
+  const EVENTS_BASE = "slotwise.dashboard.eventTypes";
+  const TASKS_KEY = "slotwise.dashboard.tasks.praxis";
   function isoWeek(d) {
     const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
     const day = t.getUTCDay() || 7;
@@ -129,9 +187,24 @@
     /** Bereitschaft der Agenten-API (ohne Token abrufbar, ohne Werte). */
     async status() { try { return await fetch(this.baseUrl + "/api/agent/status").then((r) => (r.ok ? r.json() : null)); } catch { return null; } },
 
+    // ---------- Modus: "business" (Unternehmen) oder "praxis" (Arzt-/Zahnarztpraxis) ----------
+    _mode: null,
+    /** Synchron: Demo liest die gespeicherten Einstellungen, Live den zuletzt geladenen Stand. */
+    get mode() {
+      if (this._mode) return this._mode;
+      if (!this.live) { try { const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}"); if (s.industry === "praxis") return "praxis"; } catch { /* */ } }
+      return "business";
+    },
+    get praxis() { return this.mode === "praxis"; },
+    async ensureMode() { if (this.live && !this._mode) { try { await this.getSettings(); } catch { /* bleibt business */ } } return this.mode; },
+    _set(name) { return this.praxis ? PRAXIS[name] : MOCK[name]; },
+    _key(base) { return this.praxis ? `${base}.praxis` : base; },
+
     async getMetrics() {
-      const m = await delay(MOCK.metrics); // Conversion/Zeit: noch ohne Endpunkt
-      const active = this._local(EVENTS_KEY, MOCK.eventTypes).filter((t) => t.active);
+      await this.ensureMode();
+      const m = await delay(this._set("metrics")); // Conversion/Zeit: noch ohne Endpunkt
+      if (this.praxis) { const ot = m.find((x) => x.id === "openTasks"); if (ot) ot.value = (await this.getTasks()).length; }
+      const active = this._local(this._key(EVENTS_BASE), this._set("eventTypes")).filter((t) => t.active);
       const et = m.find((x) => x.id === "eventTypes");
       if (et) { et.value = active.length; et.deltaLabel = active.map((t) => t.name).join(" · ") || "keiner aktiv"; }
       // Zähler „Verifizierte Leads“ aus der Warteliste: GET /api/waitlist/stats braucht den Admin-Token.
@@ -148,20 +221,22 @@
     },
     async getActivity(limit = 20) {
       if (this.live) return (await this.http(`/api/agent/activity?limit=${limit}`)).items;
-      return delay(MOCK.activity.slice(0, limit));
+      await this.ensureMode();
+      return delay(this._set("activity").slice(0, limit));
     },
     async getWeek(startISO) {
       if (this.live) return this.http(`/api/agent/week${startISO ? `?start=${encodeURIComponent(startISO)}` : ""}`);
-      return delay({ start: monday.toISOString(), slots: MOCK.slots });
+      await this.ensureMode();
+      return delay({ start: monday.toISOString(), slots: this._set("slots") });
     },
     async getSettings() {
-      if (this.live) return this.http("/api/agent/settings");
+      if (this.live) { const s = await this.http("/api/agent/settings"); this._mode = s.industry === "praxis" ? "praxis" : "business"; return s; }
       try { const saved = localStorage.getItem(SETTINGS_KEY); if (saved) return JSON.parse(saved); } catch { /* privat/blockiert */ }
       return delay(MOCK.settings);
     },
     async saveSettings(settings) {
       const next = { ...settings, updatedAt: new Date().toISOString() };
-      if (this.live) return this.http("/api/agent/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) });
+      if (this.live) { const s = await this.http("/api/agent/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) }); this._mode = s.industry === "praxis" ? "praxis" : "business"; return s; }
       try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(next)); } catch { /* ignorieren */ }
       return delay(next, 250);
     },
@@ -173,34 +248,36 @@
     _store(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* ignorieren */ } },
 
     /** @returns {Promise<Contact[]>} */
-    async getContacts() { return delay(this._local(CONTACTS_KEY, MOCK.contacts)); },
+    async getContacts() {
+      await this.ensureMode(); return delay(this._local(this._key(CONTACTS_BASE), this._set("contacts"))); },
     /** Neuer Kontakt (Demo: lokal). */
     async saveContact(c) {
-      const list = this._local(CONTACTS_KEY, MOCK.contacts);
+      const list = this._local(this._key(CONTACTS_BASE), this._set("contacts"));
       const next = { id: c.id || `c${Date.now()}`, tag: "new", source: "manual", bookings: 0, noShows: 0, lastAt: null, nextAt: null, nextTitle: null, smsConsent: false, notes: "", phone: "", company: "", createdAt: new Date().toISOString(), ...c };
       const i = list.findIndex((x) => x.id === next.id);
       if (i >= 0) list[i] = next; else list.unshift(next);
-      this._store(CONTACTS_KEY, list);
+      this._store(this._key(CONTACTS_BASE), list);
       return delay(next, 150);
     },
     /** Kontakt samt Buchungshistorie endgültig löschen (DSGVO Art. 17). Demo: lokal. */
     async deleteContact(id) {
-      this._store(CONTACTS_KEY, this._local(CONTACTS_KEY, MOCK.contacts).filter((x) => x.id !== id));
+      this._store(this._key(CONTACTS_BASE), this._local(this._key(CONTACTS_BASE), this._set("contacts")).filter((x) => x.id !== id));
       return delay({ ok: true }, 150);
     },
 
     /** @returns {Promise<EventType[]>} */
-    async getEventTypes() { return delay(this._local(EVENTS_KEY, MOCK.eventTypes)); },
+    async getEventTypes() {
+      await this.ensureMode(); return delay(this._local(this._key(EVENTS_BASE), this._set("eventTypes"))); },
     async saveEventType(e) {
-      const list = this._local(EVENTS_KEY, MOCK.eventTypes);
+      const list = this._local(this._key(EVENTS_BASE), this._set("eventTypes"));
       const next = { id: e.id || `e${Date.now()}`, bookings30d: 0, ...e };
       const i = list.findIndex((x) => x.id === next.id);
       if (i >= 0) list[i] = { ...list[i], ...next }; else list.push(next);
-      this._store(EVENTS_KEY, list);
+      this._store(this._key(EVENTS_BASE), list);
       return delay(next, 150);
     },
     async deleteEventType(id) {
-      this._store(EVENTS_KEY, this._local(EVENTS_KEY, MOCK.eventTypes).filter((x) => x.id !== id));
+      this._store(this._key(EVENTS_BASE), this._local(this._key(EVENTS_BASE), this._set("eventTypes")).filter((x) => x.id !== id));
       return delay({ ok: true }, 120);
     },
 
@@ -218,7 +295,7 @@
       });
       const bookings = series.reduce((s, x) => s + x.ai + x.manual, 0);
       const ai = series.reduce((s, x) => s + x.ai, 0);
-      const types = this._local(EVENTS_KEY, MOCK.eventTypes).filter((t) => t.active);
+      const types = this._local(this._key(EVENTS_BASE), this._set("eventTypes")).filter((t) => t.active);
       const weights = [0.46, 0.24, 0.3, 0.1];
       const wsum = types.reduce((s, _, i) => s + (weights[i] || 0.1), 0);
       const heatmap = Array.from({ length: 5 }, (_, d) => Array.from({ length: 10 }, (_, h) => {
@@ -238,6 +315,18 @@
         byType: types.map((t, i) => ({ name: t.name, color: t.color, value: Math.round((bookings * (weights[i] || 0.1)) / wsum) })),
         heatmap,
       }, 160);
+    },
+
+    // ---------- Praxismodus: Aufgaben fürs Team ----------
+    // Live: GET /api/agent/tasks · POST /api/agent/task-done { id }   (api/_lib/core/agent/api.js)
+    async getTasks() {
+      if (this.live) return (await this.http("/api/agent/tasks")).items;
+      return delay(this._local(TASKS_KEY, PRAXIS.tasks).filter((t) => !t.done));
+    },
+    async taskDone(id) {
+      if (this.live) return this.http("/api/agent/task-done", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      this._store(TASKS_KEY, this._local(TASKS_KEY, PRAXIS.tasks).map((t) => (t.id === id ? { ...t, done: true } : t)));
+      return delay({ ok: true }, 100);
     },
 
     /** Vorschlag freigeben/ablehnen. Live: Server; Demo: nur lokal. */
@@ -275,6 +364,16 @@
       return () => clearInterval(t);
     },
   };
+
+  // Einstieg von /praxen: /dashboard/?modus=praxis öffnet die Demo direkt im Praxismodus (nur Demo, live zählt der Server)
+  try {
+    const m = new URLSearchParams(location.search).get("modus");
+    if ((m === "praxis" || m === "unternehmen") && !SlotwiseAPI.live) {
+      const cur = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "null") || { ...MOCK.settings };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ ...cur, industry: m === "praxis" ? "praxis" : "business" }));
+      history.replaceState(null, "", location.pathname + location.hash);
+    }
+  } catch { /* privat/blockiert */ }
 
   global.SlotwiseAPI = SlotwiseAPI;
   global.SLOTWISE_TZ = TZ;

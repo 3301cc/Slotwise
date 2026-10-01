@@ -8,6 +8,8 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 |---|---|
 | `website-src/vendor/site.original.js` | ursprünglicher Vite-Build (keine Quellen im Repo) |
 | `website-src/KiAgentPage.jsx` | Seite `/ki-agent` |
+| `website-src/PraxenPage.jsx` | Seite `/praxen` für Arzt- und Zahnarztpraxen (Sie-Form, Pilotangebot, Praxis-Plan); Warteliste mit Quelle `praxen` |
+| `slotwise-website-online/api/_lib/core/agent/praxis.js` | Praxismodus des Agenten: Notfall-Gate (112/116 117), Medizin-Gate, Aufgaben (Rezept, Überweisung, Rückruf, Terminänderung) |
 | `website-src/SitePatches.jsx` | Warteliste, `/anmelden`, Demo-Widget, Layout mit Entwurfs-Banner, Datenschutzerklärung |
 | `website-src/build.py` | setzt beides in `assets/site.js` ein |
 | `slotwise-website-online/assets/site-extra.css` | zusätzliche Utilities und Komponenten-CSS |
@@ -25,6 +27,7 @@ Nach Änderungen an den `.jsx`-Dateien oder am Dashboard-CSS:
 
 ```bash
 python3 website-src/build.py        # esbuild + Tailwind-CLI über npx – oder ESBUILD=/pfad, TAILWINDCSS=/pfad
+                                    # ohne esbuild: global installiertes TypeScript wird automatisch als JSX-Compiler genutzt
 cd slotwise-website-online
 npm test                            # API-Tests
 npm run dev                         # http://localhost:3000, Warteliste speichert in .data/waitlist.json

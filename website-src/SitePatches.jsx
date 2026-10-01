@@ -53,7 +53,7 @@ function swOpenWaitlist(detail) {
 }
 function swSourceFromPath(p) {
   const s = (p || "/").split("/")[1] || "start";
-  return ["preise", "ki-agent", "anmelden"].includes(s) ? s : "start";
+  return ["preise", "ki-agent", "anmelden", "praxen"].includes(s) ? s : "start";
 }
 
 const SW_WL_ERRORS = {
@@ -249,9 +249,9 @@ function SwWaitlistDialog() {
           <div className="p-6 sm:p-7">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">Early Access</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">{ctx.source === "praxen" ? "Pilotprogramm für Praxen" : "Early Access"}</p>
                 <h2 id="wl-title" className="mt-1 font-display text-xl font-bold text-slate-900">
-                  {ctx.demo ? "Echte Demo: Warteliste" : "CalenSync startet bald"}
+                  {ctx.source === "praxen" ? "Als Pilotpraxis bewerben" : ctx.demo ? "Echte Demo: Warteliste" : "CalenSync startet bald"}
                 </h2>
               </div>
               <button type="button" onClick={() => setOpen(false)} aria-label="Schließen"
@@ -260,7 +260,9 @@ function SwWaitlistDialog() {
               </button>
             </div>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              {ctx.demo
+              {ctx.source === "praxen"
+                ? "Tragen Sie Ihre Praxis-E-Mail ein. Wir melden uns innerhalb von zwei Werktagen für ein kurzes Kennenlernen. 10 Plätze, 3 Monate kostenlos."
+                : ctx.demo
                 ? "Die Live-Buchungsseite und Demo-Termine öffnen mit dem Start. Trag dich ein, dann bekommst du als Erste:r einen Termin."
                 : "Die App ist noch nicht freigeschaltet. Trag dich ein, und wir schreiben dir, sobald du dein Konto anlegen kannst."}
             </p>

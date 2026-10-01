@@ -162,3 +162,73 @@ test("Kalender: Arbeitszeit, Blocker und Tageslimit; Freigabe verschiebt Vorschl
   const week = await cal.week("2026-09-28T00:00:00Z", "2026-10-05T00:00:00Z");
   assert.deepStrictEqual(week.map((s) => s.kind).sort(), ["blocked", "booked"]);
 });
+
+// ---------- Praxismodus (Arzt- und Zahnarztpraxen) ----------
+const { detectEmergency, detectMedicalQuestion, EMERGENCY_DE, MEDICAL_REFUSAL_DE, MODIFY_PRAXIS_DE, toolsFor } = require("../api/_lib/core/agent/praxis");
+
+async function buildPraxis(env) {
+  const b = build(env);
+  await b.agent.settings.save({ industry: "praxis" });
+  return b;
+}
+
+test("Praxis: Notfall- und Medizin-Erkennung deterministisch", () => {
+  for (const u of ["Mein Mann hat starke Brustschmerzen", "Ich krieg kaum Luft", "Sie ist bewusstlos", "Es ist ein Notfall!", "Ich will mir etwas antun", "Er blutet stark am Kopf"]) assert.ok(detectEmergency(u), u);
+  for (const u of ["Ich brauche ein Folgerezept", "Termin zur Kontrolle bitte", "Ich hätte gern eine Prophylaxe"]) assert.ok(!detectEmergency(u), u);
+  for (const u of ["Ist das gefährlich?", "Soll ich die Tabletten absetzen?", "Was bedeutet mein Befund?", "Welche Dosis soll ich nehmen?"]) assert.ok(detectMedicalQuestion(u), u);
+  for (const u of ["Ich brauche einen Termin", "Haben Sie Donnerstag frei?"]) assert.ok(!detectMedicalQuestion(u), u);
+});
+
+test("Praxis: create_task nur im Praxismodus angeboten und erlaubt", async () => {
+  assert.ok(!toolsFor(L0_TOOLS, "business").some((t) => t.name === "create_task"));
+  assert.ok(toolsFor(L0_TOOLS, "praxis").some((t) => t.name === "create_task"));
+  const r = new ToolRouter({ otp: { async put() {}, async get() { return null; }, async del() {}, async incr() { return 1; } }, audit: { async write() {} }, hmacSecret: SECRET, async sendSms() {} });
+  const base = { callSid: "CA1", tenantId: "t", hostId: "h", callerCli: null, language: "de" };
+  assert.strictEqual((await r.route({ ...base, industry: "business" }, { name: "create_task", arguments: {} })).kind, "refuse");
+  assert.strictEqual((await r.route({ ...base, industry: "praxis" }, { name: "create_task", arguments: { type: "callback" } })).kind, "execute");
+});
+
+test("Praxis: Notfall beendet das Gespräch mit 112-Hinweis und Übergabe, ohne Modell", async () => {
+  const { agent } = await buildPraxis();
+  const r = await agent.turn({ sessionId: "P1", from: "+4915112345678", utterance: "Mein Vater hat Brustschmerzen und Atemnot" });
+  assert.strictEqual(r.say, EMERGENCY_DE); assert.ok(r.done && r.handover);
+  assert.ok((await agent.activity.list()).some((e) => e.kind === "conflict" && /112/.test(e.text)));
+});
+
+test("Praxis: medizinische Frage wird abgelehnt, Änderungswunsch wird Aufgabe", async () => {
+  const { agent } = await buildPraxis();
+  assert.strictEqual((await agent.turn({ sessionId: "P2", utterance: "Ist das gefährlich, wenn der Zahn pocht?" })).say, MEDICAL_REFUSAL_DE);
+  const t = (u) => agent.turn({ sessionId: "P3", from: "+4915112345678", utterance: u });
+  assert.strictEqual((await t("Ich möchte meinen Termin am Montag absagen.")).say, MODIFY_PRAXIS_DE);
+  const r = await t("Mein Name ist Anna Schmidt, 0151 12345678");
+  assert.ok(r.done); assert.match(r.say, /Praxisteam/);
+  const tasks = await agent.tasks.list();
+  assert.strictEqual(tasks.length, 1); assert.strictEqual(tasks[0].type, "change_request"); assert.strictEqual(tasks[0].name, "Anna Schmidt");
+});
+
+test("Praxis: Rezeptwunsch → Aufgabe mit Geburtsdatum, Feed-Eintrag, erledigt markieren über API", async () => {
+  const { agent, config } = await buildPraxis({ WAITLIST_ADMIN_TOKEN: "adm" });
+  const t = (u) => agent.turn({ sessionId: "P4", from: "+4915112345678", utterance: u });
+  assert.match((await t("Ich brauche ein Folgerezept für mein Blutdruckmittel.")).say, /Geburtsdatum/);
+  await t("Ich heiße Peter Kühn, geboren 03.07.1958, 0151 12345678");
+  const [task] = await agent.tasks.list();
+  assert.strictEqual(task.type, "prescription"); assert.strictEqual(task.dateOfBirth, "1958-07-03"); assert.strictEqual(task.label, "Rezeptwunsch");
+  assert.ok((await agent.activity.list()).some((e) => e.kind === "task" && /Rezeptwunsch von Peter Kühn/.test(e.text)));
+  const auth = { authorization: "Bearer adm" };
+  assert.strictEqual((await api.tasks(agent, config, { headers: {}, query: {} })).status, 401);
+  assert.strictEqual((await api.tasks(agent, config, { headers: auth, query: {} })).body.items.length, 1);
+  assert.strictEqual((await api.taskDone(agent, config, { headers: auth, body: { id: task.id } })).status, 200);
+  assert.strictEqual((await api.tasks(agent, config, { headers: auth, query: {} })).body.items.length, 0);
+});
+
+test("Praxis: Begrüßung mit Notruf-Hinweis, Prompt mit Praxisregeln, Einstellungen behalten industry", async () => {
+  const { agent } = await buildPraxis();
+  assert.match(await agent.disclosure(), /Praxis Nordlicht.*112/s);
+  await agent.settings.save({ autonomy: "auto", maxPerDay: 6, instructions: "" }); // KI-Panel speichert ohne industry
+  assert.strictEqual((await agent.settings.get()).industry, "praxis");
+  const p = buildSystemPrompt({ company: "X", hostName: "Y", timezone: "Europe/Berlin", language: "de", nowIso: "2026-10-01T08:00:00Z", settings: await agent.settings.get() });
+  assert.match(p, /Praxismodus/); assert.match(p, /116 117/);
+  const { agent: biz } = build();
+  assert.doesNotMatch(buildSystemPrompt({ company: "X", hostName: "Y", timezone: "Europe/Berlin", language: "de", nowIso: "2026-10-01T08:00:00Z", settings: await biz.settings.get() }), /Praxismodus/);
+  assert.strictEqual((await biz.turn({ sessionId: "B1", utterance: "Ich möchte meinen Termin am Montag verschieben." })).say, REFUSAL_MODIFY_DE);
+});

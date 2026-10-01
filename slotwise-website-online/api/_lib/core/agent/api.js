@@ -10,6 +10,8 @@
  *   GET  /api/agent/week?start=     Kalender der Woche (Bearer)
  *   POST /api/agent/decision        { id, action:"approve"|"reject" } – Vorschlag freigeben/ablehnen (Bearer)
  *   GET  /api/agent/status          Bereitschaft (welche Variablen fehlen) – ohne Werte
+ *   GET  /api/agent/tasks           Praxismodus: offene Aufgaben (Rezept, Überweisung, Rückruf, Terminänderung) (Bearer)
+ *   POST /api/agent/task-done       { id } – Aufgabe erledigt (Bearer)
  */
 const crypto = require("node:crypto");
 const { twiml, validSignature } = require("./twilio");
@@ -46,7 +48,7 @@ module.exports = {
     // Anrufbeginn: Offenlegung (DSGVO/KI-VO), dann zuhören
     if (p.SpeechResult === undefined && !p.Digits) {
       await agent.activity.log({ kind: "info", text: `Eingehender Anruf von ${from ? from.replace(/(\+\d{2,3})\d+(\d{2})$/, "$1…$2") : "unbekannt"} angenommen – Assistent stellt sich vor`, channel: "phone" });
-      return xml(twiml({ say: agent.disclosure(), gather: true, actionUrl }));
+      return xml(twiml({ say: await agent.disclosure(), gather: true, actionUrl }));
     }
     const r = await agent.turn({ sessionId: callSid, channel: "phone", from, utterance: String(p.SpeechResult || p.Digits || "") });
     if (r.handover && r.escalationPhone) return xml(twiml({ say: r.say, dial: r.escalationPhone }));
@@ -76,7 +78,7 @@ module.exports = {
   async putSettings(agent, config, input) {
     if (!authorized(config, input.headers)) return unauthorized();
     const saved = await agent.settings.save(input.body || {});
-    await agent.activity.log({ kind: "info", text: `Einstellungen geändert: ${saved.autonomy === "auto" ? "bucht automatisch" : "legt Entwürfe vor"}, max. ${saved.maxPerDay} Termine/Tag` });
+    await agent.activity.log({ kind: "info", text: `Einstellungen geändert: ${saved.autonomy === "auto" ? "bucht automatisch" : "legt Entwürfe vor"}, max. ${saved.maxPerDay} Termine/Tag${saved.industry === "praxis" ? ", Praxismodus" : ""}` });
     return json(200, saved);
   },
 
@@ -86,6 +88,19 @@ module.exports = {
     if (Number.isNaN(start.getTime())) return json(422, { error: "invalid_start" });
     const end = new Date(start.getTime() + 7 * 86400000);
     return json(200, { start: start.toISOString(), end: end.toISOString(), slots: await agent.calendar.week(start.toISOString(), end.toISOString()) });
+  },
+
+  async tasks(agent, config, input) {
+    if (!authorized(config, input.headers)) return unauthorized();
+    return json(200, { items: await agent.tasks.list({ includeDone: input.query.done === "1" }) });
+  },
+  async taskDone(agent, config, input) {
+    if (!authorized(config, input.headers)) return unauthorized();
+    const id = input.body && input.body.id;
+    if (!id) return json(422, { error: "id_required" });
+    if (!(await agent.tasks.markDone(String(id)))) return json(404, { error: "not_found" });
+    await agent.activity.log({ kind: "info", text: "Aufgabe als erledigt markiert", ref: { type: "task", id: String(id) } });
+    return json(200, { ok: true });
   },
 
   async decision(agent, config, input) {

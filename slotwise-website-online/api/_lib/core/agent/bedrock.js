@@ -99,7 +99,7 @@ function fakeModel() {
   return {
     kind: "fake",
     modelId: "fake",
-    async converse({ messages, system }) {
+    async converse({ messages, system, tools = [] }) {
       const last = lastUser(messages);
       const res = toolResultOf(last);
       const all = messages.filter((m) => m.role === "user").map(textOf).join(" \n ");
@@ -125,6 +125,17 @@ function fakeModel() {
       if (res && res.tool === "verify_otp") return out("Der Code stimmt leider nicht. Bitte noch einmal.");
       if (res && res.tool === "create_booking") return out(res.say || "Ihr Termin ist eingetragen. Auf Wiederhören!");
       if (res && res.tool === "send_booking_link_sms") return out("Der Link ist unterwegs. Auf Wiederhören!");
+      if (res && res.tool === "create_task") return out(res.say || "Ich habe Ihren Wunsch aufgenommen.");
+
+      // Praxismodus: Rezept-/Überweisungs-/Rückruf-/Änderungswunsch → Aufgabe, sobald Name und Nummer genannt sind
+      const canTask = tools.some((t) => t.toolSpec && t.toolSpec.name === "create_task");
+      const taskType = /rezept/i.test(all) ? "prescription" : /überweisung|ueberweisung/i.test(all) ? "referral" : /termin.{0,40}(nicht einsehen|ändern)|bestehende termine/i.test(messages.filter((m) => m.role === "assistant").map(textOf).join(" ")) ? "change_request" : /rückruf|rueckruf/i.test(all) ? "callback" : null;
+      if (canTask && taskType && phone && !seen(messages, "create_task")) {
+        const name = (all.match(/(?:ich heiße|mein name ist|name:?)\s+([A-ZÄÖÜ][\wäöüß-]+(?:\s+[A-ZÄÖÜ][\wäöüß-]+)?)/i) || [])[1];
+        const dob = (all.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/) || []);
+        if (name) return out("", [tu("create_task", { type: taskType, name, phone_e164: phone, ...(dob[3] ? { date_of_birth: `${dob[3]}-${dob[2].padStart(2, "0")}-${dob[1].padStart(2, "0")}` } : {}), note: taskType === "prescription" ? "Folgerezept" : "" })]);
+      }
+      if (canTask && taskType && !seen(messages, "create_task")) return out("Gern. Wie ist Ihr Name, Ihr Geburtsdatum und Ihre Rückrufnummer?");
 
       if (code && phone && seen(messages, "send_otp")) return out("", [tu("verify_otp", { phone_e164: phone, code })]);
       if (email && phone && seen(messages, "find_availability") && !seen(messages, "send_otp")) return out("", [tu("send_otp", { phone_e164: phone })]);

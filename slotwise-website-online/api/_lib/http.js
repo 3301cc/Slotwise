@@ -122,6 +122,8 @@ const routes = {
   "GET /api/agent/week": handler("GET", (wl, i) => agentApi.week(getAgent(), wl.config, i)),
   "POST /api/agent/decision": handler("POST", (wl, i) => agentApi.decision(getAgent(), wl.config, i)),
   "GET /api/agent/status": handler("GET", (wl, i) => agentApi.status(getAgent(), wl.config, i)),
+  "GET /api/agent/tasks": handler("GET", (wl, i) => agentApi.tasks(getAgent(), wl.config, i)),
+  "POST /api/agent/task-done": handler("POST", (wl, i) => agentApi.taskDone(getAgent(), wl.config, i)),
 };
 
 /** Ein einzelner Handler für alle Routen (node:http, Express `app.use(apiHandler)`, Fastify über `fastify-express`). */

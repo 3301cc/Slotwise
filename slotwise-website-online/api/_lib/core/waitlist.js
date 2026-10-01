@@ -19,7 +19,7 @@ const { createTokens } = require("./tokens");
 const { createStore } = require("./store");
 const { createMailer } = require("./mailer");
 
-const SOURCES = new Set(["start", "anmelden", "demo", "preise", "ki-agent", "footer", "login", "dashboard"]);
+const SOURCES = new Set(["start", "anmelden", "demo", "preise", "ki-agent", "footer", "login", "dashboard", "praxen"]);
 
 const json = (status, body, headers) => ({ status, body, headers: { "Content-Type": "application/json; charset=utf-8", ...headers } });
 const redirect = (location) => ({ status: 303, redirect: location });

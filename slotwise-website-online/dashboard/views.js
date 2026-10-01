@@ -30,11 +30,16 @@
     cal: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   };
 
+  // ---------- Praxismodus: Begriffe ----------
+  const PX = () => API.praxis;
+  const W = (biz, px) => (PX() ? px : biz);
+  const recallDue = (c) => Boolean(c.recallDue) && Date.parse(c.recallDue) <= Date.now() + 7 * 86400000;
+
   // ---------- gemeinsame Bausteine ----------
   const TAG = {
     new: { label: "Neu", cls: "border-sky-200 bg-sky-50 text-sky-800" },
-    regular: { label: "Stammkunde", cls: "border-indigo-200 bg-indigo-50 text-indigo-800" },
-    lead: { label: "Lead", cls: "border-amber-200 bg-amber-50 text-amber-900" },
+    regular: { get label() { return W("Stammkunde", "Stammpatient"); }, cls: "border-indigo-200 bg-indigo-50 text-indigo-800" },
+    lead: { get label() { return W("Lead", "Anfrage"); }, cls: "border-amber-200 bg-amber-50 text-amber-900" },
   };
   const SOURCE = { phone: "Telefon (KI-Agent)", page: "Buchungsseite", mail: "E-Mail (KI-Agent)", manual: "Manuell" };
   const LOCATION = {
@@ -157,7 +162,7 @@
   function kundenFiltered() {
     const q = K.q.trim().toLowerCase();
     return K.list
-      .filter((c) => K.filter === "all" || c.tag === K.filter)
+      .filter((c) => K.filter === "all" || (K.filter === "recall" ? recallDue(c) : c.tag === K.filter))
       .filter((c) => !q || [c.name, c.email, c.company, c.phone].join(" ").toLowerCase().includes(q))
       .sort((a, b) => K.sort === "name" ? a.name.localeCompare(b.name, "de") : K.sort === "bookings" ? b.bookings - a.bookings : lastActivity(b) - lastActivity(a));
   }
@@ -166,27 +171,33 @@
     const root = $("#view-kunden");
     const n = (t) => K.list.filter((c) => c.tag === t).length;
     const recent = K.list.filter((c) => Date.now() - new Date(c.createdAt) < 30 * 86400000).length;
-    root.innerHTML = pageHead("kunden-title", "Kunden", "Alle Kontakte an einem Ort",
-      "Jeder, der bucht, anruft oder schreibt, landet automatisch hier. Mit Historie, Notizen und DSGVO-Löschung auf Knopfdruck.",
+    const recalls = K.list.filter(recallDue).length;
+    root.innerHTML = pageHead("kunden-title", W("Kunden", "Patienten"), W("Alle Kontakte an einem Ort", "Alle Patienten an einem Ort"),
+      W("Jeder, der bucht, anruft oder schreibt, landet automatisch hier. Mit Historie, Notizen und DSGVO-Löschung auf Knopfdruck.",
+        "Wer anruft oder online bucht, landet hier – mit Terminen, Recall und Einwilligungen. Keine Befunde, keine Diagnosen: dafür bleibt Ihre Praxissoftware zuständig."),
       `<button type="button" class="btn-ghost gap-2" data-k-export>${svg(I.download)}CSV-Export</button>
-       <button type="button" class="btn-primary" data-k-new>${svg(I.plus)}Neuer Kontakt</button>`) + `
+       <button type="button" class="btn-primary" data-k-new>${svg(I.plus)}${W("Neuer Kontakt", "Neuer Patient")}</button>`) + `
       <div class="mb-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
-        ${statCard("Kontakte gesamt", num(K.list.length))}
+        ${statCard(W("Kontakte gesamt", "Patienten gesamt"), num(K.list.length))}
         ${statCard("Neu in 30 Tagen", num(recent), "davon " + num(K.list.filter((c) => Date.now() - new Date(c.createdAt) < 30 * 86400000 && c.source !== "manual").length) + " über KI oder Buchungsseite")}
-        ${statCard("Stammkunden", num(n("regular")))}
-        ${statCard("Offene Leads", num(n("lead")), "noch ohne Termin")}
+        ${statCard(W("Stammkunden", "Stammpatienten"), num(n("regular")))}
+        ${PX() ? statCard("Recall fällig", num(recalls), "in den nächsten 7 Tagen") : statCard("Offene Leads", num(n("lead")), "noch ohne Termin")}
       </div>
+      ${PX() && recalls ? `<div class="mb-6 flex flex-col gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <p class="text-sm text-sky-950"><span class="font-semibold">${num(recalls)} Patienten</span> sind für Prophylaxe oder Vorsorge fällig. Der Agent kann sie per SMS erinnern und freie Termine anbieten.</p>
+        <div class="flex gap-2"><button type="button" class="btn-ghost h-9" data-k-filter="recall">Anzeigen</button><button type="button" class="btn-primary h-9" data-k-recall-all>Alle erinnern</button></div>
+      </div>` : ""}
       <div class="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
         <div class="card min-w-0">
           <div class="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
             <label class="relative block lg:w-72">
-              <span class="sr-only">Kontakte durchsuchen</span>
+              <span class="sr-only">${W("Kontakte", "Patienten")} durchsuchen</span>
               ${svg(I.search, "pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400")}
               <input type="search" id="k-search" class="field h-10 pl-9" placeholder="Name, Firma, E-Mail …" value="${esc(K.q)}" />
             </label>
             <div class="flex flex-wrap items-center gap-2">
               <div class="flex flex-wrap gap-1" role="group" aria-label="Filter">
-                ${[["all", "Alle", K.list.length], ["new", "Neu", n("new")], ["regular", "Stammkunden", n("regular")], ["lead", "Leads", n("lead")]].map(([v, l, c]) =>
+                ${[["all", "Alle", K.list.length], ["new", "Neu", n("new")], ["regular", W("Stammkunden", "Stammpatienten"), n("regular")], PX() ? ["recall", "Recall fällig", recalls] : ["lead", "Leads", n("lead")]].map(([v, l, c]) =>
                   `<button type="button" class="chip ${K.filter === v ? "chip-active" : ""}" data-k-filter="${v}" aria-pressed="${K.filter === v}">${l} <span class="tabular text-slate-400">${c}</span></button>`).join("")}
               </div>
               <label class="flex items-center gap-2 text-xs text-slate-500">Sortieren
@@ -199,7 +210,7 @@
             </div>
           </div>
           <div class="hidden grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_minmax(0,1.3fr)_70px] gap-4 border-b border-slate-100 px-5 py-2 text-[11px] font-medium uppercase tracking-wider text-slate-500 md:grid" aria-hidden="true">
-            <span>Kontakt</span><span>Nächster / letzter Termin</span><span>Quelle</span><span class="text-right">Termine</span>
+            <span>${W("Kontakt", "Patient")}</span><span>Nächster / letzter Termin</span><span>Quelle</span><span class="text-right">Termine</span>
           </div>
           <ul id="k-list" class="divide-y divide-slate-100"></ul>
         </div>
@@ -217,14 +228,14 @@
       return `<li><button type="button" data-k-open="${esc(c.id)}" class="grid w-full grid-cols-1 gap-2 px-5 py-3 text-left text-sm transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none md:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_minmax(0,1.3fr)_70px] md:items-center md:gap-4 ${K.selected === c.id ? "bg-indigo-50/60" : ""}" aria-current="${K.selected === c.id}">
         <span class="flex min-w-0 items-center gap-3">
           <span class="grid h-9 w-9 flex-none place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">${esc(initials(c.name))}</span>
-          <span class="min-w-0"><span class="flex items-center gap-2"><span class="truncate font-medium text-slate-900">${esc(c.name)}</span>${badge(TAG[c.tag].label, TAG[c.tag].cls)}</span>
-          <span class="block truncate text-xs text-slate-500">${esc(c.company || c.email)}</span></span>
+          <span class="min-w-0"><span class="flex flex-wrap items-center gap-x-2 gap-y-1"><span class="font-medium text-slate-900">${esc(c.name)}</span>${badge(TAG[c.tag].label, TAG[c.tag].cls)}${PX() && recallDue(c) ? badge("Recall", "border-sky-200 bg-sky-50 text-sky-800") : ""}</span>
+          <span class="block truncate text-xs text-slate-500">${esc(c.company || c.email || c.phone)}</span></span>
         </span>
         <span class="min-w-0 pl-12 md:pl-0">${when}</span>
         <span class="hidden text-slate-600 md:block">${esc(SOURCE[c.source])}</span>
         <span class="tabular hidden text-right font-medium text-slate-900 md:block">${num(c.bookings)}</span>
       </button></li>`;
-    }).join("") : `<li class="px-5 py-10 text-center text-sm text-slate-500">Keine Kontakte gefunden.${K.q || K.filter !== "all" ? ' <button type="button" class="font-medium text-indigo-700 hover:underline" data-k-reset>Filter zurücksetzen</button>' : ""}</li>`;
+    }).join("") : `<li class="px-5 py-10 text-center text-sm text-slate-500">Keine ${W("Kontakte", "Patienten")} gefunden.${K.q || K.filter !== "all" ? ' <button type="button" class="font-medium text-indigo-700 hover:underline" data-k-reset>Filter zurücksetzen</button>' : ""}</li>`;
   }
 
   function renderKundenDetail() {
@@ -233,7 +244,7 @@
     if (!c) {
       box.innerHTML = `<div class="px-5 py-10 text-center">
         <span class="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-500">${svg(I.search, "h-5 w-5")}</span>
-        <p class="mt-3 text-sm font-medium text-slate-900">Kontakt auswählen</p>
+        <p class="mt-3 text-sm font-medium text-slate-900">${W("Kontakt", "Patient")} auswählen</p>
         <p class="mt-1 text-xs text-slate-500">Klick auf einen Eintrag, dann siehst du Termine, Notizen und Einwilligungen.</p></div>`;
       return;
     }
@@ -244,7 +255,7 @@
           <span class="grid h-11 w-11 flex-none place-items-center rounded-full bg-indigo-50 text-sm font-bold text-indigo-700">${esc(initials(c.name))}</span>
           <div class="min-w-0">
             <h2 class="truncate font-display text-base font-bold text-slate-900">${esc(c.name)}</h2>
-            <p class="truncate text-xs text-slate-500">${esc(c.company || "–")}</p>
+            <p class="truncate text-xs text-slate-500">${esc(c.company || (PX() ? "Patient" : "–"))}</p>
           </div>
         </div>
         <button type="button" class="grid h-8 w-8 flex-none place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900" data-k-close aria-label="Detailansicht schließen">${svg(I.x)}</button>
@@ -258,16 +269,22 @@
         <div class="grid grid-cols-3 gap-2 text-center">
           <div class="rounded-xl bg-slate-50 px-2 py-2.5"><p class="tabular font-display text-lg font-bold text-slate-900">${num(c.bookings)}</p><p class="text-[11px] text-slate-500">Termine</p></div>
           <div class="rounded-xl bg-slate-50 px-2 py-2.5"><p class="tabular font-display text-lg font-bold text-slate-900">${num(c.noShows)}</p><p class="text-[11px] text-slate-500">No-Shows</p></div>
-          <div class="rounded-xl bg-slate-50 px-2 py-2.5"><p class="tabular font-display text-lg font-bold text-slate-900">${since < 60 ? num(since) : num(Math.round(since / 30))}</p><p class="text-[11px] text-slate-500">${since < 60 ? "Tage" : "Monate"} Kunde</p></div>
+          <div class="rounded-xl bg-slate-50 px-2 py-2.5"><p class="tabular font-display text-lg font-bold text-slate-900">${since < 60 ? num(since) : num(Math.round(since / 30))}</p><p class="text-[11px] text-slate-500">${since < 60 ? "Tage" : "Monate"} ${W("Kunde", "Patient")}</p></div>
         </div>
         <div>
           <p class="mb-1.5 text-xs font-medium uppercase tracking-wider text-slate-500">Nächster Termin</p>
           ${c.nextAt ? `<p class="flex items-center gap-2 text-slate-900">${svg(I.cal, "h-4 w-4 text-indigo-600")}${esc(fmtDT.format(new Date(c.nextAt)))} Uhr</p><p class="mt-0.5 pl-6 text-xs text-slate-500">${esc(c.nextTitle || "")}</p>` : '<p class="text-slate-500">Kein Termin geplant.</p>'}
         </div>
+        ${PX() ? `<div>
+          <p class="mb-1.5 text-xs font-medium uppercase tracking-wider text-slate-500">Recall</p>
+          ${c.recallDue ? `<p class="${recallDue(c) ? "font-medium text-sky-800" : "text-slate-700"}">${recallDue(c) ? "Fällig seit" : "Fällig ab"} ${esc(fmtDate.format(new Date(c.recallDue)))}</p>
+            <button type="button" class="mt-2 inline-flex h-9 items-center rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-medium text-sky-900 hover:bg-sky-100" data-k-recall>${c.smsConsent ? "Per SMS erinnern" : "Per E-Mail erinnern"}</button>`
+            : '<p class="text-slate-500">Kein Recall geplant.</p>'}
+        </div>` : ""}
         <div>
-          <label for="k-notes" class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-500">Notizen</label>
-          <textarea id="k-notes" rows="3" maxlength="500" class="field" placeholder="Was der Agent über diesen Kontakt wissen sollte …">${esc(c.notes)}</textarea>
-          <p class="mt-1 text-xs text-slate-500">Der KI-Agent berücksichtigt Notizen bei Anrufen und Antworten.</p>
+          <label for="k-notes" class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-slate-500">${W("Notizen", "Organisatorische Notizen")}</label>
+          <textarea id="k-notes" rows="3" maxlength="500" class="field" placeholder="${W("Was der Agent über diesen Kontakt wissen sollte …", "z. B. lieber Rückruf statt SMS – keine medizinischen Angaben")}">${esc(c.notes)}</textarea>
+          <p class="mt-1 text-xs text-slate-500">${W("Der KI-Agent berücksichtigt Notizen bei Anrufen und Antworten.", "Nur Organisatorisches. Befunde und Diagnosen gehören in die Praxissoftware.")}</p>
         </div>
         <div class="rounded-xl border border-slate-200 px-3 py-2.5 text-xs text-slate-600">
           <p class="font-medium text-slate-800">Einwilligungen</p>
@@ -287,7 +304,7 @@
   }
 
   function newContactDialog() {
-    openDialog(dialogShell("Neuer Kontakt", `
+    openDialog(dialogShell(W("Neuer Kontakt", "Neuer Patient"), `
       ${field("Name", '<input name="name" required maxlength="80" class="field" autocomplete="off" />')}
       ${field("E-Mail", '<input name="email" type="email" required maxlength="120" class="field" autocomplete="off" />')}
       <div class="grid gap-4 sm:grid-cols-2">
@@ -296,11 +313,11 @@
       </div>
       ${field("Status", `<select name="tag" class="field"><option value="new">Neu</option><option value="lead">Lead</option><option value="regular">Stammkunde</option></select>`)}
       ${toggle("smsConsent", false, "Einwilligung für SMS-Erinnerungen liegt vor", "Nur anhaken, wenn der Kontakt zugestimmt hat.")}
-    `, '<button type="submit" value="cancel" formnovalidate class="btn-ghost">Abbrechen</button><button type="submit" value="save" class="btn-primary">Kontakt anlegen</button>'),
+    `, '<button type="submit" value="cancel" formnovalidate class="btn-ghost">Abbrechen</button><button type="submit" value="save" class="btn-primary">${W("Kontakt anlegen", "Patient anlegen")}</button>'),
     async (f) => {
       const c = await API.saveContact({ name: f.name.value.trim(), email: f.email.value.trim(), phone: f.phone.value.trim(), company: f.company.value.trim(), tag: f.tag.value, smsConsent: f.smsConsent.checked });
       K.list = await API.getContacts(); K.selected = c.id; K.filter = "all"; K.q = "";
-      renderKunden(); toast("Kontakt angelegt");
+      renderKunden(); toast(W("Kontakt angelegt", "Patient angelegt"));
     });
   }
 
@@ -334,12 +351,22 @@
         c.notes = $("#k-notes").value.trim();
         await API.saveContact(c); return toast("Notiz gespeichert");
       }
+      if (t("[data-k-recall]")) {
+        const c = K.list.find((x) => x.id === K.selected);
+        c.recallDue = null; await API.saveContact(c);
+        renderKunden(); return toast(`Recall-Erinnerung an ${c.name} vorgemerkt`);
+      }
+      if (t("[data-k-recall-all]")) {
+        const due = K.list.filter(recallDue);
+        for (const c of due) { c.recallDue = null; await API.saveContact(c); }
+        K.filter = "all"; renderKunden(); return toast(`${due.length} Recall-Erinnerungen vorgemerkt`);
+      }
       if (t("[data-k-delete]")) { K.confirmDelete = true; return renderKundenDetail(); }
       if (t("[data-k-delete-cancel]")) { K.confirmDelete = false; return renderKundenDetail(); }
       if (t("[data-k-delete-confirm]")) {
         await API.deleteContact(K.selected);
         K.list = await API.getContacts(); K.selected = null; K.confirmDelete = false;
-        renderKunden(); return toast("Kontakt endgültig gelöscht");
+        renderKunden(); return toast(W("Kontakt endgültig gelöscht", "Patientendaten endgültig gelöscht"));
       }
     });
   }
@@ -348,17 +375,19 @@
   // Event-Typen
   // =====================================================================
   const E = { list: [] };
-  const bookingUrl = (slug) => `calensync.de/jana-krueger/${slug}`;
+  const bookingUrl = (slug) => `calensync.de/${PX() ? "praxis-dr-berger" : "jana-krueger"}/${slug}`;
   const slugify = (s) => s.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
   function renderEventTypes() {
     const root = $("#view-event-typen");
     const active = E.list.filter((t) => t.active);
-    root.innerHTML = pageHead("event-typen-title", "Event-Typen", "Was man bei dir buchen kann",
+    root.innerHTML = (PX() ? pageHead("event-typen-title", "Terminarten", "Was Patienten bei Ihnen buchen können",
+      "Jede Terminart hat Dauer, Puffer und Vorlauf. Akuttermine bucht der Agent nur in Zeitfenster, die Sie freigeben – oder er nimmt einen Rückrufwunsch auf.",
+      `<button type="button" class="btn-primary" data-e-new>${svg(I.plus)}Neue Terminart</button>`) : pageHead("event-typen-title", "Event-Typen", "Was man bei dir buchen kann",
       "Jeder Event-Typ hat einen eigenen Buchungslink, eine Dauer und Regeln für Puffer und Vorlauf. Der KI-Agent bucht nur, was du für ihn freigibst.",
-      `<button type="button" class="btn-primary" data-e-new>${svg(I.plus)}Neuer Event-Typ</button>`) + `
+      `<button type="button" class="btn-primary" data-e-new>${svg(I.plus)}Neuer Event-Typ</button>`)) + `
       <div class="mb-6 grid grid-cols-2 gap-3 xl:grid-cols-4">
-        ${statCard("Aktive Event-Typen", num(active.length), `von ${num(E.list.length)} angelegt`)}
+        ${statCard(W("Aktive Event-Typen", "Aktive Terminarten"), num(active.length), `von ${num(E.list.length)} angelegt`)}
         ${statCard("Für den KI-Agenten frei", num(active.filter((t) => t.aiBookable).length))}
         ${statCard("Buchungen (30 Tage)", num(E.list.reduce((s, t) => s + (t.bookings30d || 0), 0)))}
         ${statCard("Ø Dauer", active.length ? `${num(active.reduce((s, t) => s + t.duration, 0) / active.length)} Min` : "–")}
@@ -397,7 +426,7 @@
           </article>`;
         }).join("")}
         <button type="button" data-e-new class="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 text-sm font-medium text-slate-500 transition-colors hover:border-indigo-300 hover:bg-indigo-50/40 hover:text-indigo-700">
-          <span class="grid h-10 w-10 place-items-center rounded-full bg-white shadow-sm">${svg(I.plus, "h-5 w-5")}</span>Event-Typ hinzufügen
+          <span class="grid h-10 w-10 place-items-center rounded-full bg-white shadow-sm">${svg(I.plus, "h-5 w-5")}</span>${W("Event-Typ hinzufügen", "Terminart hinzufügen")}
         </button>
       </div>${demoNote}`;
   }
@@ -406,9 +435,9 @@
     const isNew = !t;
     t = t || { name: "", slug: "", duration: 30, color: "emerald", location: "meet", bufferBefore: 0, bufferAfter: 10, minNoticeHours: 4, active: true, aiBookable: true, description: "" };
     const opt = (v, l, cur) => `<option value="${v}" ${String(cur) === String(v) ? "selected" : ""}>${l}</option>`;
-    openDialog(dialogShell(isNew ? "Neuer Event-Typ" : "Event-Typ bearbeiten", `
+    openDialog(dialogShell(isNew ? W("Neuer Event-Typ", "Neue Terminart") : W("Event-Typ bearbeiten", "Terminart bearbeiten"), `
       ${field("Name", `<input name="name" required maxlength="60" class="field" value="${esc(t.name)}" placeholder="z. B. Beratung" />`)}
-      ${field("Buchungslink", `<div class="flex items-stretch overflow-hidden rounded-lg border border-slate-200 focus-within:border-indigo-600 focus-within:ring-2 focus-within:ring-indigo-600/30"><span class="flex items-center bg-slate-50 px-3 text-xs text-slate-500">calensync.de/jana-krueger/</span><input name="slug" required pattern="[a-z0-9\\-]+" maxlength="40" class="min-w-0 flex-1 border-0 px-2 py-2.5 text-sm focus:outline-none" value="${esc(t.slug)}" /></div>`, "Kleinbuchstaben, Ziffern und Bindestriche.")}
+      ${field("Buchungslink", `<div class="flex items-stretch overflow-hidden rounded-lg border border-slate-200 focus-within:border-indigo-600 focus-within:ring-2 focus-within:ring-indigo-600/30"><span class="flex items-center bg-slate-50 px-3 text-xs text-slate-500">${esc(bookingUrl(""))}</span><input name="slug" required pattern="[a-z0-9\\-]+" maxlength="40" class="min-w-0 flex-1 border-0 px-2 py-2.5 text-sm focus:outline-none" value="${esc(t.slug)}" /></div>`, "Kleinbuchstaben, Ziffern und Bindestriche.")}
       <div class="grid gap-4 sm:grid-cols-2">
         ${field("Dauer", `<select name="duration" class="field">${[15, 20, 30, 45, 60, 90, 120].map((d) => opt(d, `${d} Minuten`, t.duration)).join("")}</select>`)}
         ${field("Ort", `<select name="location" class="field">${Object.entries(LOCATION).map(([k, v]) => opt(k, v.label, t.location)).join("")}</select>`)}
@@ -528,7 +557,7 @@
     const typeSum = Math.max(1, d.byType.reduce((s, x) => s + x.value, 0));
     const heatMax = Math.max(1, ...d.heatmap.flat());
     const days = ["Mo", "Di", "Mi", "Do", "Fr"];
-    root.innerHTML = pageHead("berichte-title", "Berichte", "Was CalenSync für dich bringt",
+    root.innerHTML = pageHead("berichte-title", "Berichte", W("Was CalenSync für dich bringt", "Was CalenSync für Ihre Praxis bringt"),
       "Buchungen, Kanäle und No-Shows im Zeitverlauf. Alle Auswertungen laufen in Frankfurt, ohne Tracking-Dienste.",
       `<div class="inline-flex rounded-lg border border-slate-200 bg-white p-0.5" role="group" aria-label="Zeitraum">
          ${[7, 30, 90].map((n) => `<button type="button" class="seg ${R.days === n ? "seg-active" : ""}" data-r-days="${n}" aria-pressed="${R.days === n}">${n} Tage</button>`).join("")}
@@ -648,7 +677,7 @@
       const on = name === "overview" ? h === "kpis" : h === name;
       l.classList.toggle("bg-indigo-50", on); l.classList.toggle("text-indigo-800", on);
     });
-    document.title = `${TITLES[name]} – CalenSync`;
+    document.title = `${name === "kunden" ? W("Kunden", "Patienten") : name === "event-typen" ? W("Event-Typen", "Terminarten") : TITLES[name]} – CalenSync`;
     current = name;
   }
 

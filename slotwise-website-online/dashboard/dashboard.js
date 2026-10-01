@@ -60,6 +60,7 @@
     buffer: { dot: "bg-violet-500", ring: "ring-violet-100", label: "Puffer" },
     conflict: { dot: "bg-red-500", ring: "ring-red-100", label: "Konflikt verhindert" },
     info: { dot: "bg-slate-400", ring: "ring-slate-100", label: "Info" },
+    task: { dot: "bg-amber-500", ring: "ring-amber-100", label: "Aufgabe fürs Team" },
   };
   function activityItem(a, fresh = false) {
     const k = KIND[a.kind] || KIND.info;
@@ -165,13 +166,39 @@
     f.autonomy.value = s.autonomy;
     f.maxPerDay.value = s.maxPerDay;
     f.instructions.value = s.instructions || "";
+    f.industry.value = s.industry === "praxis" ? "praxis" : "business";
     syncRange(); syncCount();
   }
   function syncRange() { $("#maxPerDayValue").textContent = $("#maxPerDay").value; }
   function syncCount() { $("#instructionsCount").textContent = `${$("#instructions").value.length} / 600`; }
   function readSettings() {
     const f = $("#agent-form");
-    return { autonomy: f.autonomy.value, maxPerDay: Number(f.maxPerDay.value), instructions: f.instructions.value.trim() };
+    return { autonomy: f.autonomy.value, maxPerDay: Number(f.maxPerDay.value), instructions: f.instructions.value.trim(), industry: f.industry.value || "business" };
+  }
+
+  // ---------- Praxismodus ----------
+  const TASK_TYPE_TONE = { prescription: "border-violet-200 bg-violet-50 text-violet-800", referral: "border-sky-200 bg-sky-50 text-sky-800", callback: "border-slate-200 bg-slate-50 text-slate-700", change_request: "border-amber-200 bg-amber-50 text-amber-900", other: "border-slate-200 bg-slate-50 text-slate-700" };
+  function renderTasks(list) {
+    $("#tasks-count").textContent = `${list.length} offen`;
+    $("#tasks-list").innerHTML = list.length ? list.map((t) => `
+      <li class="flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between" data-task="${esc(t.id)}">
+        <div class="min-w-0">
+          <p class="flex flex-wrap items-center gap-2 text-sm"><span class="rounded-full border px-2 py-0.5 text-[11px] font-medium ${TASK_TYPE_TONE[t.type] || TASK_TYPE_TONE.other}">${esc(t.label)}</span><span class="font-medium text-slate-900">${esc(t.name)}</span>${t.dateOfBirth ? `<span class="tabular text-xs text-slate-500">geb. ${esc(t.dateOfBirth.split("-").reverse().join("."))}</span>` : ""}</p>
+          <p class="mt-1 text-xs text-slate-500">${t.note ? `${esc(t.note)} · ` : ""}<time datetime="${esc(t.at)}">${relTime(t.at)}</time></p>
+        </div>
+        <div class="flex flex-none gap-2">
+          ${t.phone ? `<a href="tel:${esc(t.phone.replace(/\s/g, ""))}" class="btn-ghost h-9 px-3">Anrufen</a>` : ""}
+          <button type="button" class="btn-primary h-9 px-3" data-task-done="${esc(t.id)}">Erledigt</button>
+        </div>
+      </li>`).join("") : '<li class="px-5 py-8 text-center text-sm text-slate-500">Alles erledigt. Neue Rezept-, Überweisungs- und Rückrufwünsche erscheinen hier.</li>';
+  }
+  function applyMode() {
+    const px = API.praxis;
+    document.querySelectorAll('[data-l="kunden"]').forEach((el) => { el.textContent = px ? "Patienten" : "Kunden"; });
+    document.querySelectorAll('[data-l="event-typen"]').forEach((el) => { el.textContent = px ? "Terminarten" : "Event-Typen"; });
+    $("#greeting").textContent = px ? "Guten Tag, Praxis Dr. Berger. Ihr Assistent nimmt ab." : "Hallo Jana, dein Agent hat übernommen.";
+    $("#global-search").placeholder = px ? "Termine, Patienten, Terminarten suchen …" : "Termine, Kunden, Event-Typen suchen …";
+    $("#aufgaben").hidden = !px;
   }
 
   // ---------- Verdrahtung ----------
@@ -187,6 +214,8 @@
     }
     const [metrics, activity, week, settings] = await Promise.all([API.getMetrics(), API.getActivity(), API.getWeek(), API.getSettings()]);
     renderMetrics(metrics); renderActivity(activity); renderWeek(week); fillSettings(settings);
+    applyMode();
+    if (API.praxis) renderTasks(await API.getTasks());
 
     API.subscribeActivity((a) => {
       const ol = $("#activity-list");
@@ -204,6 +233,15 @@
         return;
       }
       if (e.target.closest("[data-close]")) return $("#slot-detail").classList.add("hidden");
+      const done = e.target.closest("[data-task-done]");
+      if (done) {
+        done.disabled = true;
+        API.taskDone(done.dataset.taskDone).then(async () => {
+          const list = await API.getTasks(); renderTasks(list);
+          const k = document.querySelector('#kpi-grid article[aria-label="Offene Aufgaben fürs Team"] p.font-display'); if (k) k.textContent = list.length;
+        }).catch(() => { done.disabled = false; });
+        return;
+      }
       const ok = e.target.closest("[data-approve]"), no = e.target.closest("[data-reject]");
       if (ok || no) {
         const id = (ok || no).dataset.approve || (ok || no).dataset.reject;
@@ -224,8 +262,11 @@
       const btn = $("#save-btn"), st = $("#save-status");
       btn.disabled = true; st.textContent = "Wird gespeichert …";
       try {
+        const before = API.mode;
         const saved = await API.saveSettings(readSettings());
         st.textContent = `Gespeichert, ${fmtTime.format(new Date(saved.updatedAt))} Uhr`;
+        // Moduswechsel (Unternehmen ↔ Praxis): alles neu laden, damit Begriffe, Vorlagen und Daten passen
+        if ((saved.industry || "business") !== before) { st.textContent = "Gespeichert – Ansicht wird umgestellt …"; setTimeout(() => location.reload(), 600); }
       } catch { st.textContent = "Speichern fehlgeschlagen. Bitte noch einmal versuchen."; }
       btn.disabled = false;
     });

@@ -15,7 +15,8 @@
 const crypto = require("node:crypto");
 const { readiness } = require("../config");
 const { normalizeEmail } = require("../email");
-const { toBedrockTools } = require("./tools");
+const { toBedrockTools, L0_TOOLS } = require("./tools");
+const { toolsFor, createTasks, DISCLOSURE_PRAXIS_DE, TASK_TYPES } = require("./praxis");
 const { buildSystemPrompt, DISCLOSURE_DE } = require("./systemPrompt");
 const { ToolRouter, otpStoreFrom } = require("./toolRouter");
 const { createModel } = require("./bedrock");
@@ -45,6 +46,7 @@ function createAgent(config, deps = {}) {
   const calendar = deps.calendar || createCalendar(store, { timezone: config.agent.timezone, now });
   const activity = deps.activity || createActivity(store, now);
   const settings = deps.settings || createSettings(store, now);
+  const tasks = deps.tasks || createTasks(store, now);
   const router = new ToolRouter({ otp: otpStoreFrom(store), audit: activity.audit, hmacSecret: config.secret || "local-dev-secret-not-for-production-use", sendSms, now });
   const state = agentReadiness(config);
 
@@ -63,6 +65,11 @@ function createAgent(config, deps = {}) {
       await sendSms(args.phone_e164, `Ihr Link zur Terminbuchung bei ${config.agent.company}: ${config.siteUrl || ""}/book`);
       await activity.log({ kind: "info", text: `Buchungslink per SMS an ${mask(args.phone_e164)} geschickt`, channel: session.channel });
       return { tool: name, sent: true };
+    }
+    if (name === "create_task") {
+      const t = await tasks.add({ ...args, channel: session.channel });
+      await activity.log({ kind: "task", text: `${TASK_TYPES[t.type]} von ${t.name} aufgenommen – Aufgabe für das Praxisteam, Rückruf an ${mask(t.phone)}`, ref: { type: "task", id: t.id }, channel: session.channel });
+      return { tool: name, created: true, say: "Ich habe Ihren Wunsch für das Praxisteam aufgenommen. Die Praxis prüft ihn und meldet sich bei Ihnen. Auf Wiederhören!" };
     }
     if (name === "create_booking") {
       const start = args.start, end = new Date(Date.parse(start) + (args.duration_minutes || 30) * 60000).toISOString();
@@ -93,9 +100,13 @@ function createAgent(config, deps = {}) {
   }
 
   return {
-    state, store, calendar, activity, settings, model,
+    state, store, calendar, activity, settings, model, tasks,
 
-    disclosure() { return DISCLOSURE_DE.replace("{{company}}", config.agent.company); },
+    /** Begrüßung mit KI-Hinweis; im Praxismodus mit Notruf-Hinweis. */
+    async disclosure() {
+      const cfg = await settings.get();
+      return (cfg.industry === "praxis" ? DISCLOSURE_PRAXIS_DE : DISCLOSURE_DE).replace("{{company}}", config.agent.company);
+    },
 
     /**
      * Eine Gesprächsrunde. input: { sessionId, channel:"phone"|"email", from?, utterance }
@@ -105,7 +116,7 @@ function createAgent(config, deps = {}) {
       if (!model) return { say: "Der Assistent ist gerade nicht verfügbar. Bitte versuchen Sie es später noch einmal.", done: true, handover: false };
       const session = await loadSession(sessionId, { channel, from });
       const cfg = await settings.get();
-      const routerSession = { callSid: sessionId, tenantId: "default", hostId: "host", callerCli: from, language: "de" };
+      const routerSession = { callSid: sessionId, tenantId: "default", hostId: "host", callerCli: from, language: "de", industry: cfg.industry || "business" };
       const text = String(utterance || "").trim();
       session.turns += 1;
 
@@ -117,10 +128,17 @@ function createAgent(config, deps = {}) {
 
       // 1) Deterministisches Gate vor dem Modell
       const gate = await router.gateUtterance(routerSession, text);
+      if (gate && gate.kind === "emergency") {
+        session.messages.push({ role: "user", content: [{ text }] }, { role: "assistant", content: [{ text: gate.say }] });
+        await saveSession(session);
+        await activity.log({ kind: "conflict", text: "Notfall-Stichwort erkannt – Anrufer auf 112 / 116 117 verwiesen und an das Praxisteam übergeben", channel });
+        return { say: gate.say, done: true, handover: true, escalationPhone: config.agent.escalationPhone };
+      }
       if (gate) {
         session.messages.push({ role: "user", content: [{ text }] }, { role: "assistant", content: [{ text: gate.say }] });
         await saveSession(session);
-        await activity.log({ kind: "info", text: `Änderungswunsch am Telefon abgelehnt (L0-Freeze) – Buchungslink oder Übergabe angeboten`, channel });
+        const what = { medical_question: "Medizinische Frage nicht beantwortet – Termin oder Rückruf angeboten", modify_intent_task: "Änderungswunsch erkannt – bestehende Termine bleiben gesperrt, Aufgabe fürs Team wird aufgenommen" }[gate.reason];
+        await activity.log({ kind: "info", text: what || `Änderungswunsch am Telefon abgelehnt (L0-Freeze) – Buchungslink oder Übergabe angeboten`, channel });
         return { say: gate.say, done: false, handover: false };
       }
 
@@ -131,7 +149,7 @@ function createAgent(config, deps = {}) {
 
       try {
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-          const res = await model.converse({ system, messages: session.messages, tools: toBedrockTools() });
+          const res = await model.converse({ system, messages: session.messages, tools: toBedrockTools(toolsFor(L0_TOOLS, cfg.industry)) });
           session.messages.push(res.assistantMessage || { role: "assistant", content: [{ text: res.text || "…" }] });
           if (res.text) say = res.text;
           if (!res.toolUses.length) break;
@@ -145,7 +163,7 @@ function createAgent(config, deps = {}) {
             else if (["send_otp", "verify_otp"].includes(decision.name)) payload = { tool: decision.name, ...decision.arguments };
             else payload = await execTool(session, decision.name, decision.arguments, cfg);
             if (payload.say && !res.text) say = payload.say;
-            if (payload.booked || payload.proposal) done = true;
+            if (payload.booked || payload.proposal || payload.created) done = true;
             results.push({ toolResult: { toolUseId: tu.id, content: [{ json: payload }] } });
           }
           session.messages.push({ role: "user", content: results });
