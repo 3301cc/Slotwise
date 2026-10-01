@@ -945,7 +945,12 @@ function SwDashboardSection() {
         eyebrow={<SwBadge tone="neutral">Dashboard</SwBadge>}
         title={<span id="dash-title">Dein Cockpit: Termine, KI-Agent und Freigaben auf einen Blick.</span>}
         description="Das Dashboard zeigt, was dein Agent übernommen hat, welche Vorschläge auf Freigabe warten und wie sich Buchungen entwickeln — ohne Tabellen-Chaos."
-        actions={<SwButton as="a" href="/dashboard/" variant="secondary">Dashboard-Vorschau öffnen<SwArrow size={16} /></SwButton>}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <SwButton as="a" href="/dashboard/?modus=unternehmen" variant="secondary">Vorschau für Unternehmen<SwArrow size={16} /></SwButton>
+            <SwButton as="a" href="/dashboard/?modus=praxis" variant="secondary">Vorschau für Praxen<SwArrow size={16} /></SwButton>
+          </div>
+        }
       />
       <div className="mt-10"><SwDashboardMock /></div>
       <ul className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-3">

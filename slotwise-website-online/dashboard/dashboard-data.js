@@ -102,6 +102,7 @@
       maxPerDay: 4,
       instructions: "Sei besonders höflich und biete freitags keine Termine nach 14 Uhr an.",
       praxisBooking: "off",
+      newPatients: "callback",
       updatedAt: minutesAgo(3000),
     },
   };
@@ -156,10 +157,10 @@
       { id: "t6", name: "Beratung Zahnersatz", slug: "zahnersatz", duration: 45, color: "amber", location: "onsite", bufferBefore: 0, bufferAfter: 15, minNoticeHours: 48, active: false, aiBookable: false, description: "Beratung zu Kronen, Brücken und Implantaten.", bookings30d: 0 },
     ],
     tasks: [
-      { id: "a1", at: minutesAgo(4), type: "prescription", label: "Rezeptwunsch", name: "Peter Kühn", dateOfBirth: "1958-07-03", phone: "+49 211 5550 1178", note: "Folgerezept Blutdruckmittel", channel: "phone", done: false },
-      { id: "a2", at: minutesAgo(70), type: "change_request", label: "Terminänderung", name: "Anna Schmidt", dateOfBirth: "1981-02-14", phone: "+49 211 5550 1877", note: "Montag absagen", channel: "phone", done: false },
-      { id: "a3", at: minutesAgo(95), type: "referral", label: "Überweisungswunsch", name: "Maria Lindner", dateOfBirth: "1967-11-30", phone: "+49 172 5550 221", note: "Überweisung Orthopädie", channel: "phone", done: false },
-      { id: "a4", at: minutesAgo(140), type: "callback", label: "Rückrufwunsch", name: "Ilse Brandt", dateOfBirth: null, phone: "+49 211 5550 4402", note: "Neupatientin, möchte aufgenommen werden", channel: "phone", done: false },
+      { id: "a1", at: minutesAgo(4), type: "prescription", label: "Rezeptwunsch", name: "Peter Kühn", patientStatus: "existing", dateOfBirth: "1958-07-03", phone: "+49 211 5550 1178", note: "Folgerezept Blutdruckmittel", channel: "phone", done: false },
+      { id: "a2", at: minutesAgo(70), type: "change_request", label: "Terminänderung", name: "Anna Schmidt", patientStatus: "existing", dateOfBirth: "1981-02-14", phone: "+49 211 5550 1877", note: "Montag absagen", channel: "phone", done: false },
+      { id: "a3", at: minutesAgo(95), type: "referral", label: "Überweisungswunsch", name: "Maria Lindner", patientStatus: "existing", dateOfBirth: "1967-11-30", phone: "+49 172 5550 221", note: "Überweisung Orthopädie", channel: "phone", done: false },
+      { id: "a4", at: minutesAgo(140), type: "callback", label: "Rückrufwunsch", name: "Ilse Brandt", patientStatus: "new", dateOfBirth: null, phone: "+49 211 5550 4402", note: "Neupatientin, möchte aufgenommen werden", channel: "phone", done: false },
     ],
   };
 

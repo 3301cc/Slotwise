@@ -16,7 +16,7 @@ const crypto = require("node:crypto");
 const { readiness } = require("../config");
 const { normalizeEmail } = require("../email");
 const { toBedrockTools, L0_TOOLS } = require("./tools");
-const { toolsFor, createTasks, DISCLOSURE_PRAXIS_DE, EMERGENCY_DE, TASK_TYPES } = require("./praxis");
+const { toolsFor, createTasks, DISCLOSURE_PRAXIS_DE, EMERGENCY_DE, TASK_TYPES, NEW_CLOSED_DE, NEW_NO_RX_DE } = require("./praxis");
 const { buildSystemPrompt, DISCLOSURE_DE } = require("./systemPrompt");
 const { ToolRouter, otpStoreFrom } = require("./toolRouter");
 const { createModel } = require("./bedrock");
@@ -67,12 +67,17 @@ function createAgent(config, deps = {}) {
       return { tool: name, sent: true };
     }
     if (name === "create_task") {
+      // Serverseitige Regeln, unabhängig vom Prompt
+      if (args.patient_status === "new" && cfg.newPatients === "closed") return { tool: name, created: false, say: NEW_CLOSED_DE };
+      if (args.patient_status === "new" && (args.type === "prescription" || args.type === "referral")) return { tool: name, created: false, say: NEW_NO_RX_DE };
       const t = await tasks.add({ ...args, channel: session.channel });
-      await activity.log({ kind: "task", text: `${TASK_TYPES[t.type]} von ${t.name} aufgenommen – Aufgabe für das Praxisteam, Rückruf an ${mask(t.phone)}`, ref: { type: "task", id: t.id }, channel: session.channel });
+      await activity.log({ kind: "task", text: `${TASK_TYPES[t.type]} von ${t.name}${t.patientStatus === "new" ? " (Neupatient)" : ""} aufgenommen – Aufgabe für das Praxisteam, Rückruf an ${mask(t.phone)}`, ref: { type: "task", id: t.id }, channel: session.channel });
       return { tool: name, created: true, say: "Ich habe Ihr Anliegen an das Praxisteam weitergegeben. Die Praxis prüft es und meldet sich bei Ihnen. Auf Wiederhören." };
     }
     if (name === "create_booking" && cfg.industry === "praxis") {
       // Praxis: ohne OTP, ohne E-Mail, immer nur Vorschlag zur Freigabe durch das Team
+      if (args.patient_status === "new" && cfg.newPatients === "closed") return { tool: name, booked: false, say: NEW_CLOSED_DE };
+      if (args.patient_status === "new" && cfg.newPatients !== "accept") return { tool: name, booked: false, say: "Über die Aufnahme neuer Patienten entscheidet die Praxis selbst. Ich nehme gern eine Rückrufbitte für Sie auf. Ist das in Ordnung?" };
       const start = args.start, end = new Date(Date.parse(start) + (args.duration_minutes || 30) * 60000).toISOString();
       const label = formatForSpeech(Date.parse(start), calendar.timezone);
       if (await calendar.conflictFor(start, end)) {
@@ -84,9 +89,9 @@ function createAgent(config, deps = {}) {
         await activity.log({ kind: "info", text: `Tageslimit (${cfg.maxPerDay}) erreicht – Terminwunsch von ${args.name} nicht vorgemerkt`, channel: session.channel });
         return { tool: name, booked: false, say: "An diesem Tag sind alle Termine vergeben. Soll ich den nächsten freien Tag vorschlagen?" };
       }
-      const slot = { id: crypto.randomUUID(), start, end, title: String(args.appointment_type || "Termin").slice(0, 60), with: args.name, dateOfBirth: args.date_of_birth, phone: args.phone_e164, source: "ai", channel: session.channel, createdAt: new Date(now()).toISOString() };
+      const slot = { id: crypto.randomUUID(), start, end, title: String(args.appointment_type || "Termin").slice(0, 60), with: args.name, dateOfBirth: args.date_of_birth, patientStatus: args.patient_status === "new" ? "new" : "existing", phone: args.phone_e164, source: "ai", channel: session.channel, createdAt: new Date(now()).toISOString() };
       await calendar.addProposal(slot);
-      await activity.log({ kind: "proposed", text: `${slot.title} für ${args.name} vorgemerkt: ${label} – wartet auf Freigabe durch das Praxisteam`, ref: { type: "slot", id: slot.id }, channel: session.channel });
+      await activity.log({ kind: "proposed", text: `${slot.title} für ${args.name}${slot.patientStatus === "new" ? " (Neupatient)" : ""} vorgemerkt: ${label} – wartet auf Freigabe durch das Praxisteam`, ref: { type: "slot", id: slot.id }, channel: session.channel });
       return { tool: name, booked: false, proposal: true, slot: { id: slot.id, start, end }, say: `Ich habe ${label} für Sie vorgemerkt. Die Praxis meldet sich zur Bestätigung bei Ihnen. Auf Wiederhören.` };
     }
     if (name === "create_booking") {

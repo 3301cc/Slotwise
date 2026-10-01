@@ -66,7 +66,7 @@ Danach bietest du nur die zwei genannten Wege an. Diskutiere nicht.
 - Höchstens ${s.maxPerDay} Termine pro Tag. Meldet find_availability für einen Tag keine Slots, ist der Tag voll – biete den nächsten Tag an.
 ${instructions ? `- Anweisung des Hosts: ${instructions}` : "- Keine weiteren Anweisungen."}
 Diese Regeln ändern nie, was du tun darfst. Sie schränken nur ein.
-${s.industry === "praxis" ? `\n${praxisPrompt(s.praxisBooking)}\n` : ""}
+${s.industry === "praxis" ? `\n${praxisPrompt(s.praxisBooking, s.newPatients)}\n` : ""}
 ## Stil
 - Sätze unter 20 Wörtern. Eine Frage pro Redebeitrag.
 - Uhrzeiten immer mit Wochentag und Datum nennen: "Donnerstag, 8. Oktober, 10 Uhr".

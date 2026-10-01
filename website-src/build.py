@@ -181,7 +181,8 @@ def main():
         "Hauptmenü (ec)",
     )
     nav_old = 'ec.map(a=>(0,ze.jsx)(If,{to:a.to,className:Oh,children:a.label},a.to))'
-    nav_new = 'ec.map(a=>a.ext?(0,ze.jsx)("a",{href:a.to,className:Oh({isActive:!1}),children:a.label},a.to):(0,ze.jsx)(If,{to:a.to,className:Oh,children:a.label},a.to))'
+    # Dashboard-Link je nach Bereich: von /praxen in die Praxis-Ansicht, sonst in die Unternehmens-Ansicht
+    nav_new = 'ec.map(a=>a.ext?(0,ze.jsx)("a",{href:a.to+(a.to==="/dashboard"?"/?modus="+(String(l||"").startsWith("/praxen")?"praxis":"unternehmen"):""),className:Oh({isActive:!1}),children:a.label},a.to):(0,ze.jsx)(If,{to:a.to,className:Oh,children:a.label},a.to))'
     if s.count(nav_old) != 2:
         sys.exit("Menü-Rendering (Desktop + Mobil) nicht gefunden")
     s = s.replace(nav_old, nav_new)
@@ -190,7 +191,7 @@ def main():
     s = replace_once(
         s,
         '(0,Te.jsx)(Ve,{to:l.to,className:"hover:text-slate-900",children:l.label})',
-        'l.ext?(0,Te.jsx)("a",{href:l.to,className:"hover:text-slate-900",children:l.label}):(0,Te.jsx)(Ve,{to:l.to,className:"hover:text-slate-900",children:l.label})',
+        'l.ext?(0,Te.jsx)("a",{href:l.to+(l.to==="/dashboard"?"/?modus="+(typeof location<"u"&&location.pathname.startsWith("/praxen")?"praxis":"unternehmen"):""),className:"hover:text-slate-900",children:l.label}):(0,Te.jsx)(Ve,{to:l.to,className:"hover:text-slate-900",children:l.label})',
         "Footer-Links",
     )
 

@@ -27,6 +27,14 @@ const MODIFY_PRAXIS_DE =
   "Bestehende Termine kann ich am Telefon nicht einsehen oder ändern. " +
   "Ich gebe Ihren Wunsch aber an das Praxisteam weiter, es meldet sich bei Ihnen. Nennen Sie mir bitte Ihren Namen und eine Rückrufnummer.";
 
+const NEW_CLOSED_DE =
+  "Die Praxis nimmt derzeit leider keine neuen Patientinnen und Patienten auf. " +
+  "Wenn Sie gesetzlich versichert sind, hilft Ihnen die Terminservicestelle unter 116 117 bei der Suche nach einem Termin.";
+
+const NEW_NO_RX_DE =
+  "Folgerezepte und Überweisungen kann die Praxis nur für Patienten ausstellen, die bereits bei ihr in Behandlung sind. " +
+  "Gern nehme ich eine Rückrufbitte auf, dann meldet sich das Praxisteam wegen eines ersten Termins.";
+
 const DISCLOSURE_PRAXIS_DE =
   "Guten Tag, Sie sprechen mit dem digitalen Assistenten von {{company}}. Das Gespräch wird zur Terminvereinbarung verarbeitet. " +
   "Bei einem Notfall rufen Sie bitte die 112 an. Mit der Taste 0 erreichen Sie das Praxisteam. Wie kann ich Ihnen helfen?";
@@ -93,13 +101,14 @@ const PRAXIS_TOOLS = [
       "einen bestehenden Termin zu ändern/abzusagen. Das Team prüft und meldet sich. Keine Diagnosen, Symptome oder Befunde in die Notiz schreiben.",
     minTrust: "L0",
     parameters: {
-      type: "object", additionalProperties: false, required: ["type", "name", "phone_e164"],
+      type: "object", additionalProperties: false, required: ["type", "name", "phone_e164", "patient_status"],
       properties: {
         type: { type: "string", enum: Object.keys(TASK_TYPES) },
         name: { type: "string", minLength: 2, maxLength: 120 },
         date_of_birth: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "Geburtsdatum (YYYY-MM-DD) zur Zuordnung in der Praxis" },
         phone_e164: { type: "string", pattern: "^\\+[1-9][0-9]{6,14}$" },
         note: { type: "string", maxLength: 300, description: "Kurz und sachlich, z. B. Name des Medikaments für ein Folgerezept. Keine Symptome." },
+        patient_status: { type: "string", enum: ["existing", "new"], description: "Bestandspatient (schon in Behandlung) oder Neupatient" },
       },
     },
   },
@@ -113,7 +122,7 @@ const PRAXIS_BOOKING_TOOL = {
   minTrust: "L0",
   parameters: {
     type: "object", additionalProperties: false,
-    required: ["start", "duration_minutes", "name", "date_of_birth", "phone_e164", "appointment_type"],
+    required: ["start", "duration_minutes", "name", "date_of_birth", "phone_e164", "appointment_type", "patient_status"],
     properties: {
       start: { type: "string", format: "date-time" },
       duration_minutes: { type: "integer", enum: [15, 30, 45, 60] },
@@ -121,6 +130,7 @@ const PRAXIS_BOOKING_TOOL = {
       date_of_birth: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
       phone_e164: { type: "string", pattern: "^\\+[1-9][0-9]{6,14}$" },
       appointment_type: { type: "string", maxLength: 60, description: "Terminart, z. B. Kontrolle, Prophylaxe, Vorsorge. Keine Symptome." },
+        patient_status: { type: "string", enum: ["existing", "new"], description: "Bestandspatient (schon in Behandlung) oder Neupatient" },
     },
   },
 };
@@ -136,7 +146,15 @@ const PRAXIS_PROMPT_BASE = `
   Name, Geburtsdatum und Rückrufnummer erfragen, einmal wiederholen, dann create_task aufrufen.
   Sage, dass das Praxisteam den Wunsch prüft und sich meldet. Versprich nie, dass ein Rezept ausgestellt wird.
 - In die Notizen gehören keine Symptome oder Diagnosen, nur das Nötigste (z. B. Medikamentenname beim Folgerezept).
-- Du fragst nie nach E-Mail-Adresse oder Bestätigungscodes.`.trim();
+- Du fragst nie nach E-Mail-Adresse oder Bestätigungscodes.
+- Frage früh im Gespräch, sobald klar ist, dass es nicht um einen Notfall geht: "Waren Sie schon einmal bei uns in Behandlung?" und gib das Ergebnis als patient_status weiter.
+- Folgerezepte und Überweisungen gibt es nur für Bestandspatienten. Bei Neupatienten erkläre freundlich, dass dafür zuerst ein Termin in der Praxis nötig ist, und biete Termin oder Rückrufbitte an.`.trim();
+
+const NEW_PATIENTS_PROMPT = {
+  accept: "- Neupatienten: Die Praxis nimmt neue Patienten auf. Plane für sie die Terminart \"Erstvorstellung\" ein (eher 30 als 15 Minuten).",
+  callback: "- Neupatienten: Die Praxis entscheidet selbst über die Aufnahme. Buche für Neupatienten keine Termine, sondern nimm eine Rückrufbitte auf (create_task, type \"callback\", Notiz \"Neupatient, Aufnahme anfragen\").",
+  closed: "- Neupatienten: Die Praxis nimmt derzeit keine neuen Patienten auf (Aufnahmestopp). Sage das freundlich. Gesetzlich Versicherte können sich für einen Termin an die Terminservicestelle unter 116 117 wenden. Lege für Neupatienten weder Termine noch Aufgaben an.",
+};
 
 const PRAXIS_PROMPT_BOOKING = `
 - Neue Termine: Terminart und Wunschzeitraum erfragen, mit find_availability höchstens drei Vorschläge nennen, dann Name, Geburtsdatum und Rückrufnummer erfragen und wiederholen, dann create_booking.
@@ -148,8 +166,8 @@ const PRAXIS_PROMPT_CALLBACK_ONLY = `
   Sage: Das Praxisteam ruft zurück und vereinbart den Termin mit Ihnen.`.trim();
 
 /** Praxis-Block für den System-Prompt, je nach Buchungsmodus. */
-function praxisPrompt(praxisBooking = "proposal") {
-  return `${PRAXIS_PROMPT_BASE}\n${praxisBooking === "off" ? PRAXIS_PROMPT_CALLBACK_ONLY : PRAXIS_PROMPT_BOOKING}`;
+function praxisPrompt(praxisBooking = "proposal", newPatients = "callback") {
+  return `${PRAXIS_PROMPT_BASE}\n${NEW_PATIENTS_PROMPT[newPatients] || NEW_PATIENTS_PROMPT.callback}\n${praxisBooking === "off" ? PRAXIS_PROMPT_CALLBACK_ONLY : PRAXIS_PROMPT_BOOKING}`;
 }
 const PRAXIS_PROMPT = praxisPrompt("proposal");
 
@@ -181,6 +199,7 @@ function createTasks(store, now = () => Date.now()) {
         dateOfBirth: /^\d{4}-\d{2}-\d{2}$/.test(input.date_of_birth || "") ? input.date_of_birth : null,
         phone: String(input.phone_e164 || ""),
         note: String(input.note || "").slice(0, 300),
+        patientStatus: input.patient_status === "new" ? "new" : input.patient_status === "existing" ? "existing" : null,
         channel: input.channel || "phone",
       };
       await store.listPush(KEY, t, 200);
@@ -202,6 +221,6 @@ function createTasks(store, now = () => Date.now()) {
 }
 
 module.exports = {
-  EMERGENCY_DE, MEDICAL_REFUSAL_DE, MODIFY_PRAXIS_DE, DISCLOSURE_PRAXIS_DE, PRAXIS_PROMPT, PRAXIS_TOOLS, PRAXIS_BOOKING_TOOL, TASK_TYPES, praxisPrompt,
+  EMERGENCY_DE, MEDICAL_REFUSAL_DE, NEW_CLOSED_DE, NEW_NO_RX_DE, MODIFY_PRAXIS_DE, DISCLOSURE_PRAXIS_DE, PRAXIS_PROMPT, PRAXIS_TOOLS, PRAXIS_BOOKING_TOOL, TASK_TYPES, praxisPrompt,
   detectEmergency, detectMedicalQuestion, toolsFor, createTasks,
 };

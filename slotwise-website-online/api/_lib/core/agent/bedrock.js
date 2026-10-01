@@ -127,6 +127,7 @@ function fakeModel() {
       if (res && res.tool === "send_booking_link_sms") return out("Der Link ist unterwegs. Auf Wiederhören!");
       if (res && res.tool === "create_task") return out(res.say || "Ich habe Ihren Wunsch aufgenommen.");
 
+      const patientStatus = /noch nie|neu(e|er)? patient|erstes mal|nicht in behandlung|war noch nicht/i.test(all) ? "new" : "existing";
       // Praxismodus, zweite Notfall-Stufe: simuliert ein Modell, das einen unklaren Notfall erkennt
       if (/Praxismodus/.test(system || "") && /fühlt sich (ganz )?komisch an|irgendwas stimmt nicht/i.test(textOf(last))) return out("", [tu("handover_to_human", { reason: "possible_emergency" })]);
       // Praxismodus: Buchung ohne OTP, sobald Slot, Name, Geburtsdatum und Nummer da sind
@@ -136,7 +137,7 @@ function fakeModel() {
         const d = (all.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/) || []);
         const slotRes = (messages.flatMap((m) => m.content).find((c) => c.toolResult && c.toolResult.content[0].json.tool === "find_availability") || {}).toolResult;
         const first = slotRes && slotRes.content[0].json.slots[0];
-        if (nm && d[3] && first) return out("", [tu("create_booking", { start: first.start, duration_minutes: 30, name: nm, date_of_birth: `${d[3]}-${d[2].padStart(2, "0")}-${d[1].padStart(2, "0")}`, phone_e164: phone, appointment_type: "Kontrolle" })]);
+        if (nm && d[3] && first) return out("", [tu("create_booking", { start: first.start, duration_minutes: 30, name: nm, date_of_birth: `${d[3]}-${d[2].padStart(2, "0")}-${d[1].padStart(2, "0")}`, phone_e164: phone, appointment_type: "Kontrolle", patient_status: patientStatus })]);
       }
 
       // Praxismodus: Rezept-/Überweisungs-/Rückruf-/Änderungswunsch → Aufgabe, sobald Name und Nummer genannt sind
@@ -145,7 +146,7 @@ function fakeModel() {
       if (canTask && taskType && phone && !seen(messages, "create_task")) {
         const name = (all.match(/(?:ich heiße|mein name ist|name:?)\s+([A-ZÄÖÜ][\wäöüß-]+(?:\s+[A-ZÄÖÜ][\wäöüß-]+)?)/i) || [])[1];
         const dob = (all.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b/) || []);
-        if (name) return out("", [tu("create_task", { type: taskType, name, phone_e164: phone, ...(dob[3] ? { date_of_birth: `${dob[3]}-${dob[2].padStart(2, "0")}-${dob[1].padStart(2, "0")}` } : {}), note: taskType === "prescription" ? "Folgerezept" : "" })]);
+        if (name) return out("", [tu("create_task", { type: taskType, name, phone_e164: phone, ...(dob[3] ? { date_of_birth: `${dob[3]}-${dob[2].padStart(2, "0")}-${dob[1].padStart(2, "0")}` } : {}), note: taskType === "prescription" ? "Folgerezept" : "", patient_status: patientStatus })]);
       }
       if (canTask && taskType && !seen(messages, "create_task")) return out("Gern. Wie ist Ihr Name, Ihr Geburtsdatum und Ihre Rückrufnummer?");
 
