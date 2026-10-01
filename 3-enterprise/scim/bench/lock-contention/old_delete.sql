@@ -1,0 +1,8 @@
+\set uid random(1, 200)
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+UPDATE scim_users SET active = false, version = version + 1, deletion_requested_at = now() WHERE tenant_id = 'acme' AND id = 'u' || :uid AND deletion_requested_at IS NULL;
+UPDATE pipelines SET status = 'revoked', revoked_at = now() WHERE tenant_id = 'acme' AND owner_user_id = 'u' || :uid AND status <> 'revoked';
+DELETE FROM provider_tokens WHERE tenant_id = 'acme' AND user_id = 'u' || :uid;
+UPDATE webhook_channels SET stop_requested_at = now() WHERE tenant_id = 'acme' AND user_id = 'u' || :uid AND stop_requested_at IS NULL AND stopped_at IS NULL;
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload) VALUES ('acme', 'subscription.teardown', 'purge:u' || :uid, '{}') ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+COMMIT;

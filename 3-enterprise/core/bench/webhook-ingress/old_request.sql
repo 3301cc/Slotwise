@@ -1,0 +1,60 @@
+\set s1 random(1, 3000)
+\set s2 random(1, 3000)
+\set s3 random(1, 3000)
+\set s4 random(1, 3000)
+\set s5 random(1, 3000)
+\set s6 random(1, 3000)
+\set s7 random(1, 3000)
+\set s8 random(1, 3000)
+\set s9 random(1, 3000)
+\set s10 random(1, 3000)
+\set s11 random(1, 3000)
+\set s12 random(1, 3000)
+\set s13 random(1, 3000)
+\set s14 random(1, 3000)
+\set s15 random(1, 3000)
+\set s16 random(1, 3000)
+\set s17 random(1, 3000)
+\set s18 random(1, 3000)
+\set s19 random(1, 3000)
+\set s20 random(1, 3000)
+SELECT c.id AS cid1, c.pipeline_id AS pid1, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst1 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s1 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s1, ('{"pipelineId":"p' || :s1 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid2, c.pipeline_id AS pid2, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst2 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s2 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s2, ('{"pipelineId":"p' || :s2 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid3, c.pipeline_id AS pid3, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst3 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s3 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s3, ('{"pipelineId":"p' || :s3 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid4, c.pipeline_id AS pid4, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst4 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s4 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s4, ('{"pipelineId":"p' || :s4 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid5, c.pipeline_id AS pid5, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst5 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s5 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s5, ('{"pipelineId":"p' || :s5 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid6, c.pipeline_id AS pid6, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst6 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s6 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s6, ('{"pipelineId":"p' || :s6 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid7, c.pipeline_id AS pid7, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst7 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s7 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s7, ('{"pipelineId":"p' || :s7 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid8, c.pipeline_id AS pid8, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst8 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s8 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s8, ('{"pipelineId":"p' || :s8 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid9, c.pipeline_id AS pid9, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst9 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s9 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s9, ('{"pipelineId":"p' || :s9 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid10, c.pipeline_id AS pid10, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst10 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s10 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s10, ('{"pipelineId":"p' || :s10 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid11, c.pipeline_id AS pid11, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst11 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s11 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s11, ('{"pipelineId":"p' || :s11 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid12, c.pipeline_id AS pid12, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst12 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s12 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s12, ('{"pipelineId":"p' || :s12 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid13, c.pipeline_id AS pid13, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst13 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s13 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s13, ('{"pipelineId":"p' || :s13 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid14, c.pipeline_id AS pid14, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst14 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s14 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s14, ('{"pipelineId":"p' || :s14 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid15, c.pipeline_id AS pid15, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst15 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s15 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s15, ('{"pipelineId":"p' || :s15 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid16, c.pipeline_id AS pid16, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst16 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s16 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s16, ('{"pipelineId":"p' || :s16 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid17, c.pipeline_id AS pid17, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst17 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s17 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s17, ('{"pipelineId":"p' || :s17 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid18, c.pipeline_id AS pid18, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst18 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s18 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s18, ('{"pipelineId":"p' || :s18 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid19, c.pipeline_id AS pid19, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst19 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s19 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s19, ('{"pipelineId":"p' || :s19 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;
+SELECT c.id AS cid20, c.pipeline_id AS pid20, c.client_state, c.stop_requested_at, c.stopped_at, COALESCE(p.status, 'missing') AS pst20 FROM webhook_channels c LEFT JOIN pipelines p ON p.id = c.pipeline_id AND p.tenant_id = c.tenant_id WHERE c.provider = 'microsoft' AND c.provider_subscription_id = 'sub-' || :s20 \gset
+INSERT INTO job_queue (tenant_id, kind, dedupe_key, payload, run_at) VALUES ('acme', 'pipeline.delta_sync', 'delta:p' || :s20, ('{"pipelineId":"p' || :s20 || '","full":false}')::jsonb, now()) ON CONFLICT (kind, dedupe_key) WHERE status = 'queued' DO NOTHING;

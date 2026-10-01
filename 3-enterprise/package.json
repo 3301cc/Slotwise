@@ -1,0 +1,33 @@
+{
+  "name": "calensync-enterprise",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Deploybares Mandanten-Backend: Webhook-Eingang, SCIM, Dashboard-API, Worker (app/ + core/ + scim/)",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "prisma generate --schema prisma/schema.prisma && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "test": "tsc -p tsconfig.build.json && node --test \"dist/app/test/**/*.test.js\"",
+    "test:all": "npm test && npm --prefix core test && npm --prefix scim test",
+    "start": "node dist/app/src/main.js",
+    "migrate": "node dist/app/src/migrate.js",
+    "test:frontend": "tsc -p frontend/tsconfig.test.json && node --test dist-frontend-test/frontend/calensyncApi.integration.test.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-kms": "^3.700.0",
+    "@aws-sdk/rds-signer": "^3.700.0",
+    "@prisma/adapter-pg": "^6.0.0",
+    "@prisma/client": "^6.0.0",
+    "pg": "^8.13.0",
+    "prisma": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^6.0.0",
+    "@azure/msal-browser": "^4.0.0"
+  }
+}

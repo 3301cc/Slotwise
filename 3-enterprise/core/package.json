@@ -1,0 +1,27 @@
+{
+  "name": "@calensync/core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Provider-Teardown, Graph-Fehlerbehandlung, Delay-Queue und Webhook-Guard für CalenSync Enterprise",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test \"dist/test/**/*.test.js\"",
+    "test:pg": "tsc -p tsconfig.json && DATABASE_URL=${DATABASE_URL:?DATABASE_URL setzen} node --test \"dist/test/**/*.pg.test.js\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/rds-signer": "^3.0.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "typescript": "^6.0.0"
+  }
+}

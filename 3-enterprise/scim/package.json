@@ -1,0 +1,21 @@
+{
+  "name": "@calensync/scim",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SCIM 2.0 /Users-Endpunkt mit Offboarding-Kill-Switch für CalenSync Enterprise",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test \"dist/test/**/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.0"
+  }
+}

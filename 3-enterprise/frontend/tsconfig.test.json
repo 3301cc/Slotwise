@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.build.json",
+  "compilerOptions": { "outDir": "../dist-frontend-test", "rootDir": "..", "lib": ["ES2022", "DOM"] },
+  "include": ["./**/*.ts"]
+}

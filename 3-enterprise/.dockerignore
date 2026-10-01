@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+**/*.tfstate*
+**/.terraform
+terraform/
+powershell/
+**/*.docx
+**/*.md
+.git
+.github

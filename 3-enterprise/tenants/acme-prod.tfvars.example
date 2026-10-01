@@ -1,0 +1,44 @@
+# Beispiel für einen Mandanten. Datei kopieren nach <tenant>.tfvars – NICHT einchecken, wenn sie
+# kundenspezifische Werte enthält.
+tenant_id         = "acme"
+tenant_account_id = "123456789012"
+environment       = "prod"
+region            = "eu-central-1"
+
+vpc_cidr           = "10.40.0.0/16"
+az_count           = 3
+single_nat_gateway = false
+
+aurora_engine_version = "17.10"
+aurora_min_acu        = 0.5
+aurora_max_acu        = 16
+aurora_instance_count = 2
+backup_retention_days = 35
+
+app_image           = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/calensync-backend@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+app_desired_count   = 3
+acm_certificate_arn = "arn:aws:acm:eu-central-1:123456789012:certificate/00000000-0000-0000-0000-000000000000"
+
+public_hostname      = "acme.calensync.de"
+cors_allowed_origins = ["https://app.calensync.de"]
+# v2-Tokens tragen als aud die Client-ID der API-App, v1-Tokens die Application ID URI → beide angeben
+api_audience         = "api://calensync-acme,00000000-0000-0000-0000-000000000000"
+api_required_scope   = "Sync.Read"
+db_pool_max          = 20
+
+# Optional: Dashboard-API + SCIM nur aus Kundennetzen (WAF). /webhooks/ bleibt immer offen.
+allowed_ingress_cidrs = []
+
+# Sicherheits- und Betriebsalarme (SNS, Bestätigungsmail anklicken)
+alert_emails = ["secops@acme.example"]
+
+log_retention_days     = 365
+audit_object_lock_days = 400
+
+# Datenresidenz "nur Deutschland": false lassen. EU-weit erlaubt: true + dr_region = "eu-west-1".
+dr_copy_enabled = false
+dr_region       = "eu-west-1"
+
+extra_tags = {
+  CostCenter = "acme-it-4711"
+}

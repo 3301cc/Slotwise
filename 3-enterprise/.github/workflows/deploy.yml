@@ -1,0 +1,181 @@
+name: deploy
+
+# Ein Mandant = ein AWS-Account = eine GitHub-Environment (z. B. "acme-prod") mit Pflicht-Freigabe.
+# Keine AWS-Schlüssel in GitHub: Anmeldung per OIDC (aws-actions/configure-aws-credentials).
+#
+# Ablauf (Zero Downtime, Migrationen VOR dem Code):
+#   1. Tests + Typecheck
+#   2. Image bauen (linux/arm64), nach ECR pushen, Digest festhalten
+#   3. Phase 1: Terraform setzt NUR migrate_image auf die neue Version → Migrator-Task läuft → Exit-Code 0?
+#   4. Phase 2: Terraform setzt app_image → ECS Rolling Update (100 % / 200 %, Circuit Breaker, Alarm-Rollback)
+#   5. Warten bis stabil, prüfen, dass wirklich die neue Revision läuft, Smoke-Test auf /healthz und Webhook-Validierung
+#
+# Repo-/Environment-Variablen:
+#   vars.ECR_REPOSITORY        <ci-account>.dkr.ecr.eu-central-1.amazonaws.com/calensync-backend
+#   vars.CI_ROLE_ARN           Rolle im CI-Account (ECR push), Trust auf dieses Repo
+#   vars.DEPLOY_ROLE_ARN       (Environment) Rolle im Mandanten-Account, Trust auf environment:<name>
+#   vars.TF_STATE_BUCKET       (Environment) State-Bucket im Mandanten-Account
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: "Environment / Mandant, z. B. acme-prod (tenants/<tenant>.tfvars)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.tenant }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - run: npx prisma generate --schema prisma/schema.prisma
+      - run: npm test
+      - run: npm --prefix core ci && npm --prefix core test
+      - run: npm --prefix scim ci && npm --prefix scim test
+
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.CI_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+          provenance: true
+          sbom: true
+      - id: ref
+        run: echo "image=${{ vars.ECR_REPOSITORY }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.tenant }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NEW_IMAGE: ${{ needs.build.outputs.image }}
+      TF_IN_AUTOMATION: "1"
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=calensync/${{ inputs.tenant }}.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Aktuelle Version ermitteln
+        id: current
+        # Erstinstallation (noch kein State-Output): direkt die neue Version, siehe DEPLOYMENT.md
+        run: echo "image=$(terraform output -raw app_image 2>/dev/null || echo "$NEW_IMAGE")" >> "$GITHUB_OUTPUT"
+
+      - name: "Phase 1: Migrator auf neue Version"
+        run: |
+          terraform apply -input=false -auto-approve \
+            -var-file="../tenants/${{ inputs.tenant }}.tfvars" \
+            -var "app_image=${{ steps.current.outputs.image }}" \
+            -var "migrate_image=${NEW_IMAGE}"
+          bash checks/assert-no-secrets-in-state.sh
+
+      - name: Migrationen ausführen (ECS run-task)
+        run: |
+          CLUSTER=$(terraform output -raw ecs_cluster_name)
+          FAMILY=$(terraform output -raw migrate_task_definition)
+          SUBNETS=$(terraform output -json app_subnet_ids | jq -r 'join(",")')
+          SG=$(terraform output -raw app_security_group_id)
+          TASK=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$FAMILY" --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=DISABLED}" \
+            --started-by "gha-${{ github.run_id }}" --query 'tasks[0].taskArn' --output text)
+          echo "Migrator: $TASK"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK"
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK" --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK" --query 'tasks[0].stoppedReason' --output text)
+          echo "Exit-Code $EXIT ($REASON)"
+          aws logs tail "$(terraform output -raw app_log_group)" --log-stream-names "migrate/migrate/${TASK##*/}" --since 30m || true
+          [ "$EXIT" = "0" ]
+
+      - name: "Phase 2: Rolling Update der App"
+        run: |
+          terraform apply -input=false -auto-approve \
+            -var-file="../tenants/${{ inputs.tenant }}.tfvars" \
+            -var "app_image=${NEW_IMAGE}" \
+            -var "migrate_image=${NEW_IMAGE}"
+          bash checks/assert-no-secrets-in-state.sh
+
+      - name: Warten, bis stabil – und prüfen, dass kein Rollback passiert ist
+        run: |
+          CLUSTER=$(terraform output -raw ecs_cluster_name)
+          SERVICE=$(terraform output -raw ecs_service_name)
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          RUNNING_TD=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].deployments[?status==`PRIMARY`].taskDefinition | [0]' --output text)
+          RUNNING_IMAGE=$(aws ecs describe-task-definition --task-definition "$RUNNING_TD" \
+            --query 'taskDefinition.containerDefinitions[?name==`app`].image | [0]' --output text)
+          ROLLOUT=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query 'services[0].deployments[?status==`PRIMARY`].rolloutState | [0]' --output text)
+          echo "läuft: $RUNNING_IMAGE ($ROLLOUT)"
+          [ "$RUNNING_IMAGE" = "$NEW_IMAGE" ] && [ "$ROLLOUT" = "COMPLETED" ]
+
+      - name: Smoke-Test über das Internet (ALB + WAF)
+        run: |
+          BASE=$(terraform output -raw public_base_url)
+          curl -fsS --max-time 5 "$BASE/healthz"
+          ECHO=$(curl -fsS --max-time 5 -X POST "$BASE/webhooks/graph?validationToken=smoke-${{ github.run_id }}")
+          [ "$ECHO" = "smoke-${{ github.run_id }}" ]
+          # SCIM ohne Token muss 401 liefern, Browser-Origin auf der API ohne Freigabe 403
+          [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/scim/v2/Users")" = "401" ]
+          [ "$(curl -s -o /dev/null -w '%{http_code}' -X OPTIONS -H 'Origin: https://evil.example' -H 'Access-Control-Request-Method: GET' "$BASE/api/v1/me/sync-status")" = "403" ]
+
+      - name: Smoke-Test Eingänge (Webhooks, SCIM-Härtung, Pipeline-API)
+        working-directory: .
+        env:
+          # erste Origin aus CORS_ALLOWED_ORIGINS → positiver Preflight inkl. Idempotency-Key
+          SMOKE_FRONTEND_ORIGIN: ${{ vars.SMOKE_FRONTEND_ORIGIN }}
+          # "0", wenn die WAF /scim per IP-Allowlist nur für Entra öffnet (Runner bekäme überall 403)
+          SMOKE_SCIM: ${{ vars.SMOKE_SCIM || '1' }}
+          # optional, nur Staging: dedizierter Smoke-Channel (nie ein echter Google-Channel)
+          SMOKE_GOOGLE_CHANNEL_ID: ${{ vars.SMOKE_GOOGLE_CHANNEL_ID }}
+          SMOKE_GOOGLE_CHANNEL_TOKEN: ${{ secrets.SMOKE_GOOGLE_CHANNEL_TOKEN }}
+          SMOKE_GOOGLE_RESOURCE_ID: ${{ vars.SMOKE_GOOGLE_RESOURCE_ID }}
+        run: bash scripts/smoke/webhooks.sh "$(terraform -chdir=terraform output -raw public_base_url)"

@@ -1,0 +1,116 @@
+// Ergänzung zum CalenSync-Prisma-Schema für SCIM-Provisionierung, Kill-Switch und Audit-Hash-Kette.
+// Feldnamen entsprechen src/prismaStore.ts. Bestehende Modelle (Pipeline, WebhookChannel) bekommen die
+// markierten Zusatzfelder.
+
+model ScimUser {
+  id                 String    @id @default(uuid())
+  tenantId           String    @map("tenant_id")
+  userName           String    @map("user_name")
+  userNameNormalized String    @map("user_name_normalized")
+  externalId         String?   @map("external_id")
+  active             Boolean   @default(true)
+  displayName        String?   @map("display_name")
+  givenName          String?   @map("given_name")
+  familyName         String?   @map("family_name")
+  formattedName      String?   @map("formatted_name")
+  emails             Json      @default("[]")
+  department         String?
+  version            Int       @default(1)
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @map("updated_at")
+  deprovisionedAt    DateTime? @map("deprovisioned_at")
+  /// SCIM DELETE: Tombstone ohne PII bis zum erfolgreichen Provider-Teardown; danach purgeDeletedUser
+  deletionRequestedAt DateTime? @map("deletion_requested_at")
+
+  pipelines Pipeline[]
+  tokens    ProviderToken[]
+
+  @@unique([tenantId, userNameNormalized])
+  @@unique([tenantId, externalId])
+  @@index([tenantId, active])
+  @@index([tenantId, deletionRequestedAt])
+  @@map("scim_users")
+}
+
+/// Verschlüsselte Provider-Refresh-Tokens (nur bei delegiertem OAuth; im Admin-Consent-Modell leer).
+/// ciphertext = AES-256-GCM(dataKey), dataKey = KMS-verschlüsselt mit alias/<tenant>-tokens.
+model ProviderToken {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  userId           String   @map("user_id")
+  provider         String
+  ciphertext       Bytes
+  encryptedDataKey Bytes    @map("encrypted_data_key")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user ScimUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, provider])
+  @@map("provider_tokens")
+}
+
+// --- Zusatzfelder in bestehenden Modellen ------------------------------------------------------------
+// model Pipeline {
+//   ...
+//   tenantId      String    @map("tenant_id")
+//   ownerUserId   String    @map("owner_user_id")
+//   owner         ScimUser  @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+//   status        String    @default("active")        // active | paused | revoked
+//   revokedReason String?   @map("revoked_reason")
+//   revokedAt     DateTime? @map("revoked_at")
+//   mode           String?  // busy | full                       (Migration 005)
+//   busyLabel      String?  @map("busy_label")
+//   idempotencyKey String?  @map("idempotency_key")
+//   createdAt      DateTime @default(now()) @map("created_at")
+//   @@index([tenantId, ownerUserId, status])
+// }
+//
+// model WebhookChannel {
+//   ...
+//   tenantId          String    @map("tenant_id")
+//   userId            String    @map("user_id")      // BEWUSST ohne @relation/onDelete: Cascade:
+//                                                     // die Zeile muss das Löschen des Users überleben,
+//                                                     // bis das Abo beim Provider beendet ist (core/subscriptionTeardown.ts)
+//   pipelineId        String    @map("pipeline_id")
+//   provider          String                          // microsoft | google
+//   providerSubscriptionId String @map("provider_subscription_id")
+//   providerResourceId String?  @map("provider_resource_id")   // Google channels.stop
+//   clientState       String?   @map("client_state")
+//   expiresAt         DateTime? @map("expires_at")
+//   stopRequestedAt   DateTime? @map("stop_requested_at")
+//   stoppedAt         DateTime? @map("stopped_at")
+//   stopNote          String?   @map("stop_note")     // stopped | already_gone | expired | subscription_removed
+//   stopAttempts      Int       @default(0) @map("stop_attempts")
+//   nextStopAttemptAt DateTime? @map("next_stop_attempt_at")
+//   lastStopError     String?   @map("last_stop_error")
+//   @@unique([provider, providerSubscriptionId])
+//   @@index([nextStopAttemptAt])
+// }
+// Zusätzlich per SQL-Migration (Prisma kennt keine partiellen Unique-Indizes):
+//   CREATE UNIQUE INDEX webhook_channels_one_live ON webhook_channels (pipeline_id)
+//     WHERE stop_requested_at IS NULL AND stopped_at IS NULL;
+// Delay-Queue job_queue: Schema in core/src/retryQueue.ts
+//
+// model OutboxMessage {            // aus der QA-Suite bekannt, um tenantId ergänzt
+//   ...
+//   tenantId String @map("tenant_id")
+// }
+
+/// Manipulationsevidentes Audit-Log (Hash-Kette je Mandant). Keine UPDATE/DELETE-Rechte für die App-Rolle:
+///   REVOKE UPDATE, DELETE ON audit_events FROM calensync_app;
+model AuditEvent {
+  seq          BigInt   @id @default(autoincrement())
+  tenantId     String   @map("tenant_id")
+  requestId    String   @map("request_id")
+  actor        String
+  action       String
+  targetUserId String?  @map("target_user_id")
+  outcome      String
+  detail       Json
+  at           DateTime
+  prevHash     String   @map("prev_hash")
+  hash         String   @unique
+
+  @@index([tenantId, seq])
+  @@map("audit_events")
+}

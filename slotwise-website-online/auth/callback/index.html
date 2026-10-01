@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Anmeldung – CalenSync</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/dashboard/dashboard.css" />
+  </head>
+  <body class="grid min-h-screen place-items-center bg-slate-50 p-4 text-slate-900 antialiased">
+    <main class="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-card">
+      <p class="font-display text-lg font-bold">Anmeldung mit Microsoft</p>
+      <p id="cb-message" class="mt-2 text-sm text-slate-600" role="status" aria-live="polite">Einen Moment, Sie werden weitergeleitet …</p>
+      <p id="cb-retry" class="mt-4 flex justify-center gap-2" hidden>
+        <a href="/auth/callback?login=1" class="btn-primary">Erneut anmelden</a>
+        <a href="/dashboard/" class="btn-ghost">Zum Dashboard</a>
+      </p>
+      <noscript><p class="mt-2 text-sm text-red-700">Für die Anmeldung wird JavaScript benötigt.</p></noscript>
+    </main>
+    <script src="/site-config.js"></script>
+    <script src="/dashboard/enterprise.js"></script>
+    <script>
+      // Ohne Konfiguration gibt es hier nichts zu tun
+      if (!window.CalenSyncEnterprise || !window.CalenSyncEnterprise.configured) {
+        document.getElementById("cb-message").textContent = "Die Microsoft-Anmeldung ist für diese Website nicht eingerichtet.";
+        document.getElementById("cb-retry").hidden = false;
+        document.querySelector('#cb-retry a[href^="/auth"]').remove();
+      }
+    </script>
+  </body>
+</html>
