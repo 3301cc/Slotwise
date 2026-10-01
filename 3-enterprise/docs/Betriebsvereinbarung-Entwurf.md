@@ -20,6 +20,9 @@ BetrVG folgende Betriebsvereinbarung geschlossen.
 ## § 2 Zweck und Zweckbindung
 
 1. Zweck ist ausschließlich, belegte Zeiten zwischen Kalendern abzugleichen, damit Doppelbuchungen vermieden werden.
+   Mögliche Ziele sind ein zweites eigenes Postfach (auch in einer verbundenen Gesellschaft), ein von der IT
+   freigegebener Team-Kalender und die Buchungsseite. Andere Ziele sind technisch gesperrt (Freigabeliste,
+   `core/src/syncTargets.ts`, geprüft in API und Worker).
 2. Eine Nutzung der Daten für andere Zwecke, insbesondere zur **Leistungs- oder Verhaltenskontrolle**, ist
    ausgeschlossen (§ 4).
 
@@ -51,7 +54,11 @@ Telefonnummern, Adressen, Vorgesetzte und Fotos aus dem Verzeichnis werden bei d
    (`POST /api/v1/me/pipelines`, nur für das eigene Konto). Administratoren legen keine Abgleiche für andere an.
 2. Voreinstellung ist der Modus **„Als beschäftigt markieren“**: Im Zielkalender erscheint nur ein frei wählbarer
    Titel (Standard „Termin“), keine Inhalte.
-3. Beschäftigte können ihren Abgleich jederzeit beenden. Aus der Nichtteilnahme entstehen keine Nachteile.
+3. Beschäftigte können ihren Abgleich jederzeit im Dashboard beenden. Dabei entfernt CalenSync alle Termine, die
+   es im Zielkalender angelegt hat (`DELETE /api/v1/me/pipelines/{id}`, `core/src/cleanupWorker.ts`). Aus der
+   Nichtteilnahme entstehen keine Nachteile.
+4. Im Team-Kalender erscheinen im Modus „Als beschäftigt markieren“ nur belegte Zeiten mit dem gewählten Titel.
+   Der Modus „vollständig“ für Team-Kalender wird **[nicht / nur mit Zustimmung des Betriebsrats]** freigegeben.
 
 ## § 6 Zugriffsrechte
 
@@ -62,8 +69,9 @@ Telefonnummern, Adressen, Vorgesetzte und Fotos aus dem Verzeichnis werden bei d
 
 ## § 7 Löschung
 
-1. Wird eine Person in Entra ID deaktiviert, werden ihre Abgleiche im selben Vorgang gesperrt und die Zugriffe beim
-   Kalenderanbieter beendet (`deactivateAndRevoke`, `core/src/subscriptionTeardown.ts`).
+1. Wird eine Person in Entra ID deaktiviert, werden ihre Abgleiche im selben Vorgang gesperrt, die Zugriffe beim
+   Kalenderanbieter beendet und alle von CalenSync angelegten Zieltermine entfernt (`deactivateAndRevoke`,
+   `core/src/subscriptionTeardown.ts`, `core/src/cleanupWorker.ts`).
 2. Beim Löschen in Entra ID werden Name, E-Mail und externe Kennungen sofort entfernt; der verbleibende technische
    Datensatz wird gelöscht, sobald alle Abos beendet sind, spätestens nach 8 Tagen.
 3. Protokolle und Sicherungen werden nach Ablauf der in § 3 genannten Fristen automatisch gelöscht. Sicherungen

@@ -119,6 +119,8 @@
     target_not_allowed: "Das Ziel ist nicht mehr freigegeben.",
     // Codes des Sync-Workers (core/src/syncWorker.ts, FailureCategory)
     target_missing: "Das Ziel ist nicht mehr hinterlegt.",
+    cleanup_failed: "Die Termine im Zielkalender konnten nicht entfernt werden – Ihre IT wurde benachrichtigt.",
+    cleanup_target_not_allowed: "Das Ziel ist nicht mehr freigegeben; die Termine dort entfernt Ihre IT.",
     event_rejected: "Ein einzelner Termin wurde vom Zielkalender abgelehnt; die übrigen werden abgeglichen.",
     scope_propagation: "Die Freigabe wird gerade bei Microsoft wirksam – der Abgleich wird automatisch wiederholt.",
     transient: "Vorübergehender Fehler – der Abgleich wird automatisch wiederholt.",
@@ -140,7 +142,16 @@
     quota_exceeded: "Das Zielpostfach ist voll.",
     internal_error: "Interner Fehler bei CalenSync.",
   };
-  const pipelineErrorMessage = (code) => lookup(PIPELINE_ERRORS, code) || `Fehler: ${String(code).slice(0, 80)}`;
+  const pipelineErrorMessage = (code) => {
+    const hit = lookup(PIPELINE_ERRORS, code);
+    if (hit) return hit;
+    // Aufräumen nach dem Beenden: cleanup_<Kategorie> → „Termine im Ziel entfernen: <Meldung>“
+    if (typeof code === "string" && code.startsWith("cleanup_")) {
+      const inner = lookup(PIPELINE_ERRORS, code.slice(8));
+      if (inner) return `Entfernen der Termine im Zielkalender: ${inner}`;
+    }
+    return `Fehler: ${String(code).slice(0, 80)}`;
+  };
 
   const TARGET_KINDS = { account: "Zweites Konto", team: "Team-Kalender", booking: "Buchungsseite" };
   /** "Zweites Konto: Tochter GmbH", "Team-Kalender: Vertrieb", "Buchungsseite" */
@@ -186,7 +197,7 @@
     };
 
     // GET wiederholt 429/503. POST nur mit Idempotency-Key – dann sind Wiederholungen sicher.
-    async function request(path, post) {
+    async function request(path, post, method) {
       let forceRefresh = false;
       for (let attempt = 0; ; attempt++) {
         const token = await o.getAccessToken({ forceRefresh });
@@ -197,7 +208,7 @@
         if (post) { headers["Content-Type"] = "application/json"; headers["Idempotency-Key"] = post.idempotencyKey; }
         let res;
         try {
-          res = await doFetch(`${base}${path}`, { method: post ? "POST" : "GET", mode: "cors", credentials: "omit", headers, body: post ? post.body : undefined, signal: ctrl.signal });
+          res = await doFetch(`${base}${path}`, { method: method || (post ? "POST" : "GET"), mode: "cors", credentials: "omit", headers, body: post ? post.body : undefined, signal: ctrl.signal });
         } catch (err) {
           if (post && attempt < maxRetries) { await backoff(attempt, null); continue; }
           if (ctrl.signal.aborted) throw new CalensyncApiError("timeout", "Zeitüberschreitung beim Abruf", null, requestId);
@@ -227,6 +238,8 @@
     return {
       getSyncStatus: async () => (await request("/api/v1/me/sync-status")).body,
       getSyncTargets: async () => (await request("/api/v1/me/sync-targets")).body,
+      // Abgleich beenden: Server entzieht die Pipeline und entfernt danach alle von CalenSync angelegten Termine im Ziel
+      deletePipeline: async (id) => (await request(`/api/v1/me/pipelines/${encodeURIComponent(id)}`, null, "DELETE")).body,
       // idempotencyKey pro Nutzeraktion EINMAL erzeugen und bei „Erneut versuchen“ wiederverwenden
       createPipeline: async (req, idempotencyKey = crypto.randomUUID()) => {
         const target = targetBody(req.target);
@@ -280,7 +293,7 @@
     pending: ["Wird eingerichtet", "border-slate-200 bg-slate-50 text-slate-700"],
     pending_scope: ["Freigabe fehlt", "border-amber-200 bg-amber-50 text-amber-900"],
     paused: ["Pausiert", "border-slate-200 bg-slate-50 text-slate-700"],
-    revoked: ["Entzogen", "border-red-200 bg-red-50 text-red-800"],
+    revoked: ["Beendet", "border-slate-200 bg-slate-50 text-slate-700"],
     blocked_scope: ["Postfach gesperrt", "border-red-200 bg-red-50 text-red-800"],
     config_error: ["Konfigurationsfehler", "border-red-200 bg-red-50 text-red-800"],
     error: ["Fehler", "border-red-200 bg-red-50 text-red-800"],
@@ -348,8 +361,9 @@
             <span class="min-w-0"><span class="block break-words font-medium text-slate-900">${esc(targetLabel(p.target))}</span>
             <span class="block text-xs text-slate-500">${sub}</span>
             ${synced ? `<span class="block text-xs text-slate-500" data-m365-synced>${synced}</span>` : ""}
-            ${lastError ? `<span class="block break-words text-xs text-red-700" data-m365-lasterror>${esc(lastError)}</span>` : ""}</span>
-            ${badge(p.status)}</li>`;
+            ${lastError ? `<span class="block break-words text-xs text-red-700" data-m365-lasterror>${esc(lastError)}</span>` : ""}
+            ${p.cleanup === "pending" ? `<span class="block text-xs text-slate-500" data-m365-cleanup>Termine im Zielkalender werden entfernt …</span>` : p.cleanup === "done" ? `<span class="block text-xs text-slate-500" data-m365-cleanup>Termine im Zielkalender entfernt</span>` : ""}</span>
+            <span class="flex items-center gap-2">${badge(p.status)}${canWrite && p.status !== "revoked" && typeof p.id === "string" ? `<button type="button" class="text-xs font-medium text-slate-500 hover:text-red-700" data-m365-end="${esc(p.id)}">Beenden</button>` : ""}</span></li>`;
   }
 
   function renderStatus(status, account) {
@@ -452,7 +466,21 @@
     if (e.target.closest("[data-m365-reload]")) return refresh();
     if (e.target.closest("[data-m365-new]")) return openForm();
     if (e.target.closest("[data-m365-cancel]")) return closeForm();
+    const end = e.target.closest("[data-m365-end]");
+    if (end) return endPipeline(end);
   });
+
+  async function endPipeline(btn) {
+    const id = btn.getAttribute("data-m365-end");
+    if (!id || !window.confirm("Abgleich beenden? Alle Termine, die CalenSync im Zielkalender angelegt hat, werden entfernt. Ihr eigener Kalender bleibt unverändert.")) return;
+    btn.disabled = true; btn.textContent = "Wird beendet …";
+    try {
+      await api.deletePipeline(id);
+      refresh();
+    } catch (err) {
+      renderError(err);
+    }
+  }
   box.addEventListener("submit", async (e) => {
     if (e.target.id !== "m365-form") return;
     e.preventDefault();

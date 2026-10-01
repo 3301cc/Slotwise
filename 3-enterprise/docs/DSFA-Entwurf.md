@@ -33,7 +33,8 @@ besondere Kategorien enthalten (z. B. „Arzttermin“, Art. 9 DSGVO).
 | Nr. | Risiko | Eintritt ohne Maßnahmen | Schwere | Maßnahmen (Abschnitt 4) | Restrisiko |
 |---|---|---|---|---|---|
 | R1 | Leistungs- oder Verhaltenskontrolle über Kalenderdaten | mittel | hoch | M1, M7 | gering |
-| R2 | Termininhalte mit Gesundheitsbezug werden offengelegt | mittel | hoch | M2, M3 | gering, **nach Nachweis** (Abschnitt 5) |
+| R2 | Termininhalte mit Gesundheitsbezug werden offengelegt | mittel | hoch | M2, M2a, M3 | gering, **nach Abnahme** (Abschnitt 5) |
+| R2a | Termine bleiben nach Austritt im Team- oder Zielkalender stehen | mittel | mittel | M2b, M5 | gering |
 | R3 | Zugriff auf Postfächer außerhalb der berechtigten Gruppe | mittel | hoch | M4 | gering |
 | R4 | Ausgeschiedene Beschäftigte bleiben verbunden | mittel | mittel | M5 | gering |
 | R5 | Unbefugter Zugriff auf die Datenbank | gering | hoch | M6 | gering |
@@ -45,7 +46,9 @@ besondere Kategorien enthalten (z. B. „Arzttermin“, Art. 9 DSGVO).
 | Nr. | Maßnahme | Fundstelle |
 |---|---|---|
 | M1 | Keine Auswertungsfunktionen pro Person; API liefert nur den eigenen Status (`/api/v1/me/…`) | `app/src/statusApi.ts` |
-| M2 | Termininhalte nicht persistent; „Als beschäftigt markieren“ als Voreinstellung | Fact Sheet A1 (**teilweise umgesetzt**, siehe 5) |
+| M2 | Termininhalte nicht persistent; „Als beschäftigt markieren“ als Voreinstellung; im Modus „vollständig“ nur Titel und Ort | `core/src/syncWorker.ts`, Kanarienvogel-Tests in `core/test/syncWorker.test.ts` und `app/test/sync.pg.test.ts` |
+| M2a | Ziele nur aus einer Freigabeliste der IT (eigenes Zweitpostfach, freigegebene Team-Kalender, Buchungsseite), geprüft in API und Worker | `core/src/syncTargets.ts` |
+| M2b | Beenden, Deaktivieren und Löschen entfernen alle von CalenSync angelegten Zieltermine (Job in derselben Transaktion wie der Widerruf) | `core/src/cleanupWorker.ts` |
 | M3 | Protokolle schwärzen Tokens, E-Mail-Adressen und Namen; Längen- und Tiefenbegrenzung | `core/src/logger.ts`, `core/test/logger.test.ts` |
 | M4 | Exchange-RBAC begrenzt `Calendars.ReadWrite` auf eine Management Scope; kein mandantenweiter Entra-Grant | `powershell/Set-CalenSyncMailboxScope.ps1` |
 | M5 | SCIM-Deaktivierung sperrt Abgleiche und beendet Abos in einem Commit; PII-freier Tombstone, Löschung nach Teardown | `scim/src/`, `core/src/subscriptionTeardown.ts` |
@@ -58,8 +61,8 @@ Fristen: Protokolle [365] Tage, Audit-Log [400] Tage, Backups [35] Tage (`terraf
 
 ## 5 Offene Punkte vor Produktivstart
 
-- **Kalenderabgleich:** Der Worker für den eigentlichen Abgleich ist noch nicht gebaut. M2 ist erst nach
-  Fertigstellung und Nachweis per Test erfüllt (kein Termininhalt in Datenbank, Protokollen und Ziel-Payload).
+- **Abnahme mit echtem Mandanten:** Abgleich und Bereinigung sind gegen eine Nachbildung von Microsoft Graph
+  getestet. Vor Produktivstart mit einem echten Microsoft-365-Testmandanten abnehmen. Google-Ziele gibt es noch nicht.
 - **Pentest und ISMS:** Externer Penetrationstest steht aus, ISO-27001-Zertifizierung ist geplant (Fact Sheet H1, H2).
 - **Restore-Test:** Erster dokumentierter Restore-Test steht aus (Fact Sheet F3).
 - **Vault Lock:** Wird nach 3 Tagen unwiderruflich und kann mit kurzen Löschfristen kollidieren; vor dem ersten
