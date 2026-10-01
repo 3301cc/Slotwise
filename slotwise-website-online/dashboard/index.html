@@ -13,7 +13,7 @@
   <body class="min-h-screen bg-slate-50 text-slate-900 antialiased">
     <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:text-slate-900">Zum Inhalt springen</a>
 
-    <div class="flex min-h-screen">
+    <div class="flex min-h-screen" id="app">
       <!-- Seitenleiste (Desktop) -->
       <aside class="hidden w-60 flex-none border-r border-slate-100 bg-white lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col lg:overflow-y-auto" aria-label="Hauptnavigation">
         <a href="/" class="flex h-16 items-center gap-2.5 border-b border-slate-100 px-5" aria-label="CalenSync Startseite">
@@ -191,6 +191,8 @@
       </div>
     </div>
 
+    <script src="/site-config.js"></script>
+    <script src="/dashboard/gate.js"></script>
     <script src="/dashboard/dashboard-data.js"></script>
     <script src="/dashboard/dashboard.js"></script>
     <script src="/dashboard/views.js"></script>

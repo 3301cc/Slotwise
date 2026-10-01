@@ -216,5 +216,10 @@
   window.CalenSyncTour = { start, close, reset: () => { try { localStorage.removeItem(KEY); } catch (_) {} } };
 
   style(); // Stil für den ?-Button sofort
-  if (!seen()) window.addEventListener("load", () => setTimeout(start, 600));
+  // Erst nach der Zugangsabfrage (gate.js) automatisch starten
+  if (!seen()) {
+    const auto = () => setTimeout(start, 600);
+    if (window.CalenSyncGate && !window.CalenSyncGate.open) window.addEventListener("calensync:unlocked", auto, { once: true });
+    else window.addEventListener("load", auto);
+  }
 })();
