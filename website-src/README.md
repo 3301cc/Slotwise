@@ -8,6 +8,9 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 |---|---|
 | `website-src/vendor/site.original.js` | ursprünglicher Vite-Build (keine Quellen im Repo) |
 | `website-src/KiAgentPage.jsx` | Seite `/ki-agent` |
+| `website-src/PraxenPage.jsx` | Seite `/praxen` für Arzt- und Zahnarztpraxen (Sie-Form, Pilotangebot, Praxis-Plan); Warteliste mit Quelle `praxen` |
+| `slotwise-website-online/api/_lib/core/tenants.js` | Mandanten: mehrere Praxen/Unternehmen über `TENANTS_JSON` (eigener Datenraum, eigener Token, Zuordnung über angerufene Nummer). Ohne Variable: Einzelbetrieb wie bisher |
+| `slotwise-website-online/api/_lib/core/agent/praxis.js` | Praxismodus des Agenten: Notfall-Gate (112/116 117), Medizin-Gate, Aufgaben (Rezept, Überweisung, Rückruf, Terminänderung) |
 | `website-src/SitePatches.jsx` | Warteliste, `/anmelden`, Demo-Widget, Layout mit Entwurfs-Banner, Datenschutzerklärung |
 | `website-src/build.py` | setzt beides in `assets/site.js` ein |
 | `slotwise-website-online/assets/site-extra.css` | zusätzliche Utilities und Komponenten-CSS |
@@ -17,7 +20,7 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 | `slotwise-website-online/api/waitlist/*.js` | Vercel-Einstiege, je eine Zeile |
 | `slotwise-website-online/server/standalone.js` | eigener Server ohne Vercel (Hetzner, OVH, Docker) |
 | `slotwise-website-online/api/_lib/core/agent/` | KI-Agent: Regelwerk (portiert aus `2-packages-platform`), Bedrock-Client, Twilio, Kalender, Aktivität, Orchestrator |
-| `slotwise-website-online/api/agent/*.js` | Vercel-Einstiege des Agenten, je eine Zeile |
+| `slotwise-website-online/api/agent/*.js` | Vercel-Einstiege des Agenten: `voice-webhook.js` (Twilio), `intake.js` (E-Mail), `[action].js` für alle Dashboard-Endpunkte (Vercel Hobby erlaubt max. 12 Funktionen) |
 | `slotwise-website-online/dashboard/` | Dashboard-Vorschau (`/dashboard`): Markup, Darstellung (`dashboard.js`), Datenschicht (`dashboard-data.js`), Ansichten Kunden / Event-Typen / Berichte (`views.js`, Hash-Routing `#kunden`, `#event-typen`, `#berichte`), Erklär-Tour (`tour.js`, eigenes CSS, kein Build nötig), gebautes CSS |
 | `website-src/dashboard/` | Tailwind-Quelle und -Konfiguration des Dashboards |
 
@@ -25,6 +28,7 @@ Nach Änderungen an den `.jsx`-Dateien oder am Dashboard-CSS:
 
 ```bash
 python3 website-src/build.py        # esbuild + Tailwind-CLI über npx – oder ESBUILD=/pfad, TAILWINDCSS=/pfad
+                                    # ohne esbuild: global installiertes TypeScript wird automatisch als JSX-Compiler genutzt
 cd slotwise-website-online
 npm test                            # API-Tests
 npm run dev                         # http://localhost:3000, Warteliste speichert in .data/waitlist.json
@@ -139,3 +143,14 @@ Export: `curl -H "Authorization: Bearer $WAITLIST_ADMIN_TOKEN" https://…/api/w
 - Firmendaten in `site-config.js` eintragen → Entwurfs-Banner und `noindex` verschwinden automatisch.
 - Datenschutzerklärung rechtlich prüfen lassen (Abschnitte „Hosting dieser Website (Vercel)“ und „Warteliste“ nennen Vercel, Mailjet und Upstash).
 - Sobald `app.slotwise.app` läuft: `VITE_APP_LIVE: "1"` in `site-config.js`.
+
+## Mehrere Praxen (Mandanten)
+
+```bash
+TENANTS_JSON='[{"id":"praxis-berger","company":"Praxis Dr. Berger","hostName":"Dr. Berger",
+  "adminToken":"<mindestens 24 zufällige Zeichen>","phoneNumbers":["+4921112345678"],"escalationPhone":"+492119876543"}]'
+```
+
+- Dashboard: Token der Praxis einmalig im Browser hinterlegen (`localStorage.setItem("slotwise.adminToken", "<adminToken>")`).
+- Twilio: jede Praxisnummer zeigt auf dieselbe Webhook-URL; die angerufene Nummer (`To`) bestimmt die Praxis.
+- Grenze: Token statt Benutzerkonten. Für Teams mit mehreren Mitarbeitenden fehlen noch Konten, Rollen und Protokoll.

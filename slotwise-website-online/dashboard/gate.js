@@ -111,8 +111,8 @@
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 202) return unlock(`Fast geschafft: Wir haben dir einen Bestätigungslink an ${value} geschickt.`);
-      if (res.status === 503 || res.status === 502 || res.status === 404) {
-        // Warteliste (noch) nicht eingerichtet oder Mailversand gestört: Vorschau trotzdem öffnen, Besucher nicht aussperren.
+      if (res.status >= 500 || res.status === 404) {
+        // Serverseitiges Problem (nicht eingerichtet, Konfiguration fehlt, Mailversand gestört): Vorschau trotzdem öffnen, Besucher nicht aussperren.
         console.warn("[gate] Warteliste nicht erreichbar:", res.status, data.error || "");
         return unlock();
       }

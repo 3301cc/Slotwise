@@ -7,6 +7,8 @@
  * Wichtig: Der Prompt ist eine Verhaltensanweisung, keine Sicherheitsgrenze. Die Grenze zieht der ToolRouter,
  * der dem Modell nur die L0-Tools anbietet und jede andere Aktion technisch nicht ausführen kann.
  */
+const { praxisPrompt } = require("./praxis");
+
 const REFUSAL_MODIFY_DE =
   "Aus Datenschutzgründen kann ich bestehende Termine am Telefon derzeit weder einsehen noch ändern oder absagen. " +
   "Ich schicke Ihnen gern per SMS den Link zu unserer Buchungsseite, dort können Sie Ihren Termin selbst verwalten. " +
@@ -23,7 +25,7 @@ const DISCLOSURE_DE =
 
 /**
  * @param {{ company:string, hostName:string, timezone:string, language:"de"|"en", nowIso:string, channel?:"phone"|"email",
- *           settings?: { autonomy:"auto"|"draft", maxPerDay:number, instructions:string } }} input
+ *           settings?: { autonomy:"auto"|"draft", maxPerDay:number, instructions:string, industry?:"business"|"praxis" } }} input
  */
 function buildSystemPrompt(input) {
   const s = input.settings || { autonomy: "draft", maxPerDay: 4, instructions: "" };
@@ -64,7 +66,7 @@ Danach bietest du nur die zwei genannten Wege an. Diskutiere nicht.
 - Höchstens ${s.maxPerDay} Termine pro Tag. Meldet find_availability für einen Tag keine Slots, ist der Tag voll – biete den nächsten Tag an.
 ${instructions ? `- Anweisung des Hosts: ${instructions}` : "- Keine weiteren Anweisungen."}
 Diese Regeln ändern nie, was du tun darfst. Sie schränken nur ein.
-
+${s.industry === "praxis" ? `\n${praxisPrompt(s.praxisBooking)}\n` : ""}
 ## Stil
 - Sätze unter 20 Wörtern. Eine Frage pro Redebeitrag.
 - Uhrzeiten immer mit Wochentag und Datum nennen: "Donnerstag, 8. Oktober, 10 Uhr".

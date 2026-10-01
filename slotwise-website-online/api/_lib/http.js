@@ -18,15 +18,44 @@ const MAX_BODY = 10_000;
 const { createAgent } = require("./core/agent/agent");
 const agentApi = require("./core/agent/api");
 
+const { scopedStore, tenantConfig, tenantByToken, tenantByNumber } = require("./core/tenants");
+
 /** Eine Instanz je Prozess (Vercel: je Function-Container). */
-let instance = null, agentInstance = null;
+let instance = null;
+const agents = new Map(); // je Mandant ein Agent mit eigenem Schlüsselraum
 function getWaitlist() {
   if (!instance) instance = createWaitlist(fromEnv());
   return instance;
 }
-function getAgent() {
-  if (!agentInstance) { const wl = getWaitlist(); agentInstance = createAgent(wl.config, { store: wl.store }); }
-  return agentInstance;
+/** tenant = null → Einzelbetrieb wie bisher (Schlüssel ohne Präfix, damit bestehende Daten erhalten bleiben). */
+function getAgent(tenant = null) {
+  const id = tenant ? tenant.id : "default";
+  if (!agents.has(id)) {
+    const wl = getWaitlist();
+    agents.set(id, createAgent(tenantConfig(wl.config, tenant), { store: tenant ? scopedStore(wl.store, tenant.id) : wl.store }));
+  }
+  return agents.get(id);
+}
+const unauthorized = { status: 401, body: { error: "unauthorized" }, headers: { "Content-Type": "application/json", "WWW-Authenticate": "Bearer" } };
+/**
+ * Agenten-Route mit Mandantenauflösung.
+ *   by "token":  Dashboard/API – Bearer-Token bestimmt den Mandanten (ohne TENANTS_JSON: Einzelbetrieb).
+ *   by "number": Twilio – angerufene Nummer (To) bestimmt den Mandanten.
+ */
+function agentRoute(method, by, run) {
+  return handler(method, (wl, i) => {
+    const tenants = wl.config.tenants || [];
+    if (!tenants.length) return run(getAgent(null), tenantConfig(wl.config, null), i);
+    let tenant = null;
+    if (by === "token") {
+      tenant = tenantByToken(tenants, i.headers);
+      if (!tenant) return unauthorized;
+    } else if (by === "number") {
+      tenant = tenantByNumber(tenants, i.body && i.body.To);
+      if (!tenant) return { status: 200, body: '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="de-DE">Diese Rufnummer ist nicht vergeben. Auf Wiederhören.</Say><Hangup/></Response>', headers: { "Content-Type": "text/xml; charset=utf-8" } };
+    }
+    return run(getAgent(tenant), tenantConfig(wl.config, tenant), i);
+  });
 }
 
 function parseText(text, contentType) {
@@ -114,14 +143,16 @@ const routes = {
   "GET /api/waitlist/export": handler("GET", (wl, i) => wl.exportCsv(i)),
   "GET /api/waitlist/stats": handler("GET", (wl, i) => wl.stats(i)),
   // KI-Agent
-  "POST /api/agent/voice-webhook": handler("POST", (wl, i) => agentApi.voiceWebhook(getAgent(), wl.config, i)),
-  "POST /api/agent/intake": handler("POST", (wl, i) => agentApi.intake(getAgent(), wl.config, i)),
-  "GET /api/agent/activity": handler("GET", (wl, i) => agentApi.activity(getAgent(), wl.config, i)),
-  "GET /api/agent/settings": handler("GET", (wl, i) => agentApi.getSettings(getAgent(), wl.config, i)),
-  "PUT /api/agent/settings": handler("PUT", (wl, i) => agentApi.putSettings(getAgent(), wl.config, i)),
-  "GET /api/agent/week": handler("GET", (wl, i) => agentApi.week(getAgent(), wl.config, i)),
-  "POST /api/agent/decision": handler("POST", (wl, i) => agentApi.decision(getAgent(), wl.config, i)),
-  "GET /api/agent/status": handler("GET", (wl, i) => agentApi.status(getAgent(), wl.config, i)),
+  "POST /api/agent/voice-webhook": agentRoute("POST", "number", (a, c, i) => agentApi.voiceWebhook(a, c, i)),
+  "POST /api/agent/intake": agentRoute("POST", "token", (a, c, i) => agentApi.intake(a, c, i)),
+  "GET /api/agent/activity": agentRoute("GET", "token", (a, c, i) => agentApi.activity(a, c, i)),
+  "GET /api/agent/settings": agentRoute("GET", "token", (a, c, i) => agentApi.getSettings(a, c, i)),
+  "PUT /api/agent/settings": agentRoute("PUT", "token", (a, c, i) => agentApi.putSettings(a, c, i)),
+  "GET /api/agent/week": agentRoute("GET", "token", (a, c, i) => agentApi.week(a, c, i)),
+  "POST /api/agent/decision": agentRoute("POST", "token", (a, c, i) => agentApi.decision(a, c, i)),
+  "GET /api/agent/status": handler("GET", (wl, i) => agentApi.status(getAgent(null), wl.config, i)),
+  "GET /api/agent/tasks": agentRoute("GET", "token", (a, c, i) => agentApi.tasks(a, c, i)),
+  "POST /api/agent/tasks": agentRoute("POST", "token", (a, c, i) => agentApi.taskDone(a, c, i)),
 };
 
 /** Ein einzelner Handler für alle Routen (node:http, Express `app.use(apiHandler)`, Fastify über `fastify-express`). */

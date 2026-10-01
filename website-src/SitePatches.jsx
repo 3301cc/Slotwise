@@ -53,7 +53,7 @@ function swOpenWaitlist(detail) {
 }
 function swSourceFromPath(p) {
   const s = (p || "/").split("/")[1] || "start";
-  return ["preise", "ki-agent", "anmelden"].includes(s) ? s : "start";
+  return ["preise", "ki-agent", "anmelden", "praxen"].includes(s) ? s : "start";
 }
 
 const SW_WL_ERRORS = {
@@ -137,10 +137,11 @@ function SwWaitlistForm({ source, initialEmail = "", onDone, autoFocus = false }
   if (status === "pending") {
     return (
       <div role="status" className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-900">
-        <p className="font-semibold">Fast geschafft. Bitte schau in dein Postfach.</p>
+        <p className="font-semibold">{source === "praxen" ? "Fast geschafft. Bitte sehen Sie in Ihr Postfach." : "Fast geschafft. Bitte schau in dein Postfach."}</p>
         <p className="mt-1 text-indigo-800">
-          Wir haben dir einen Bestätigungslink an <span className="font-medium">{email.trim()}</span> geschickt.
-          Erst nach dem Klick stehst du auf der Warteliste. Der Link gilt 72 Stunden.
+          {source === "praxen"
+            ? <>Wir haben Ihnen einen Bestätigungslink an <span className="font-medium">{email.trim()}</span> geschickt. Nach dem Klick ist Ihre Bewerbung bei uns. Der Link gilt 72 Stunden.</>
+            : <>Wir haben dir einen Bestätigungslink an <span className="font-medium">{email.trim()}</span> geschickt. Erst nach dem Klick stehst du auf der Warteliste. Der Link gilt 72 Stunden.</>}
         </p>
         {devLink && (
           <p className="mt-3 break-all text-xs text-indigo-800">
@@ -249,9 +250,9 @@ function SwWaitlistDialog() {
           <div className="p-6 sm:p-7">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">Early Access</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-indigo-700">{ctx.source === "praxen" ? "Pilotprogramm für Praxen" : "Early Access"}</p>
                 <h2 id="wl-title" className="mt-1 font-display text-xl font-bold text-slate-900">
-                  {ctx.demo ? "Echte Demo: Warteliste" : "CalenSync startet bald"}
+                  {ctx.source === "praxen" ? "Als Pilotpraxis bewerben" : ctx.demo ? "Echte Demo: Warteliste" : "CalenSync startet bald"}
                 </h2>
               </div>
               <button type="button" onClick={() => setOpen(false)} aria-label="Schließen"
@@ -260,7 +261,9 @@ function SwWaitlistDialog() {
               </button>
             </div>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              {ctx.demo
+              {ctx.source === "praxen"
+                ? "Tragen Sie die E-Mail-Adresse Ihrer Praxis ein. Wir melden uns innerhalb von zwei Werktagen und vereinbaren ein kurzes Kennenlernen. Es gibt 10 Plätze, die ersten 3 Monate sind kostenlos."
+                : ctx.demo
                 ? "Die Live-Buchungsseite und Demo-Termine öffnen mit dem Start. Trag dich ein, dann bekommst du als Erste:r einen Termin."
                 : "Die App ist noch nicht freigeschaltet. Trag dich ein, und wir schreiben dir, sobald du dein Konto anlegen kannst."}
             </p>

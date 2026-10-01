@@ -17,7 +17,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 OUT = ROOT / "slotwise-website-online" / "assets" / "site.js"
-SOURCES = ["KiAgentPage.jsx", "SitePatches.jsx"]
+SOURCES = ["KiAgentPage.jsx", "SitePatches.jsx", "PraxenPage.jsx"]
 
 
 def esbuild_bin():
@@ -28,7 +28,35 @@ def esbuild_bin():
     return ["npx", "--yes", "esbuild"]
 
 
+TS_TRANSPILE = r"""
+const ts = require("typescript");
+const src = require("fs").readFileSync(process.argv[1], "utf8");
+const out = ts.transpileModule(src, { compilerOptions: { jsx: ts.JsxEmit.React, jsxFactory: "swH", jsxFragmentFactory: "swF",
+  target: ts.ScriptTarget.ES2019, module: ts.ModuleKind.None, removeComments: true } });
+process.stdout.write(out.outputText);
+"""
+
+
+def typescript_available():
+    if not shutil.which("node"):
+        return False
+    r = subprocess.run(["node", "-e", "require.resolve('typescript')"], capture_output=True, env=node_env())
+    return r.returncode == 0
+
+
+def node_env():
+    env = dict(os.environ)
+    root = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True).stdout.strip() if shutil.which("npm") else ""
+    if root:
+        env["NODE_PATH"] = os.pathsep.join(p for p in (env.get("NODE_PATH"), root) if p)
+    return env
+
+
 def compile_jsx(name):
+    # Ohne esbuild (z. B. kein npm-Zugriff): TypeScript-Compiler als Ersatz, falls global installiert
+    if not os.environ.get("ESBUILD") and not shutil.which("esbuild") and typescript_available():
+        cmd = ["node", "-e", TS_TRANSPILE, str(HERE / name)]
+        return subprocess.run(cmd, check=True, capture_output=True, text=True, env=node_env()).stdout.strip()
     cmd = esbuild_bin() + [
         str(HERE / name), "--loader:.jsx=jsx", "--jsx-factory=swH", "--jsx-fragment=swF",
         "--target=es2019", "--minify-whitespace", "--minify-syntax",
@@ -157,6 +185,23 @@ def main():
     if s.count(nav_old) != 2:
         sys.exit("Menü-Rendering (Desktop + Mobil) nicht gefunden")
     s = s.replace(nav_old, nav_new)
+
+    # Footer-Spalten (_h) nutzen dieselbe Liste: externe Einträge (/dashboard) ebenfalls als <a>
+    s = replace_once(
+        s,
+        '(0,Te.jsx)(Ve,{to:l.to,className:"hover:text-slate-900",children:l.label})',
+        'l.ext?(0,Te.jsx)("a",{href:l.to,className:"hover:text-slate-900",children:l.label}):(0,Te.jsx)(Ve,{to:l.to,className:"hover:text-slate-900",children:l.label})',
+        "Footer-Links",
+    )
+
+    # 4d) Seite für Praxen: Route /praxen (SwPraxenPage aus PraxenPage.jsx) und Menüpunkt „Für Praxen“
+    s = replace_once(
+        s,
+        '(0,ne.jsx)(ft,{path:"ki-agent",element:(0,ne.jsx)(fr,{})}),',
+        '(0,ne.jsx)(ft,{path:"ki-agent",element:(0,ne.jsx)(fr,{})}),(0,ne.jsx)(ft,{path:"praxen",element:(0,ne.jsx)(SwPraxenPage,{})}),',
+        "Route /praxen",
+    )
+    s = replace_once(s, '{label:"KI-Agent",to:"/ki-agent"},', '{label:"KI-Agent",to:"/ki-agent"},{label:"F\\xFCr Praxen",to:"/praxen"},', "Menüpunkt Praxen")
 
     # 5) Texte
     s = replace_once(

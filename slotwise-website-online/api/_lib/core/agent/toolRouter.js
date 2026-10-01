@@ -10,6 +10,7 @@
 const { createHmac, randomBytes, randomInt, timingSafeEqual } = require("node:crypto");
 const { L0_TOOLS } = require("./tools");
 const { REFUSAL_MODIFY_DE, REFUSAL_MODIFY_EN } = require("./systemPrompt");
+const { PRAXIS_TOOLS, EMERGENCY_DE, MEDICAL_REFUSAL_DE, MODIFY_PRAXIS_DE, detectEmergency, detectMedicalQuestion } = require("./praxis");
 
 // Deterministisches Intent-Gate. Bewusst konservativ: lieber eine Absage zu viel als eine Änderung zu viel.
 const MODIFY_PATTERNS = [
@@ -37,10 +38,28 @@ class ToolRouter {
     this.deps = deps;
     this.now = deps.now || (() => Date.now());
     this.allowed = new Set(L0_TOOLS.map((t) => t.name));
+    this.praxisOnly = new Set(PRAXIS_TOOLS.map((t) => t.name)); // nur wenn session.industry === "praxis"
   }
 
   /** Wird pro Nutzeräußerung VOR dem Modellaufruf ausgeführt. */
   async gateUtterance(session, utterance) {
+    const at = new Date(this.now()).toISOString();
+    if (session.industry === "praxis") {
+      // Reihenfolge: Notfall vor allem anderen
+      if (detectEmergency(utterance)) {
+        await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: "intent:emergency", outcome: "handover", reason: "praxis emergency gate", at });
+        return { kind: "emergency", say: EMERGENCY_DE, reason: "emergency" };
+      }
+      if (detectMedicalQuestion(utterance)) {
+        await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: "intent:medical", outcome: "refused", reason: "praxis medical gate", at });
+        return { kind: "refuse", say: MEDICAL_REFUSAL_DE, reason: "medical_question" };
+      }
+      if (detectModifyIntent(utterance)) {
+        await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: "intent:modify_existing", outcome: "refused", reason: "L0 freeze, Aufgabe angeboten", at });
+        return { kind: "refuse", say: MODIFY_PRAXIS_DE, reason: "modify_intent_task" };
+      }
+      return null;
+    }
     if (detectModifyIntent(utterance)) {
       await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: "intent:modify_existing", outcome: "refused", reason: "L0 freeze", at: new Date(this.now()).toISOString() });
       return { kind: "refuse", say: session.language === "de" ? REFUSAL_MODIFY_DE : REFUSAL_MODIFY_EN, reason: "modify_intent" };
@@ -51,13 +70,16 @@ class ToolRouter {
   /** Wird für jeden vom Modell vorgeschlagenen Tool-Aufruf ausgeführt. */
   async route(session, call) {
     const at = new Date(this.now()).toISOString();
-    if (!this.allowed.has(call.name)) {
+    const praxisTool = this.praxisOnly.has(call.name) && session.industry === "praxis";
+    // Pro Gespräch angebotene Tools (Modus): alles andere wird abgelehnt, auch wenn es sonst erlaubt wäre
+    const offered = !session.toolNames || session.toolNames.includes(call.name);
+    if ((!this.allowed.has(call.name) && !praxisTool) || !offered) {
       await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: `tool:${call.name}`, outcome: "refused", reason: "not in L0 allow-list", at });
       return { kind: "refuse", say: session.language === "de" ? REFUSAL_MODIFY_DE : REFUSAL_MODIFY_EN, reason: "tool_not_allowed" };
     }
     if (call.name === "send_otp") return this.sendOtp(session, String(call.arguments.phone_e164));
     if (call.name === "verify_otp") return this.verifyOtp(session, String(call.arguments.phone_e164), String(call.arguments.code));
-    if (call.name === "create_booking") {
+    if (call.name === "create_booking" && session.industry !== "praxis") { // Praxismodus: nur Vorschläge, daher ohne OTP (siehe praxis.js)
       const ok = this.checkOtpToken(session, String(call.arguments.phone_e164), String(call.arguments.otp_token));
       if (!ok) {
         await this.deps.audit.write({ callSid: session.callSid, tenantId: session.tenantId, action: "tool:create_booking", outcome: "refused", reason: "otp_token invalid", at });

@@ -66,7 +66,7 @@ const L0_TOOLS = [
     minTrust: "L0",
     parameters: {
       type: "object", additionalProperties: false, required: ["reason"],
-      properties: { reason: { type: "string", enum: ["requested", "out_of_scope", "modify_existing", "verification_failed", "unclear"] } },
+      properties: { reason: { type: "string", enum: ["requested", "out_of_scope", "modify_existing", "verification_failed", "unclear", "possible_emergency"] } },
     },
   },
 ];

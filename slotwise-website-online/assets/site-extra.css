@@ -71,3 +71,25 @@
 @media (min-width:768px){.md\:block{display:block}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.md\:grid-cols-\[150px_1fr\]{grid-template-columns:150px 1fr}}
 @media (min-width:1024px){.lg\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}.lg\:grid-cols-\[1\.6fr_1fr\]{grid-template-columns:1.6fr 1fr}}
 
+
+/* /praxen (website-src/PraxenPage.jsx) – fehlende Utilities, erzeugt mit Tailwind v3 */
+.-top-3{top:-0.75rem}
+.left-7{left:1.75rem}
+.mt-7{margin-top:1.75rem}
+.h-7{height:1.75rem}
+.w-7{width:1.75rem}
+.max-w-5xl{max-width:64rem}
+.cursor-pointer{cursor:pointer}
+.list-none{list-style-type:none}
+.space-y-2\.5 > :not([hidden]) ~ :not([hidden]){--tw-space-y-reverse:0;margin-top:calc(0.625rem * calc(1 - var(--tw-space-y-reverse)));margin-bottom:calc(0.625rem * var(--tw-space-y-reverse))}
+.divide-y > :not([hidden]) ~ :not([hidden]){--tw-divide-y-reverse:0;border-top-width:calc(1px * calc(1 - var(--tw-divide-y-reverse)));border-bottom-width:calc(1px * var(--tw-divide-y-reverse))}
+.divide-slate-200 > :not([hidden]) ~ :not([hidden]){--tw-divide-opacity:1;border-color:rgb(226 232 240 / var(--tw-divide-opacity, 1))}
+.rounded-3xl{border-radius:1.5rem}
+.p-7{padding:1.75rem}
+.py-3\.5{padding-top:0.875rem;padding-bottom:0.875rem}
+.ring-amber-200{--tw-ring-opacity:1;--tw-ring-color:rgb(253 230 138 / var(--tw-ring-opacity, 1))}
+.ring-indigo-600{--tw-ring-opacity:1;--tw-ring-color:rgb(79 70 229 / var(--tw-ring-opacity, 1))}
+.group[open] .group-open\:rotate-45{--tw-rotate:45deg;transform:translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}
+@media (min-width:640px){.sm\:px-12{padding-left:3rem;padding-right:3rem}}
+@media (min-width:1024px){.lg\:grid-cols-\[1\.05fr_1fr\]{grid-template-columns:1.05fr 1fr}}
+@media (min-width:1024px){.lg\:grid-cols-\[1\.15fr_1fr\]{grid-template-columns:1.15fr 1fr}}

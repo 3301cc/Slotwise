@@ -3,6 +3,8 @@
  * Konfiguration aus Umgebungsvariablen – der einzige Ort, der process.env liest.
  * Alles andere bekommt das fertige config-Objekt übergeben.
  */
+const { parseTenants } = require("./tenants");
+
 const REQUIRED_SECRET_LENGTH = 32;
 
 function fromEnv(env = process.env) {
@@ -24,6 +26,8 @@ function fromEnv(env = process.env) {
     adminToken: env.WAITLIST_ADMIN_TOKEN || (deployed ? "" : "local-admin"),
     tokenTtlMs: 72 * 60 * 60 * 1000,
     rateLimit: { max: 5, windowSec: 600 },
+    // Mandanten (mehrere Praxen/Unternehmen). Leer = ein Mandant wie bisher. Format: siehe core/tenants.js
+    tenants: parseTenants(env.TENANTS_JSON || ""),
 
     // KI-Agent (Telefon + E-Mail)
     agent: {
