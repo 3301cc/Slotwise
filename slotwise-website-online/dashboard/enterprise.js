@@ -102,11 +102,24 @@
     mode_must_be_busy_or_full: "Bitte wählen Sie, was im Zielkalender stehen soll.",
   };
 
+  /** Gründe zu 422 target_not_allowed (core/src/syncTargets.ts) → genauere Meldung */
+  const TARGET_REASONS = {
+    tenant_not_linked: "Dieses Konto gehört zu keiner freigegebenen Organisation.",
+    domain_not_allowed: "Die Domain dieses Postfachs ist nicht freigegeben.",
+    not_same_person: "Das Zielpostfach gehört nicht zu Ihrem Konto.",
+    target_is_source: "Das Ziel ist Ihr eigenes Quellpostfach. Bitte wählen Sie ein anderes Ziel.",
+    own_mailboxes_not_configured: "Weitere eigene Postfächer sind von Ihrer IT noch nicht freigegeben.",
+    team_not_found: "Diesen Team-Kalender gibt es nicht mehr. Bitte laden Sie die Seite neu.",
+    booking_disabled: "Die Buchungsseite ist für Ihre Organisation nicht freigeschaltet.",
+    owner_unknown: "Ihr Konto ist noch nicht für CalenSync freigeschaltet.",
+  };
+
   /** lastError einer Pipeline (Code aus dem Backend) → lesbare Meldung; unbekannt → der Code selbst */
   const PIPELINE_ERRORS = {
     target_not_allowed: "Das Ziel ist nicht mehr freigegeben.",
     // Codes des Sync-Workers (core/src/syncWorker.ts, FailureCategory)
     target_missing: "Das Ziel ist nicht mehr hinterlegt.",
+    event_rejected: "Ein einzelner Termin wurde vom Zielkalender abgelehnt; die übrigen werden abgeglichen.",
     scope_propagation: "Die Freigabe wird gerade bei Microsoft wirksam – der Abgleich wird automatisch wiederholt.",
     transient: "Vorübergehender Fehler – der Abgleich wird automatisch wiederholt.",
     token: "Die Anmeldung bei Microsoft 365 wird erneuert – der Abgleich wird automatisch wiederholt.",
@@ -196,13 +209,15 @@
         if (res.ok) return { body: await res.json(), res };
         if (res.status === 401 && !forceRefresh) { forceRefresh = true; continue; }
         if ((res.status === 429 || res.status === 503) && attempt < maxRetries) { await backoff(attempt, res.headers.get("retry-after")); continue; }
-        const code = await res.json().then((b) => (b && typeof b.error === "string" ? b.error.slice(0, 80) : "")).catch(() => "");
+        const errBody = await res.json().catch(() => null);
+        const code = errBody && typeof errBody.error === "string" ? errBody.error.slice(0, 80) : "";
+        const reasonMsg = code === "target_not_allowed" && errBody && typeof errBody.reason === "string" ? lookup(TARGET_REASONS, errBody.reason) : null;
         switch (res.status) {
           case 401: throw new CalensyncApiError("unauthenticated", "Anmeldung abgelaufen", 401, rid);
           case 403: throw new CalensyncApiError("forbidden", code === "origin_not_allowed" ? "Diese Website ist für die API nicht freigegeben" : "Keine Berechtigung", 403, rid);
           case 404: throw new CalensyncApiError("not_provisioned", "Ihr Konto ist noch nicht für CalenSync freigeschaltet", 404, rid);
           case 409: throw new CalensyncApiError("limit_reached", "Maximale Anzahl verbundener Kalender erreicht", 409, rid);
-          case 400: case 413: case 415: case 422: throw new CalensyncApiError("invalid_request", (lookup(REQUEST_ERRORS, code) || (code.startsWith("unknown_field:target") ? REQUEST_ERRORS.invalid_target : null)) || `Eingabe abgelehnt (${code || res.status})`, res.status, rid, code || null);
+          case 400: case 413: case 415: case 422: throw new CalensyncApiError("invalid_request", (reasonMsg || lookup(REQUEST_ERRORS, code) || (code.startsWith("unknown_field:target") ? REQUEST_ERRORS.invalid_target : null)) || `Eingabe abgelehnt (${code || res.status})`, res.status, rid, code || null);
           case 429: case 503: throw new CalensyncApiError("unavailable", "CalenSync ist gerade ausgelastet – bitte gleich erneut versuchen", res.status, rid);
           default: throw new CalensyncApiError("unexpected", `Unerwartete Antwort ${res.status}`, res.status, rid);
         }
