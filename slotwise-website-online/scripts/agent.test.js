@@ -289,3 +289,21 @@ test("Praxis: Brust/Atem-Formulierungen, Umlaute an Wortgrenzen, Absage nennt 11
   // Medizinische Frage mit Notfallbezug: Absage enthält in jedem Fall den Notruf-Hinweis
   for (const u of ["Ich kann kaum atmen, ist das gefährlich?", "Ich habe Schmerzen in der Brust, soll ich ins Krankenhaus?"]) assert.ok(detectEmergency(u), u);
 });
+
+test("Praxis: Bestands- oder Neupatient – Folgerezept nur für Bestandspatienten, Aufnahmestopp", async () => {
+  const { NEW_NO_RX_DE, NEW_CLOSED_DE } = require("../api/_lib/core/agent/praxis");
+  const { agent } = await buildPraxis();
+  const t = (id, u) => agent.turn({ sessionId: id, from: "+4915112345678", utterance: u });
+  await t("N1", "Ich brauche ein Folgerezept, ich war aber noch nie bei Ihnen.");
+  assert.strictEqual((await t("N1", "Ich heiße Eva Neu, geboren 01.02.1990, 0151 12345678")).say, NEW_NO_RX_DE);
+  assert.strictEqual((await agent.tasks.list()).length, 0);
+  await t("N2", "Ich brauche ein Folgerezept für mein Blutdruckmittel.");
+  await t("N2", "Ich heiße Peter Kühn, geboren 03.07.1958, 0151 12345678");
+  const [task] = await agent.tasks.list();
+  assert.strictEqual(task.patientStatus, "existing");
+  await agent.settings.save({ newPatients: "closed" });
+  await t("N3", "Bitte um Rückruf, ich war noch nie bei Ihnen.");
+  assert.strictEqual((await t("N3", "Mein Name ist Ida Klein, 0151 12345678")).say, NEW_CLOSED_DE);
+  const p = buildSystemPrompt({ company: "X", hostName: "Y", timezone: "Europe/Berlin", language: "de", nowIso: "2026-10-01T08:00:00Z", settings: await agent.settings.get() });
+  assert.match(p, /Aufnahmestopp/); assert.match(p, /schon einmal bei uns in Behandlung/);
+});

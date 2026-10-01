@@ -29,8 +29,10 @@ const SwPxIcon = ({ name, size = 22, className }) => <SwIcon d={SW_PX_ICONS[name
 const SW_PX_CALL = [
   { who: "ki", text: "Praxis Dr. Berger, guten Morgen. Sie sprechen mit dem digitalen Assistenten der Praxis. Bei einem Notfall wählen Sie bitte die 112. Was kann ich für Sie tun?" },
   { who: "kunde", text: "Ich brauche ein Folgerezept für mein Blutdruckmittel." },
-  { who: "ki", text: "Das gebe ich gern an das Praxisteam weiter. Nennen Sie mir bitte Ihren Namen und Ihr Geburtsdatum." },
-  { who: "sys", text: "Aufgabe angelegt · Folgerezept" },
+  { who: "ki", text: "Gern. Waren Sie schon einmal bei uns in Behandlung?" },
+  { who: "kunde", text: "Ja, ich bin seit Jahren bei Dr. Berger." },
+  { who: "ki", text: "Dann gebe ich das an das Praxisteam weiter. Nennen Sie mir bitte Ihren Namen und Ihr Geburtsdatum." },
+  { who: "sys", text: "Aufgabe angelegt · Folgerezept · Bestandspatient" },
   { who: "kunde", text: "Und ich bräuchte noch einen Termin zur Kontrolle." },
   { who: "ki", text: "Am Donnerstag um 8:30 Uhr ist ein Termin frei. Ich merke ihn vor, die Praxis meldet sich zur Bestätigung." },
   { who: "sys", text: "Termin vorgemerkt · Freigabe durch das Team" },
@@ -44,7 +46,7 @@ const SW_PX_PAINS = [
 
 const SW_PX_STEPS = [
   { icon: "ear", title: "Annehmen", text: "Der Assistent nimmt den Anruf an, wenn alle Leitungen belegt sind. Er sagt zu Beginn, dass eine KI spricht, und nennt die 112 für Notfälle." },
-  { icon: "message", title: "Anliegen klären", text: "Termin, Absage, Folgerezept oder Überweisung: Er fragt nach, bis das Anliegen eindeutig ist, und erfasst Name, Geburtsdatum und Rückrufnummer." },
+  { icon: "message", title: "Anliegen klären", text: "Termin, Absage, Folgerezept oder Überweisung: Er fragt, ob die Person schon in Behandlung ist, klärt das Anliegen und erfasst Name, Geburtsdatum und Rückrufnummer." },
   { icon: "calendar", title: "Aufnehmen", text: "In der Startphase nimmt er nur Anliegen auf und bucht nichts. Später kann er auch Termine vormerken, die Ihr Team freigibt." },
   { icon: "task", title: "Übergeben", text: "Jedes Anliegen erscheint als Aufgabe in Ihrer Praxisübersicht. Über die Taste 0 erreicht der Anrufer jederzeit Ihr Team." },
 ];
@@ -93,6 +95,7 @@ const SW_PX_FAQ = [
   { q: "Funktioniert das mit unserer Praxissoftware?", a: "Derzeit arbeitet CalenSync mit einem eigenen Kalender sowie mit Google- und Microsoft-Kalendern. Schnittstellen zu gängigen PVS sind in Vorbereitung. Welche zuerst kommt, legen wir gemeinsam mit den Pilotpraxen fest." },
   { q: "Wir nutzen bereits eine Online-Terminbuchung. Geht beides parallel?", a: "Ja. Viele Praxen setzen den Assistenten zunächst nur in den Telefonspitzen ein. Welche Terminarten er vormerken darf, legen Sie selbst fest." },
   { q: "Was passiert bei einem Notfall?", a: "Der Assistent schätzt keine Beschwerden ein. Schon die Begrüßung nennt die 112, und über die Taste 0 erreicht man sofort das Team. Erkennt er Hinweise auf einen Notfall oder ist er sich unsicher, verweist er auf die 112 beziehungsweise den ärztlichen Bereitschaftsdienst 116 117 und gibt den Anruf weiter. Eine Notrufleitung ersetzt das nicht. Deshalb prüfen wir das Verhalten mit jeder Pilotpraxis anhand echter Anrufe." },
+  { q: "Wie geht der Assistent mit Neupatienten um?", a: "Er fragt zu Beginn, ob die Person schon bei Ihnen in Behandlung ist. Folgerezepte und Überweisungen nimmt er nur für Bestandspatienten auf. Für Neupatienten legen Sie fest, ob sie eine Erstvorstellung vorgemerkt bekommen, eine Rückrufbitte hinterlassen oder ob ein Aufnahmestopp gilt. Bei einem Aufnahmestopp verweist er gesetzlich Versicherte freundlich auf die Terminservicestelle unter 116 117." },
   { q: "Können Patienten mit einem Menschen sprechen?", a: "Jederzeit. Auf Wunsch leitet der Assistent weiter oder nimmt eine Rückrufbitte auf, die als Aufgabe in der Praxisübersicht erscheint." },
   { q: "Wo werden die Daten verarbeitet?", a: "Anwendung, Datenbank und KI-Verarbeitung laufen in Frankfurt am Main. Vorab erhalten Sie den AV-Vertrag nach Art. 28 DSGVO mit Verpflichtung nach § 203 StGB und die vollständige Liste der Unterauftragsverarbeiter, einschließlich Telefonie-Anbieter und Standort." },
   { q: "Was kostet CalenSync nach der Pilotphase?", a: "Der Praxis-Tarif kostet 89 € pro Standort und Monat bei jährlicher Zahlung. Pilotpraxen zahlen im ersten Jahr nach der Pilotphase die Hälfte. Zum Ende der Pilotphase können Sie kostenfrei kündigen." },

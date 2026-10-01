@@ -168,6 +168,7 @@
     f.instructions.value = s.instructions || "";
     f.industry.value = s.industry === "praxis" ? "praxis" : "business";
     f.praxisBooking.value = s.praxisBooking === "off" ? "off" : "proposal";
+    f.newPatients.value = ["accept", "callback", "closed"].includes(s.newPatients) ? s.newPatients : "callback";
     $("#praxis-booking").hidden = f.industry.value !== "praxis";
     syncRange(); syncCount();
   }
@@ -175,7 +176,7 @@
   function syncCount() { $("#instructionsCount").textContent = `${$("#instructions").value.length} / 600`; }
   function readSettings() {
     const f = $("#agent-form");
-    return { autonomy: f.autonomy.value, maxPerDay: Number(f.maxPerDay.value), instructions: f.instructions.value.trim(), industry: f.industry.value || "business", praxisBooking: f.praxisBooking.value || "proposal" };
+    return { autonomy: f.autonomy.value, maxPerDay: Number(f.maxPerDay.value), instructions: f.instructions.value.trim(), industry: f.industry.value || "business", praxisBooking: f.praxisBooking.value || "proposal", newPatients: f.newPatients.value || "callback" };
   }
 
   // ---------- Praxismodus ----------
@@ -185,7 +186,7 @@
     $("#tasks-list").innerHTML = list.length ? list.map((t) => `
       <li class="flex flex-col gap-3 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between" data-task="${esc(t.id)}">
         <div class="min-w-0">
-          <p class="flex flex-wrap items-center gap-2 text-sm"><span class="rounded-full border px-2 py-0.5 text-[11px] font-medium ${TASK_TYPE_TONE[t.type] || TASK_TYPE_TONE.other}">${esc(t.label)}</span><span class="font-medium text-slate-900">${esc(t.name)}</span>${t.dateOfBirth ? `<span class="tabular text-xs text-slate-500">geb. ${esc(t.dateOfBirth.split("-").reverse().join("."))}</span>` : ""}</p>
+          <p class="flex flex-wrap items-center gap-2 text-sm"><span class="rounded-full border px-2 py-0.5 text-[11px] font-medium ${TASK_TYPE_TONE[t.type] || TASK_TYPE_TONE.other}">${esc(t.label)}</span><span class="font-medium text-slate-900">${esc(t.name)}</span>${t.patientStatus ? `<span class="rounded-full border px-2 py-0.5 text-[11px] font-medium ${t.patientStatus === "new" ? "border-sky-200 bg-sky-50 text-sky-800" : "border-slate-200 bg-white text-slate-600"}">${t.patientStatus === "new" ? "Neupatient" : "Bestandspatient"}</span>` : ""}${t.dateOfBirth ? `<span class="tabular text-xs text-slate-500">geb. ${esc(t.dateOfBirth.split("-").reverse().join("."))}</span>` : ""}</p>
           <p class="mt-1 text-xs text-slate-500">${t.note ? `${esc(t.note)} · ` : ""}<time datetime="${esc(t.at)}">${relTime(t.at)}</time></p>
         </div>
         <div class="flex flex-none gap-2">
@@ -201,6 +202,7 @@
     $("#greeting").textContent = px ? "Guten Tag, Praxis Dr. Berger. Ihr Assistent nimmt ab." : "Hallo Jana, dein Agent hat übernommen.";
     $("#global-search").placeholder = px ? "Termine, Patienten, Terminarten suchen …" : "Termine, Kunden, Event-Typen suchen …";
     $("#aufgaben").hidden = !px;
+    document.querySelectorAll("[data-mode-switch]").forEach((b) => { const on = (b.dataset.modeSwitch === "praxis") === px; b.setAttribute("aria-pressed", String(on)); b.classList.toggle("mode-btn-active", on); });
   }
 
   // ---------- Verdrahtung ----------
@@ -235,6 +237,13 @@
         return;
       }
       if (e.target.closest("[data-close]")) return $("#slot-detail").classList.add("hidden");
+      const sw = e.target.closest("[data-mode-switch]");
+      if (sw) {
+        if ((sw.dataset.modeSwitch === "praxis") === API.praxis) return;
+        sw.disabled = true;
+        API.getSettings().then((cur) => API.saveSettings({ ...cur, industry: sw.dataset.modeSwitch })).then(() => location.reload()).catch(() => { sw.disabled = false; });
+        return;
+      }
       const done = e.target.closest("[data-task-done]");
       if (done) {
         done.disabled = true;
