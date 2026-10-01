@@ -21,7 +21,23 @@ ALTER TABLE pipelines
   -- Bereinigung der Zieltermine nach Widerruf (core/src/cleanupWorker.ts): angefordert im selben Commit wie die
   -- Kappung, erledigt = alle Zieltermine gelöscht, Zielpostfach genullt
   ADD COLUMN IF NOT EXISTS cleanup_requested_at    timestamptz,
-  ADD COLUMN IF NOT EXISTS cleanup_done_at         timestamptz;
+  ADD COLUMN IF NOT EXISTS cleanup_done_at         timestamptz,
+  -- account-Ziele: letzte erfolgreiche Graph-Prüfung "dieselbe Person" + Merkmal (NIE der Wert)
+  ADD COLUMN IF NOT EXISTS identity_verified_at    timestamptz,
+  ADD COLUMN IF NOT EXISTS identity_attribute      text,
+  -- zuletzt tatsächlich geschriebener Modus (busy/full); weicht er ab (Team erlaubt full nicht mehr), werden
+  -- alle Zieltermine einmal neu (inhaltsfrei) geschrieben
+  ADD COLUMN IF NOT EXISTS effective_mode          text;
+
+ALTER TABLE pipelines DROP CONSTRAINT IF EXISTS pipelines_identity_attribute_valid;
+ALTER TABLE pipelines ADD CONSTRAINT pipelines_identity_attribute_valid
+  CHECK (identity_attribute IS NULL OR identity_attribute IN
+    ('objectId', 'employeeId', 'onPremisesImmutableId', 'onPremisesSecurityIdentifier', 'localPart')) NOT VALID;
+ALTER TABLE pipelines VALIDATE CONSTRAINT pipelines_identity_attribute_valid;
+ALTER TABLE pipelines DROP CONSTRAINT IF EXISTS pipelines_effective_mode_valid;
+ALTER TABLE pipelines ADD CONSTRAINT pipelines_effective_mode_valid
+  CHECK (effective_mode IS NULL OR effective_mode IN ('busy', 'full')) NOT VALID;
+ALTER TABLE pipelines VALIDATE CONSTRAINT pipelines_effective_mode_valid;
 
 ALTER TABLE pipelines DROP CONSTRAINT IF EXISTS pipelines_target_kind_valid;
 ALTER TABLE pipelines ADD CONSTRAINT pipelines_target_kind_valid
@@ -59,6 +75,9 @@ CREATE TABLE IF NOT EXISTS sync_event_map (
   start_at        timestamptz NOT NULL,
   end_at          timestamptz NOT NULL,
   updated_at      timestamptz NOT NULL DEFAULT now(),
+  -- aus dem Sync-Fenster gefallen (Vergangenheit): kein Abgleich, keine Busy-API, aber die Bereinigung löscht den
+  -- Zieltermin trotzdem. Nur Metadaten, wie alle Spalten hier.
+  archived_at     timestamptz,
   CONSTRAINT sync_event_map_pkey PRIMARY KEY (pipeline_id, source_event_id),
   CONSTRAINT sync_event_map_pipeline_id_fkey FOREIGN KEY (pipeline_id)
     REFERENCES pipelines (id) ON DELETE CASCADE ON UPDATE CASCADE,

@@ -463,28 +463,54 @@ kein Schreibzugriff). Google-Ziele sind noch nicht unterstützt. Ziele nur aus d
 ```json
 {
   "ownDomains": ["acme-alias.de"],
-  "linkedTenants": [{ "entraTenantId": "<GUID Tochter-Mandant>", "label": "Acme Tochter GmbH", "domains": ["acme-tochter.de"] }],
-  "teamCalendars": [{ "id": "vertrieb", "mailbox": "vertrieb@acme.de", "label": "Vertrieb" }],
+  "ownDomainsIdentityAttribute": "objectId",
+  "linkedTenants": [{ "entraTenantId": "<GUID Tochter-Mandant>", "label": "Acme Tochter GmbH",
+                      "domains": ["acme-tochter.de"], "identityAttribute": "employeeId" }],
+  "teamCalendars": [{ "id": "vertrieb", "mailbox": "vertrieb@acme.de", "label": "Vertrieb", "allowFullMode": false }],
   "bookingApiToken": "<mind. 32 Zufallszeichen, nur serverseitig>",
   "syncTentative": false
 }
 ```
 
-- **account:** lokaler Teil muss dem `userName` des Inhabers entsprechen; Domain aus `linkedTenants[].domains` (anderer
-  Mandant) bzw. `ownDomains` (eigener Mandant, nicht das Quellpostfach). Im verknüpften Mandanten muss die Graph-App
-  per Admin-Consent freigegeben und per RBAC auf die Zielpostfächer begrenzt sein (`powershell/`, dort ausführen).
-  Token je Entra-Mandant mit derselben KMS-Assertion; der Cache ist je Entra-Mandant getrennt.
-- **team:** Postfach kommt nur aus der Config; es muss im RBAC-Scope der App liegen (Schreibrecht).
+- **account:** Domain aus `linkedTenants[].domains` (anderer Mandant) bzw. `ownDomains` (eigener Mandant, nicht das
+  Quellpostfach). **Dieselbe Person prüft Microsoft Graph** – bei der Anlage und im Worker (vor dem ersten Schreiben,
+  dann spätestens alle 24 h): `GET /users/{id|upn}?$select=id,<Merkmal>` für Inhaber (Heim-Token) und Zielpostfach
+  (Token des Zielmandanten); beide Werte nicht leer und exakt gleich.
+  - `identityAttribute` je verknüpftem Mandanten: `employeeId` (Default), `onPremisesImmutableId`,
+    `onPremisesSecurityIdentifier` – ein Merkmal, das in beiden Mandanten für dieselbe Person gleich gepflegt ist.
+  - `ownDomainsIdentityAttribute`: `objectId` (Default, exakt: das Zielpostfach ist dasselbe Entra-Objekt wie der
+    Inhaber) oder eines der drei Merkmale (zweites Konto derselben Person mit eigenem Objekt).
+  - `localPart` (beide Schlüssel): **nur ausdrückliches Opt-in, ohne Graph-Prüfung** – es reicht dann der gleiche lokale
+    Teil. Warnung: Zwei verschiedene Personen mit gleichem lokalen Teil in zwei freigegebenen Domains (z. B.
+    jana@acme.de und jana@acme-alias.de) sind so nicht zu unterscheiden.
+  - Ablehnung bei der Anlage: `422 target_not_allowed` mit `reason: "identity_unverified"`; Graph vorübergehend nicht
+    erreichbar: `503 identity_check_unavailable` + `Retry-After` (nie „erlaubt“). Im Worker: kein Schreiben,
+    Pipeline `config_error`, `lastError: identity_unverified`, Alarm. Gespeichert werden nur Zeitpunkt und Merkmal
+    (`identity_verified_at`, `identity_attribute`), nie der Wert. Vorschläge in `GET /me/sync-targets` tragen
+    `verified: false`.
+  - Berechtigung: Graph-Anwendungsberechtigung `User.Read.All` (für `objectId` genügt `User.ReadBasic.All`) im
+    eigenen **und** in jedem verknüpften Mandanten.
+  Im verknüpften Mandanten muss die Graph-App per Admin-Consent freigegeben und per RBAC auf die Zielpostfächer
+  begrenzt sein (`powershell/`, dort ausführen). Token je Entra-Mandant mit derselben KMS-Assertion; der Cache ist je
+  Entra-Mandant getrennt.
+- **team:** Postfach kommt nur aus der Config; es muss im RBAC-Scope der App liegen (Schreibrecht). Modus `full`
+  (Betreff + Ort) nur mit `allowFullMode: true` (Default false): sonst `422 target_not_allowed` /
+  `reason: "full_mode_not_allowed"`; wird die Freigabe später entzogen, schreibt der Worker alle Zieltermine einmal
+  inhaltsfrei neu (Ort geleert, auch vergangene) und meldet `lastError: full_mode_not_allowed`.
+  `GET /me/sync-targets` liefert je Team `fullMode: boolean`.
 - Geprüft wird bei der Anlage (`422 target_not_allowed` + `reason`) und vor jedem Lauf im Worker erneut
   (sonst `config_error` + Alarm). Vor **jedem** Graph-Aufruf liest der Worker den Pipeline-Status neu.
 - Gespeichert werden nur Quell-/Ziel-ID, Beginn, Ende, changeKey (`sync_event_map`), Delta-Link, `last_synced_at`,
-  `last_sync_error` (nur Code). `busy`: Ziel bekommt Zeit, `showAs=busy`, `busyLabel`; `full`: zusätzlich Betreff und
+  `last_sync_error` (nur Code). Termine, die aus dem Fenster fallen (Vergangenheit), werden **archiviert**
+  (`archived_at`), nicht vergessen: kein Abgleich, keine Busy-API, aber die Bereinigung löscht auch ihre Zieltermine.
+  Dieselbe Quell-ID mehrfach auf einer Delta-Seite: das letzte Vorkommen gilt. `busy`: Ziel bekommt Zeit, `showAs=busy`, `busyLabel`; `full`: zusätzlich Betreff und
   Ort, private Termine wie `busy`; Text und Teilnehmer nie.
 - Jobs: Webhooks, erster voller Abgleich bei Aktivierung (gleiches Statement), Scheduler alle 15 min für Pipelines,
   deren letzter Abgleich > 12 h zurückliegt.
 - `GET /api/v1/availability/busy?from=…&to=…` (≤ 62 Tage, ISO mit Zeitzone) mit `Authorization: Bearer <bookingApiToken>`
-  liefert `{ "busy": [{ "start", "end" }] }` über alle aktiven `booking`-Pipelines, zusammengefasst, ohne Nutzerbezug.
-  Nur vom Server der Buchungsseite aufrufen, nie aus dem Browser.
+  liefert `{ "busy": [{ "start", "end" }] }` über alle aktiven `booking`-Pipelines, ohne Nutzerbezug. Zusammengefasst
+  wird in SQL (`range_agg`, PostgreSQL ≥ 14) – vollständig, ohne Zeilenlimit; mehr als 5 000 zusammengefasste
+  Intervalle → `503 busy_too_many` (nie stilles Abschneiden). Nur vom Server der Buchungsseite aufrufen, nie aus dem Browser.
 - **Ende einer Pipeline = Spuren weg** (`core/src/cleanupWorker.ts`, Job `pipeline.target_cleanup`, dedupe je Pipeline):
   SCIM-Deaktivierung, SCIM-DELETE und `DELETE /api/v1/me/pipelines/{id}` (Nutzer, `Sync.Write`) setzen die Pipeline auf
   `revoked`, markieren `cleanup_requested_at` und stellen den Job **im selben Commit** ein. Der Worker löscht jeden von

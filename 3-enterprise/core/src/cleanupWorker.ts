@@ -28,7 +28,7 @@ import { classifyGraphError, type GraphFailure } from "./errorHandler.js";
 import type { GraphTokenSource } from "./appToken.js";
 import type { DelayedJobQueue, Job } from "./retryQueue.js";
 import { recheckTargetForCleanup, type StoredTarget, type SyncAllowlist } from "./syncTargets.js";
-import { createGraphCaller, GraphCalendarWriter, GraphCallError, sourceRef, type SyncRepo } from "./syncWorker.js";
+import { createGraphCaller, GraphCalendarWriter, GraphCallError, RunAborted, sourceRef, type SyncRepo } from "./syncWorker.js";
 import type { FetchLike } from "./types.js";
 
 export const CLEANUP_KIND = "pipeline.target_cleanup";
@@ -78,9 +78,9 @@ export interface CleanupDeps {
 
 export type CleanupOutcome = "cleaned" | "dropped" | "busy" | "rescheduled" | "failed";
 
-class CleanupStopped extends Error {}
-class BudgetExceeded extends Error {}
-class ShuttingDown extends Error {}
+class CleanupStopped extends RunAborted {}
+class BudgetExceeded extends RunAborted {}
+class ShuttingDown extends RunAborted {}
 
 const STOPPABLE = new Set(["revoked", "paused"]);
 const sameTarget = (a: StoredTarget, b: StoredTarget) =>

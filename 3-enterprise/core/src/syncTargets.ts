@@ -3,9 +3,13 @@
  * (vor jedem Schreibzugriff erneut). Ein Nutzer kann eine Pipeline nie auf ein beliebiges Postfach richten.
  *
  *   account  zweites Microsoft-365-Postfach DERSELBEN Person
- *            · anderer Entra-Mandant (Mutter/Tochter): entraTenantId ∈ linkedTenants, Domain ∈ deren domains,
- *              lokaler Teil == lokaler Teil des userName des Inhabers (Same-Person-Konvention)
- *            · eigener Mandant: Domain ∈ ownDomains, gleicher lokaler Teil, nicht das Quellpostfach selbst
+ *            · anderer Entra-Mandant (Mutter/Tochter): entraTenantId ∈ linkedTenants, Domain ∈ deren domains
+ *            · eigener Mandant: Domain ∈ ownDomains, nicht das Quellpostfach selbst
+ *            Dieselbe Person wird per Graph geprüft (core/src/identity.ts), bei der Anlage UND im Worker
+ *            (spätestens alle 24 h): identityAttribute "objectId" (nur eigener Mandant, exakt), "employeeId",
+ *            "onPremisesImmutableId", "onPremisesSecurityIdentifier" – beide Seiten nicht leer und gleich.
+ *            "localPart" (nur gleicher lokaler Teil, ohne Graph) ist ein ausdrückliches Opt-in: zwei verschiedene
+ *            Personen mit gleichem lokalen Teil in verschiedenen Domains wären dann nicht unterscheidbar.
  *   team     Team-/Abteilungskalender (Ressourcenpostfach) aus teamCalendars – Postfach kommt aus der Config,
  *            nie aus dem Request
  *   booking  CalenSync-Buchungsseite: kein Provider-Schreibzugriff, Belegt-Zeiten nur über die Busy-API
@@ -16,23 +20,33 @@
 
 export type SyncTargetKind = "account" | "team" | "booking";
 
+/** Merkmal, an dem "dieselbe Person" erkannt wird (Werte beider Seiten per Graph gelesen) */
+export type IdentityAttribute = "objectId" | "employeeId" | "onPremisesImmutableId" | "onPremisesSecurityIdentifier" | "localPart";
+export const IDENTITY_ATTRIBUTES: readonly IdentityAttribute[] = ["objectId", "employeeId", "onPremisesImmutableId", "onPremisesSecurityIdentifier", "localPart"];
+
 export interface LinkedTenant {
   entraTenantId: string;
   label: string;
   /** kleingeschrieben, ohne @ */
   domains: readonly string[];
+  /** Default employeeId; objectId ist mandantenübergreifend nicht möglich */
+  identityAttribute?: Exclude<IdentityAttribute, "objectId">;
 }
 
 export interface TeamCalendar {
   id: string;
   mailbox: string;
   label: string;
+  /** full-Modus (Betreff + Ort) in diesen Kalender erlaubt? Default false */
+  allowFullMode?: boolean;
 }
 
 export interface SyncAllowlist {
   /** Entra-Mandant des Kunden (Quelle aller Pipelines, Ziel für team und account im eigenen Mandanten) */
   homeEntraTenantId: string;
   ownDomains: readonly string[];
+  /** Merkmal für account-Ziele im eigenen Mandanten, Default objectId (exakt dasselbe Entra-Objekt) */
+  ownDomainsIdentityAttribute?: IdentityAttribute;
   linkedTenants: readonly LinkedTenant[];
   teamCalendars: readonly TeamCalendar[];
   bookingEnabled: boolean;
@@ -59,6 +73,8 @@ export interface ResolvedTarget {
   ref: string | null;
   /** Anzeigename für das Dashboard (nie ein fremdes Postfach) */
   label: string;
+  /** nur account: wie dieselbe Person geprüft wird */
+  identityAttribute?: IdentityAttribute;
 }
 
 export type TargetRejection =
@@ -71,7 +87,9 @@ export type TargetRejection =
   | "team_mailbox_changed"
   | "booking_disabled"
   | "owner_unknown"
-  | "target_missing";
+  | "target_missing"
+  | "identity_unverified"
+  | "full_mode_not_allowed";
 
 export type TargetCheck = { ok: true; target: ResolvedTarget } | { ok: false; reason: TargetRejection };
 
@@ -128,14 +146,17 @@ export function resolveSyncTarget(allow: SyncAllowlist, ownerUserName: string | 
         const tenant = allow.linkedTenants.find((l) => sameGuid(l.entraTenantId, linkedId));
         if (!tenant) return { ok: false, reason: "tenant_not_linked" };
         if (!tenant.domains.includes(t.domain)) return { ok: false, reason: "domain_not_allowed" };
-        if (t.local !== o.local) return { ok: false, reason: "not_same_person" };
-        return { ok: true, target: { kind: "account", mailbox, entraTenantId: tenant.entraTenantId.toLowerCase(), ref: null, label: tenant.label } };
+        const identityAttribute = tenant.identityAttribute ?? "employeeId";
+        // Ohne Graph-Prüfung (Opt-in localPart) bleibt nur der gleiche lokale Teil als Konvention
+        if (identityAttribute === "localPart" && t.local !== o.local) return { ok: false, reason: "not_same_person" };
+        return { ok: true, target: { kind: "account", mailbox, entraTenantId: tenant.entraTenantId.toLowerCase(), ref: null, label: tenant.label, identityAttribute } };
       }
       if (allow.ownDomains.length === 0) return { ok: false, reason: "own_mailboxes_not_configured" };
       if (!allow.ownDomains.includes(t.domain)) return { ok: false, reason: "domain_not_allowed" };
-      if (t.local !== o.local) return { ok: false, reason: "not_same_person" };
+      const identityAttribute = allow.ownDomainsIdentityAttribute ?? "objectId";
+      if (identityAttribute === "localPart" && t.local !== o.local) return { ok: false, reason: "not_same_person" };
       if (mailbox === owner) return { ok: false, reason: "target_is_source" };
-      return { ok: true, target: { kind: "account", mailbox, entraTenantId: null, ref: null, label: t.domain } };
+      return { ok: true, target: { kind: "account", mailbox, entraTenantId: null, ref: null, label: t.domain, identityAttribute } };
     }
   }
 }
@@ -209,6 +230,17 @@ export interface AccountSuggestion {
   entraTenantId: string | null;
   label: string;
   mailbox: string;
+  /** immer false: Vorschlag aus lokalem Teil × Domain; dieselbe Person prüft erst die Anlage per Graph */
+  verified: false;
+}
+
+/**
+ * Prüft den Modus gegen das Ziel: full (Betreff + Ort) in einen Team-Kalender nur mit allowFullMode.
+ * Für account/booking gibt es keine Einschränkung (eigenes Postfach bzw. keine Inhalte).
+ */
+export function fullModeAllowed(allow: SyncAllowlist, target: Pick<ResolvedTarget, "kind" | "ref">): boolean {
+  if (target.kind !== "team") return true;
+  return allow.teamCalendars.find((t) => t.id === target.ref)?.allowFullMode === true;
 }
 
 /** Vorschläge für das Dashboard: lokaler Teil des Inhabers × konfigurierte Domains (ohne das Quellpostfach) */
@@ -219,12 +251,12 @@ export function accountSuggestions(allow: SyncAllowlist, ownerUserName: string |
   const out: AccountSuggestion[] = [];
   for (const d of allow.ownDomains) {
     const m = `${local}@${d}`;
-    if (m !== owner && normalizeMailbox(m)) out.push({ entraTenantId: null, label: d, mailbox: m });
+    if (m !== owner && normalizeMailbox(m)) out.push({ entraTenantId: null, label: d, mailbox: m, verified: false });
   }
   for (const t of allow.linkedTenants) {
     for (const d of t.domains) {
       const m = `${local}@${d}`;
-      if (normalizeMailbox(m)) out.push({ entraTenantId: t.entraTenantId.toLowerCase(), label: t.label, mailbox: m });
+      if (normalizeMailbox(m)) out.push({ entraTenantId: t.entraTenantId.toLowerCase(), label: t.label, mailbox: m, verified: false });
     }
   }
   return out;

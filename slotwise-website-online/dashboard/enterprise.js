@@ -112,6 +112,8 @@
     team_not_found: "Diesen Team-Kalender gibt es nicht mehr. Bitte laden Sie die Seite neu.",
     booking_disabled: "Die Buchungsseite ist für Ihre Organisation nicht freigeschaltet.",
     owner_unknown: "Ihr Konto ist noch nicht für CalenSync freigeschaltet.",
+    identity_unverified: "Microsoft bestätigt nicht, dass dieses Postfach Ihnen gehört. Bitte wenden Sie sich an Ihre IT.",
+    full_mode_not_allowed: "Für diesen Team-Kalender ist nur „Nur belegt“ freigegeben.",
   };
 
   /** lastError einer Pipeline (Code aus dem Backend) → lesbare Meldung; unbekannt → der Code selbst */
@@ -121,6 +123,8 @@
     target_missing: "Das Ziel ist nicht mehr hinterlegt.",
     cleanup_failed: "Die Termine im Zielkalender konnten nicht entfernt werden – Ihre IT wurde benachrichtigt.",
     cleanup_target_not_allowed: "Das Ziel ist nicht mehr freigegeben; die Termine dort entfernt Ihre IT.",
+    identity_unverified: "Microsoft bestätigt nicht mehr, dass das Zielpostfach Ihnen gehört – der Abgleich ist angehalten.",
+    full_mode_not_allowed: "Für diesen Team-Kalender ist nur „Nur belegt“ freigegeben – es werden keine Inhalte mehr übertragen.",
     event_rejected: "Ein einzelner Termin wurde vom Zielkalender abgelehnt; die übrigen werden abgeglichen.",
     scope_propagation: "Die Freigabe wird gerade bei Microsoft wirksam – der Abgleich wird automatisch wiederholt.",
     transient: "Vorübergehender Fehler – der Abgleich wird automatisch wiederholt.",
@@ -229,7 +233,7 @@
           case 404: throw new CalensyncApiError("not_provisioned", "Ihr Konto ist noch nicht für CalenSync freigeschaltet", 404, rid);
           case 409: throw new CalensyncApiError("limit_reached", "Maximale Anzahl verbundener Kalender erreicht", 409, rid);
           case 400: case 413: case 415: case 422: throw new CalensyncApiError("invalid_request", (reasonMsg || lookup(REQUEST_ERRORS, code) || (code.startsWith("unknown_field:target") ? REQUEST_ERRORS.invalid_target : null)) || `Eingabe abgelehnt (${code || res.status})`, res.status, rid, code || null);
-          case 429: case 503: throw new CalensyncApiError("unavailable", "CalenSync ist gerade ausgelastet – bitte gleich erneut versuchen", res.status, rid);
+          case 429: case 503: throw new CalensyncApiError("unavailable", code === "identity_check_unavailable" ? "Die Prüfung bei Microsoft ist gerade nicht möglich – bitte gleich erneut versuchen." : "CalenSync ist gerade ausgelastet – bitte gleich erneut versuchen", res.status, rid, code || null);
           default: throw new CalensyncApiError("unexpected", `Unerwartete Antwort ${res.status}`, res.status, rid);
         }
       }
@@ -318,10 +322,10 @@
     const accountAllowed = Boolean(t.account && t.account.allowed === true);
     const accounts = accountAllowed && Array.isArray(t.account.suggestions)
       ? t.account.suggestions.filter((x) => x && str(x.mailbox, 320)).slice(0, 50)
-        .map((x) => ({ kind: "account", mailbox: str(x.mailbox, 320), entraTenantId: str(x.entraTenantId, 64) || null, label: str(x.label, 120) || str(x.mailbox, 320) }))
+        .map((x) => ({ kind: "account", mailbox: str(x.mailbox, 320), entraTenantId: str(x.entraTenantId, 64) || null, label: str(x.label, 120) || str(x.mailbox, 320), verified: x.verified !== false }))
       : [];
     const teams = (Array.isArray(t.team) ? t.team : []).filter((x) => x && str(x.id, 128)).slice(0, 100)
-      .map((x) => ({ kind: "team", teamId: str(x.id, 128), label: str(x.label, 120) || str(x.id, 128) }));
+      .map((x) => ({ kind: "team", teamId: str(x.id, 128), label: str(x.label, 120) || str(x.id, 128), fullMode: x.fullMode === true }));
     const booking = Boolean(t.booking && t.booking.enabled === true);
     return { accountAllowed, accounts, teams, booking, any: accounts.length > 0 || teams.length > 0 || booking };
   }
@@ -393,7 +397,7 @@
         <fieldset>
           <legend class="text-sm font-medium text-slate-800">Wohin soll Ihr Kalender abgeglichen werden?</legend>
           ${t.accountAllowed ? group("Zweites Konto", t.accounts.length
-            ? t.accounts.map((a, i) => radio(`a${i}`, isSel(`a${i}`), a.label, a.mailbox !== a.label ? a.mailbox : "")).join("")
+            ? t.accounts.map((a, i) => radio(`a${i}`, isSel(`a${i}`), a.label, [a.mailbox !== a.label ? a.mailbox : "", a.verified ? "" : "Beim Verbinden wird bei Microsoft geprüft, ob das Postfach Ihnen gehört."].filter(Boolean).join(" · "))).join("")
             : radio("", false, "Kein zweites Konto hinterlegt", "Ihre IT hat noch kein Zielkonto für Sie eingetragen. Bitte wenden Sie sich an sie.", true)) : ""}
           ${t.teams.length ? group("Team-Kalender", t.teams.map((x, i) => radio(`t${i}`, isSel(`t${i}`), x.label, "")).join("")) : ""}
           ${t.booking ? group("Buchungsseite", radio("b", isSel("b"), "Buchungsseite", "Zu belegten Zeiten bietet Ihre Buchungsseite keine Termine an.")) : ""}
@@ -481,6 +485,19 @@
       renderError(err);
     }
   }
+  function syncModeAvailability(form) {
+    const chosen = form.querySelector("input[name=syncTarget]:checked");
+    const t = chosen ? pickTarget(chosen.value) : null;
+    const full = form.querySelector("input[name=mode][value=full]");
+    if (!full) return;
+    const blocked = Boolean(t && t.kind === "team" && !t.fullMode);
+    full.disabled = blocked;
+    full.closest("label").classList.toggle("text-slate-400", blocked);
+    if (blocked && full.checked) form.querySelector("input[name=mode][value=busy]").checked = true;
+  }
+  box.addEventListener("change", (e) => { const f = e.target.closest("#m365-form"); if (f) syncModeAvailability(f); });
+  new MutationObserver(() => { const f = $("#m365-form"); if (f) syncModeAvailability(f); }).observe(box, { childList: true, subtree: true });
+
   box.addEventListener("submit", async (e) => {
     if (e.target.id !== "m365-form") return;
     e.preventDefault();
@@ -491,6 +508,7 @@
     const target = pickTarget(v.target);
     const again = (msg) => { $("#m365-create").innerHTML = createForm(msg, v); };
     if (!target) return again("Bitte wählen Sie aus, wohin Ihr Kalender abgeglichen werden soll.");
+    if (target.kind === "team" && !target.fullMode && mode === "full") return again(TARGET_REASONS.full_mode_not_allowed);
     if (mode === "busy" && (!label || /[\u0000-\u001f<>]/.test(label))) return again("Bitte einen Titel mit 1 bis 64 Zeichen ohne Sonderzeichen wie < oder > angeben.");
     const req = mode === "busy" ? { target, mode, busyLabel: label } : { target, mode };
     // Gleiche Angaben → gleicher Key (keine Doppelanlage). Neuer Key nur, wenn der Server den letzten Versuch klar

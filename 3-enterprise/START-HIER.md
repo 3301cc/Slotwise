@@ -24,6 +24,8 @@ Details zu jedem Schritt stehen in `DEPLOYMENT.md`. Diese Seite ist nur die Reih
 4. **Datenbank:** Bootstrap-Task, dann Migrator-Task (Abschnitt 1, Schritte 2–3). Migrationen `core/migrations/000–007` (001 legt das Basisschema an, 007 den Kalenderabgleich).
 5. **DNS:** `acme.calensync.de` als CNAME auf `terraform output -raw alb_dns_name`.
 6. **Entra:** API-App (`Sync.Read`, `Sync.Write`) + SPA-App fürs Dashboard (Abschnitt 3).
+   Für zweite Konten (Ziel `account`) zusätzlich `User.Read.All` für die Graph-App – im eigenen und in jedem verknüpften
+   Mandanten (Prüfung „dieselbe Person“, DEPLOYMENT.md, Abschnitt „Kalenderabgleich“).
 7. **Website (statische Seite in `slotwise-website-online/`, schon angebunden):**
    - In `slotwise-website-online/site-config.js` die fünf Werte eintragen: `CALENSYNC_API`, `ENTRA_TENANT_ID`,
      `ENTRA_SPA_CLIENT_ID`, `CALENSYNC_API_SCOPE`, `CALENSYNC_API_WRITE_SCOPE` (alle öffentlich, kein Secret, kein Neubau nötig)

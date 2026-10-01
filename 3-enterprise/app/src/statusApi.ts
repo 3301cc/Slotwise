@@ -38,7 +38,8 @@ export interface StatusRepo {
 
 export interface SyncTargetsResponse {
   account: { allowed: boolean; suggestions: AccountSuggestion[] };
-  team: Array<{ id: string; label: string }>;
+  /** fullMode: Betreff + Ort dürfen in diesen Team-Kalender (allowFullMode) */
+  team: Array<{ id: string; label: string; fullMode: boolean }>;
   booking: { enabled: boolean };
 }
 
@@ -52,7 +53,7 @@ export function syncTargetsFor(allow: SyncAllowlist, ownerUserName: string): Syn
   const suggestions = accountSuggestions(allow, ownerUserName);
   return {
     account: { allowed: suggestions.length > 0, suggestions },
-    team: allow.teamCalendars.map((t) => ({ id: t.id, label: t.label })),
+    team: allow.teamCalendars.map((t) => ({ id: t.id, label: t.label, fullMode: t.allowFullMode === true })),
     booking: { enabled: allow.bookingEnabled },
   };
 }

@@ -20,3 +20,4 @@ export * from "./syncTargets.js";
 export * from "./syncWorker.js";
 export * from "./pgSyncRepo.js";
 export * from "./cleanupWorker.js";
+export * from "./identity.js";

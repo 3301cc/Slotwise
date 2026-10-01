@@ -12,7 +12,7 @@ import { EntraTokenVerifier } from "../src/entraAuth.js";
 import { createAppServer } from "../src/server.js";
 import {
   PrismaPipelineStore, parseCreatePipelineBody, parseIdempotencyKey,
-  type CreatePipelineInput, type CreatePipelineResult, type EndPipelineResult, type PipelineStore,
+  type CreatePipelineInput, type CreatePipelineResult, type EndPipelineResult, type IdentityCheck, type PipelineStore,
 } from "../src/pipelineStore.js";
 import { InMemoryDelayedJobQueue, type FetchLike } from "../../core/src/index.js";
 import { MemoryScimStore } from "../../scim/src/memoryStore.js";
@@ -135,8 +135,17 @@ const ALLOW: SyncAllowlist = {
   homeEntraTenantId: HOME,
   ownDomains: ["acme.example", "acme-alias.example"],
   linkedTenants: [{ entraTenantId: LINKED, label: "Acme Tochter GmbH", domains: ["tochter.example"] }],
-  teamCalendars: [{ id: "vertrieb", mailbox: "vertrieb@acme.example", label: "Vertrieb" }],
+  teamCalendars: [
+    { id: "vertrieb", mailbox: "vertrieb@acme.example", label: "Vertrieb", allowFullMode: true },
+    { id: "empfang", mailbox: "empfang@acme.example", label: "Empfang" },
+  ],
   bookingEnabled: true,
+};
+/** Fake-Graph-Prüfung "dieselbe Person": nur Max' Postfächer gehören Max */
+const identityCalls: Array<{ mailbox: string; attribute: string }> = [];
+const verifier: IdentityCheck = async (_t, subj) => {
+  identityCalls.push({ mailbox: subj.mailbox, attribute: subj.attribute });
+  return subj.mailbox.startsWith("max.muster@") ? { kind: "verified", attribute: subj.attribute } : { kind: "rejected", why: "different_person" };
 };
 let seq = 0;
 const ids = () => `pl-${++seq}`;
@@ -146,7 +155,7 @@ const ids = () => `pl-${++seq}`;
 // ---------------------------------------------------------------------------------------------------
 test("Store: Happy Path – Sperre vor jeder Prüfung, Pipeline + Handshake-Job in derselben Transaktion", async () => {
   const st = state();
-  const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW).createPipeline(input());
+  const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW, verifier).createPipeline(input());
   assert.equal(r.kind, "created");
   assert.deepEqual(st.calls, [
     "user.findFirst:any",          // Vorab-Lookup nur für den Sperrschlüssel
@@ -167,7 +176,7 @@ test("Store: Happy Path – Sperre vor jeder Prüfung, Pipeline + Handshake-Job 
 
 test("Store: gleicher Idempotency-Key → Replay ohne zweite Pipeline; andere Nutzlast → Konflikt", async () => {
   const st = state();
-  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW);
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW, verifier);
   const a = await store.createPipeline(input());
   const b = await store.createPipeline(input());
   assert.equal(a.kind, "created");
@@ -186,7 +195,7 @@ test("Store: Limit greift exakt, revoked zählt nicht mit", async () => {
       { id: "r1", tenantId: "acme", ownerUserId: "u-1", status: "revoked", mode: "busy", busyLabel: null, idempotencyKey: null },
     ],
   });
-  const store = new PrismaPipelineStore(fakePrisma(st), 3, ids, ALLOW);
+  const store = new PrismaPipelineStore(fakePrisma(st), 3, ids, ALLOW, verifier);
   assert.equal((await store.createPipeline(input({ idempotencyKey: "key-0000000000000003" }))).kind, "created");
   assert.deepEqual(await store.createPipeline(input({ idempotencyKey: "key-0000000000000004" })), { kind: "limit_reached", limit: 3 });
   assert.equal(st.jobs.length, 1);
@@ -194,37 +203,37 @@ test("Store: Limit greift exakt, revoked zählt nicht mit", async () => {
 
 test("Store: unbekannt, gelöscht, deaktiviert – und Deaktivierung zwischen Vorab-Lookup und Sperre", async () => {
   const unknown = state();
-  assert.equal((await new PrismaPipelineStore(fakePrisma(unknown), 5, ids, ALLOW).createPipeline(input({ entraObjectId: "oid-fremd" }))).kind, "user_not_provisioned");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(unknown), 5, ids, ALLOW, verifier).createPipeline(input({ entraObjectId: "oid-fremd" }))).kind, "user_not_provisioned");
   assert.deepEqual(unknown.calls, ["user.findFirst:any"], "keine Transaktion für Unbekannte");
 
   const tomb = state();
   tomb.users[0]!.deletionRequestedAt = new Date();
-  assert.equal((await new PrismaPipelineStore(fakePrisma(tomb), 5, ids, ALLOW).createPipeline(input())).kind, "user_not_provisioned");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(tomb), 5, ids, ALLOW, verifier).createPipeline(input())).kind, "user_not_provisioned");
 
   const inactive = state();
   inactive.users[0]!.active = false;
-  assert.equal((await new PrismaPipelineStore(fakePrisma(inactive), 5, ids, ALLOW).createPipeline(input())).kind, "user_not_provisioned");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(inactive), 5, ids, ALLOW, verifier).createPipeline(input())).kind, "user_not_provisioned");
   assert.equal(inactive.pipelines.length, 0);
 
   // Race: Vorab-Lookup sieht den User aktiv, SCIM deaktiviert ihn, bevor wir die Sperre bekommen
   const race = state();
   race.afterLock = () => { race.users[0]!.active = false; };
-  assert.equal((await new PrismaPipelineStore(fakePrisma(race), 5, ids, ALLOW).createPipeline(input())).kind, "user_not_provisioned");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(race), 5, ids, ALLOW, verifier).createPipeline(input())).kind, "user_not_provisioned");
   assert.deepEqual([race.pipelines.length, race.jobs.length], [0, 0]);
 });
 
 test("Store: Lock-Timeout wird wiederholt, danach StoreBusyError; fremde Fehler sofort durchgereicht", async () => {
   const lockTimeout = Object.assign(new Error("canceling statement due to lock timeout"), { code: "P2010", meta: { code: "55P03" } });
   const once = state({ failTx: (n) => (n === 1 ? lockTimeout : undefined) });
-  assert.equal((await new PrismaPipelineStore(fakePrisma(once), 5, ids, ALLOW).createPipeline(input())).kind, "created");
+  assert.equal((await new PrismaPipelineStore(fakePrisma(once), 5, ids, ALLOW, verifier).createPipeline(input())).kind, "created");
   assert.equal(once.calls.filter((c) => c.startsWith("tx:")).length, 2);
 
   const always = state({ failTx: () => lockTimeout });
-  await assert.rejects(new PrismaPipelineStore(fakePrisma(always), 5, ids, ALLOW).createPipeline(input()), StoreBusyError);
+  await assert.rejects(new PrismaPipelineStore(fakePrisma(always), 5, ids, ALLOW, verifier).createPipeline(input()), StoreBusyError);
   assert.equal(always.calls.filter((c) => c.startsWith("tx:")).length, 3);
 
   const other = state({ failTx: () => new Error("connection refused") });
-  await assert.rejects(new PrismaPipelineStore(fakePrisma(other), 5, ids, ALLOW).createPipeline(input()), /connection refused/);
+  await assert.rejects(new PrismaPipelineStore(fakePrisma(other), 5, ids, ALLOW, verifier).createPipeline(input()), /connection refused/);
   assert.equal(other.calls.filter((c) => c.startsWith("tx:")).length, 1);
 });
 
@@ -442,14 +451,14 @@ test("Route: CORS – Preflight erlaubt Idempotency-Key nur für die Frontend-Do
 // ---------------------------------------------------------------------------------------------------
 test("Store: Ziel wird NACH Sperre + Nutzerprüfung gegen die Allowlist geprüft; Team-Postfach kommt aus der Config", async () => {
   const st = state();
-  const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW).createPipeline(input());
+  const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW, verifier).createPipeline(input());
   assert.equal(r.kind, "created");
   assert.deepEqual(r.kind === "created" && r.pipeline.target, { kind: "team", label: "Vertrieb" });
   const row = st.pipelines[0] as unknown as Record<string, unknown>;
   assert.deepEqual([row.targetKind, row.targetMailbox, row.targetEntraTenantId, row.targetRef], ["team", "vertrieb@acme.example", null, "vertrieb"]);
 
   const linked = state();
-  const acc = await new PrismaPipelineStore(fakePrisma(linked), 5, ids, ALLOW).createPipeline(input({
+  const acc = await new PrismaPipelineStore(fakePrisma(linked), 5, ids, ALLOW, verifier).createPipeline(input({
     target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED } }));
   assert.deepEqual(acc.kind === "created" && acc.pipeline.target, { kind: "account", label: "Acme Tochter GmbH" });
   const lrow = linked.pipelines[0] as unknown as Record<string, unknown>;
@@ -458,7 +467,7 @@ test("Store: Ziel wird NACH Sperre + Nutzerprüfung gegen die Allowlist geprüft
 
 test("Store: fremdes oder nicht freigegebenes Ziel → target_not_allowed, keine Pipeline, kein Job", async () => {
   const cases: Array<[CreatePipelineInput["target"], string, SyncAllowlist?]> = [
-    [{ kind: "account", mailbox: "eva.chefin@tochter.example", entraTenantId: LINKED }, "not_same_person"],
+    [{ kind: "account", mailbox: "eva.chefin@tochter.example", entraTenantId: LINKED }, "identity_unverified"],
     [{ kind: "account", mailbox: "max.muster@evil.example", entraTenantId: LINKED }, "domain_not_allowed"],
     [{ kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: "aaaaaaaa-0000-0000-0000-000000000000" }, "tenant_not_linked"],
     [{ kind: "account", mailbox: "max.muster@acme.example", entraTenantId: null }, "target_is_source"],
@@ -469,10 +478,11 @@ test("Store: fremdes oder nicht freigegebenes Ziel → target_not_allowed, keine
   ];
   for (const [target, reason, allow] of cases) {
     const st = state();
-    const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, allow ?? ALLOW).createPipeline(input({ target }));
+    const r = await new PrismaPipelineStore(fakePrisma(st), 5, ids, allow ?? ALLOW, verifier).createPipeline(input({ target }));
     assert.deepEqual(r, { kind: "target_not_allowed", reason }, JSON.stringify(target));
     assert.deepEqual([st.pipelines.length, st.jobs.length], [0, 0]);
-    assert.deepEqual(st.calls.slice(0, 5), ["user.findFirst:any", "tx:ReadCommitted", "lock_timeout", "advisory_lock:acme/u-1", "user.findFirst:active"], "Prüfung erst nach der Sperre");
+    // Vorprüfung (inkl. Graph) OHNE Sperre und ohne Transaktion; unter der Sperre wird nur erneut aufgelöst
+    assert.deepEqual(st.calls, ["user.findFirst:any"], "abgelehnt, bevor eine Sperre genommen wird");
   }
   // ohne Allowlist (Default) ist gar nichts wählbar
   const none = state();
@@ -481,7 +491,7 @@ test("Store: fremdes oder nicht freigegebenes Ziel → target_not_allowed, keine
 
 test("Store: gleicher Key mit anderem Ziel → Konflikt; gleiches Ziel → Replay", async () => {
   const st = state();
-  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW);
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW, verifier);
   assert.equal((await store.createPipeline(input())).kind, "created");
   assert.equal((await store.createPipeline(input())).kind, "replayed");
   assert.equal((await store.createPipeline(input({ target: { kind: "booking" } }))).kind, "idempotency_conflict");
@@ -522,7 +532,7 @@ test("Store: endPipeline – Sperre zuerst, nur eigene Pipeline, revoked + Berei
       { tenantId: "acme", pipelineId: "zweite-eigene", stopRequestedAt: null, stoppedAt: null },
     ],
   });
-  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW);
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW, verifier);
   const r = await store.endPipeline({ tenantId: "acme", entraObjectId: "oid-42", pipelineId: "mine" });
   assert.deepEqual(r, { kind: "ended", pipeline: { id: "mine", status: "revoked", cleanup: "pending" } });
   assert.deepEqual(st.calls, ["user.findFirst:any", "tx:ReadCommitted", "lock_timeout", "advisory_lock:acme/u-1", "user.findFirst:active",
@@ -575,5 +585,52 @@ test("Route: DELETE /me/pipelines/{id} → 202/200/404, nur mit Sync.Write, CORS
     const pre = await post(port, { "Access-Control-Request-Method": "DELETE", "Access-Control-Request-Headers": "authorization" }, undefined, "OPTIONS");
     assert.equal(pre.status, 204);
     assert.match(String(pre.headers["access-control-allow-methods"]), /DELETE/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Review-Regressionen #2 (dieselbe Person per Graph) und #5 (full-Modus nur mit allowFullMode)
+// ---------------------------------------------------------------------------------------------------
+test("Review #2: zweites Konto mit gleichem lokalen Teil, aber anderer Person → 422 identity_unverified; Graph vorübergehend weg → identity_unavailable", async () => {
+  // Jana Schmidt will auf jana@acme-alias.example (gehört Jana Weber) – früher reichte der gleiche lokale Teil
+  const st = state();
+  st.users[0]!.userName = "jana@acme.example";
+  const graph: IdentityCheck = async (_t, subj) =>
+    subj.ownerObjectId === "oid-42" && subj.mailbox === "jana@acme-alias.example" ? { kind: "rejected", why: "different_person" } : { kind: "verified", attribute: subj.attribute };
+  const seen: unknown[] = [];
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW, async (t, subj) => { seen.push(subj); return graph(t, subj); });
+  const r = await store.createPipeline(input({ target: { kind: "account", mailbox: "jana@acme-alias.example", entraTenantId: null } }));
+  assert.deepEqual(r, { kind: "target_not_allowed", reason: "identity_unverified" });
+  assert.deepEqual(seen, [{ ownerObjectId: "oid-42", mailbox: "jana@acme-alias.example", entraTenantId: null, attribute: "objectId" }]);
+  assert.deepEqual([st.pipelines.length, st.jobs.length], [0, 0]);
+
+  // ohne Prüfer keine account-Ziele (außer Opt-in localPart)
+  assert.deepEqual(await new PrismaPipelineStore(fakePrisma(state()), 5, ids, ALLOW).createPipeline(input({ target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED } })),
+    { kind: "target_not_allowed", reason: "identity_unverified" });
+  // Graph 503 → nie erlauben, 503 mit Retry-After
+  const down = new PrismaPipelineStore(fakePrisma(state()), 5, ids, ALLOW, async () => ({ kind: "unavailable", status: 503, body: "", retryAfter: "17" }));
+  assert.deepEqual(await down.createPipeline(input({ target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED } })),
+    { kind: "identity_unavailable", retryAfterSeconds: 17 });
+  // bestätigt → Zeitpunkt + Merkmal gespeichert (nie der Wert)
+  const ok = state();
+  const at = new Date("2026-10-01T09:00:00Z");
+  await new PrismaPipelineStore(fakePrisma(ok), 5, ids, ALLOW, verifier, () => at).createPipeline(input({ target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED } }));
+  const row = ok.pipelines[0] as unknown as Record<string, unknown>;
+  assert.deepEqual([row.identityVerifiedAt, row.identityAttribute], [at, "employeeId"]);
+});
+
+test("Review #5: full-Modus in einen Team-Kalender nur mit allowFullMode → sonst 422 full_mode_not_allowed", async () => {
+  const st = state();
+  const store = new PrismaPipelineStore(fakePrisma(st), 5, ids, ALLOW, verifier);
+  assert.deepEqual(await store.createPipeline(input({ mode: "full", busyLabel: null, target: { kind: "team", teamId: "empfang" } })),
+    { kind: "target_not_allowed", reason: "full_mode_not_allowed" });
+  assert.equal((await store.createPipeline(input({ mode: "busy", target: { kind: "team", teamId: "empfang" } }))).kind, "created");
+  assert.equal((await store.createPipeline(input({ idempotencyKey: "key-0000000000000077", mode: "full", busyLabel: null, target: { kind: "team", teamId: "vertrieb" } }))).kind, "created");
+});
+
+test("Route: identity_unavailable → 503 identity_check_unavailable mit Retry-After", async () => {
+  await withApi(mockStore({ kind: "identity_unavailable", retryAfterSeconds: 17 }).store, async (port) => {
+    const r = await post(port, ok(), JSON.stringify({ mode: "busy", target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED } }));
+    assert.deepEqual([r.status, r.json.error, r.headers["retry-after"]], [503, "identity_check_unavailable", "17"]);
   });
 });

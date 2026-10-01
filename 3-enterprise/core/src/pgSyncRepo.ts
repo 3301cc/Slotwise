@@ -32,13 +32,17 @@ type CtxRow = {
   source_delta_link: string | null;
   source_delta_started_at: Date | string | null;
   created_at: Date | string | null;
+  identity_verified_at: Date | string | null;
+  identity_attribute: string | null;
+  effective_mode: string | null;
 };
 
-type MapDbRow = { source_event_id: string; target_event_id: string | null; change_key: string | null; start_at: Date | string; end_at: Date | string };
+type MapDbRow = { source_event_id: string; target_event_id: string | null; change_key: string | null; start_at: Date | string; end_at: Date | string; archived: boolean | string };
 const toMap = (r: MapDbRow): MapRow => ({
   sourceEventId: r.source_event_id, targetEventId: r.target_event_id, changeKey: r.change_key,
-  startAt: new Date(r.start_at), endAt: new Date(r.end_at),
+  startAt: new Date(r.start_at), endAt: new Date(r.end_at), archived: bool(r.archived),
 });
+const MAP_COLS = `source_event_id, target_event_id, change_key, start_at, end_at, (archived_at IS NOT NULL) AS archived`;
 
 export interface BusyInterval {
   start: Date;
@@ -46,9 +50,20 @@ export interface BusyInterval {
 }
 
 export interface BusyRepo {
-  /** Rohintervalle aller aktiven booking-Pipelines des Mandanten, die [from, to) überlappen – ohne Nutzerbezug */
-  busyIntervals(tenantId: string, from: Date, to: Date, limit?: number): Promise<BusyInterval[]>;
+  /**
+   * ZUSAMMENGEFASSTE Belegt-Intervalle aller aktiven booking-Pipelines des Mandanten, auf [from, to) beschnitten,
+   * ohne Nutzerbezug. Mehr als maxIntervals zusammengefasste Intervalle → BusyTooManyError (nie stilles Abschneiden).
+   */
+  busyIntervals(tenantId: string, from: Date, to: Date, maxIntervals?: number): Promise<BusyInterval[]>;
 }
+
+/** Ergebnis wäre größer als die harte Obergrenze → API antwortet 503 busy_too_many */
+export class BusyTooManyError extends Error {
+  constructor(readonly max: number) {
+    super(`mehr als ${max} Belegt-Intervalle`);
+  }
+}
+export const BUSY_MAX_INTERVALS = 5_000;
 
 export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, CleanupRepo, PendingCleanups {
   constructor(private readonly pool: PgLike) {}
@@ -101,7 +116,8 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
       `SELECT p.status, (u.active AND u.deletion_requested_at IS NULL) AS owner_active,
               u.external_id AS entra_object_id, u.user_name, p.mode, p.busy_label,
               p.target_kind, p.target_mailbox, p.target_entra_tenant_id, p.target_ref,
-              p.source_delta_link, p.source_delta_started_at, p.created_at
+              p.source_delta_link, p.source_delta_started_at, p.created_at,
+              p.identity_verified_at, p.identity_attribute, p.effective_mode
          FROM pipelines p JOIN scim_users u ON u.id = p.owner_user_id AND u.tenant_id = p.tenant_id
         WHERE p.tenant_id = $1 AND p.id = $2`,
       [tenantId, pipelineId],
@@ -119,6 +135,9 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
       deltaLink: r.source_delta_link,
       deltaStartedAt: date(r.source_delta_started_at),
       createdAt: date(r.created_at),
+      identityVerifiedAt: date(r.identity_verified_at),
+      identityAttribute: r.identity_attribute,
+      effectiveMode: r.effective_mode === "full" || r.effective_mode === "busy" ? r.effective_mode : null,
     };
   }
 
@@ -143,7 +162,7 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
   async getMappings(pipelineId: string, sourceEventIds: readonly string[]): Promise<Map<string, MapRow>> {
     if (sourceEventIds.length === 0) return new Map();
     const res = await this.pool.query<MapDbRow>(
-      `SELECT source_event_id, target_event_id, change_key, start_at, end_at FROM sync_event_map
+      `SELECT ${MAP_COLS} FROM sync_event_map
         WHERE pipeline_id = $1 AND source_event_id = ANY($2::text[])`,
       [pipelineId, [...sourceEventIds]],
     );
@@ -152,7 +171,7 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
 
   async listMappings(pipelineId: string): Promise<MapRow[]> {
     const res = await this.pool.query<MapDbRow>(
-      `SELECT source_event_id, target_event_id, change_key, start_at, end_at FROM sync_event_map WHERE pipeline_id = $1`,
+      `SELECT ${MAP_COLS} FROM sync_event_map WHERE pipeline_id = $1`,
       [pipelineId],
     );
     return res.rows.map(toMap);
@@ -178,8 +197,22 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
          FROM pipelines p WHERE p.tenant_id = $1 AND p.id = $2
        ON CONFLICT (pipeline_id, source_event_id) DO UPDATE
          SET target_event_id = EXCLUDED.target_event_id, change_key = EXCLUDED.change_key,
-             start_at = EXCLUDED.start_at, end_at = EXCLUDED.end_at, updated_at = now()`,
+             start_at = EXCLUDED.start_at, end_at = EXCLUDED.end_at, updated_at = now(), archived_at = NULL`,
       [tenantId, pipelineId, row.sourceEventId, row.targetEventId, row.changeKey, row.startAt.toISOString(), row.endAt.toISOString()],
+    );
+  }
+
+  async archiveMapping(pipelineId: string, sourceEventId: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE sync_event_map SET archived_at = now(), updated_at = now() WHERE pipeline_id = $1 AND source_event_id = $2 AND archived_at IS NULL`,
+      [pipelineId, sourceEventId],
+    );
+  }
+
+  async markIdentityVerified(tenantId: string, pipelineId: string, attribute: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE pipelines SET identity_verified_at = now(), identity_attribute = $3 WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, pipelineId, attribute],
     );
   }
 
@@ -190,15 +223,16 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
   async saveSyncState(
     tenantId: string,
     pipelineId: string,
-    s: { deltaLink: string | null; deltaStartedAt: Date | null; synced: boolean; errorCode?: string | null },
+    s: { deltaLink: string | null; deltaStartedAt: Date | null; synced: boolean; errorCode?: string | null; effectiveMode?: "busy" | "full" },
   ): Promise<void> {
     await this.pool.query(
       `UPDATE pipelines
           SET source_delta_link = $3, source_delta_started_at = $4::timestamptz,
               last_synced_at = CASE WHEN $5 THEN now() ELSE last_synced_at END,
-              last_sync_error = CASE WHEN $5 THEN $6 ELSE last_sync_error END
+              last_sync_error = CASE WHEN $5 THEN $6 ELSE last_sync_error END,
+              effective_mode = COALESCE($7, effective_mode)
         WHERE tenant_id = $1 AND id = $2`,
-      [tenantId, pipelineId, s.deltaLink, s.deltaStartedAt ? s.deltaStartedAt.toISOString() : null, s.synced, s.errorCode ?? null],
+      [tenantId, pipelineId, s.deltaLink, s.deltaStartedAt ? s.deltaStartedAt.toISOString() : null, s.synced, s.errorCode ?? null, s.effectiveMode ?? null],
     );
   }
 
@@ -232,19 +266,30 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
     return res.rowCount ?? 0;
   }
 
-  async busyIntervals(tenantId: string, from: Date, to: Date, limit = 20_000): Promise<BusyInterval[]> {
+  /**
+   * Zusammenfassen IN SQL (range_agg, PostgreSQL ≥ 14): überlappende und angrenzende Intervalle aller Pipelines
+   * werden zu einem Multirange verschmolzen – das Ergebnis ist vollständig, egal wie viele Termine es gibt.
+   * Archivierte Zuordnungen (aus dem Sync-Fenster gefallen) zählen nicht. Harte Obergrenze nur für die AUSGABE:
+   * mehr als maxIntervals → BusyTooManyError (503), nie stilles Abschneiden.
+   */
+  async busyIntervals(tenantId: string, from: Date, to: Date, maxIntervals = BUSY_MAX_INTERVALS): Promise<BusyInterval[]> {
     const res = await this.pool.query<{ start_at: Date | string; end_at: Date | string }>(
-      `SELECT m.start_at, m.end_at
-         FROM pipelines p
-         JOIN scim_users u ON u.id = p.owner_user_id AND u.tenant_id = p.tenant_id
-         JOIN sync_event_map m ON m.pipeline_id = p.id
-        WHERE p.tenant_id = $1 AND m.tenant_id = $1 AND p.target_kind = 'booking' AND p.status = 'active'
-          AND u.active AND u.deletion_requested_at IS NULL
-          AND m.start_at < $3::timestamptz AND m.end_at > $2::timestamptz
-        ORDER BY m.start_at
+      `SELECT lower(r) AS start_at, upper(r) AS end_at
+         FROM (
+           SELECT unnest(range_agg(tstzrange(greatest(m.start_at, $2::timestamptz), least(m.end_at, $3::timestamptz), '[)'))) AS r
+             FROM pipelines p
+             JOIN scim_users u ON u.id = p.owner_user_id AND u.tenant_id = p.tenant_id
+             JOIN sync_event_map m ON m.pipeline_id = p.id
+            WHERE p.tenant_id = $1 AND m.tenant_id = $1 AND p.target_kind = 'booking' AND p.status = 'active'
+              AND u.active AND u.deletion_requested_at IS NULL AND m.archived_at IS NULL
+              AND m.start_at < $3::timestamptz AND m.end_at > $2::timestamptz
+         ) merged
+        WHERE NOT isempty(r)
+        ORDER BY 1
         LIMIT $4`,
-      [tenantId, from.toISOString(), to.toISOString(), limit],
+      [tenantId, from.toISOString(), to.toISOString(), maxIntervals + 1],
     );
+    if (res.rows.length > maxIntervals) throw new BusyTooManyError(maxIntervals);
     return res.rows.map((r) => ({ start: new Date(r.start_at), end: new Date(r.end_at) }));
   }
 }

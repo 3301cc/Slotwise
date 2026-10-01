@@ -28,6 +28,8 @@ import {
   SyncWorker,
   TargetCleanupWorker,
   TeardownJobWorker,
+  createGraphCaller,
+  verifyIdentity,
   type AppTokenProvider,
   type FetchLike,
 } from "../../core/src/index.js";
@@ -150,7 +152,9 @@ const app = createAppServer({
   cors: createCorsPolicy(cfg.corsAllowedOrigins),
   auth: new EntraTokenVerifier({ tenantId: cfg.secrets.entraTenantId, audiences: cfg.api.audiences, requiredScope: cfg.api.requiredScope, fetchFn }),
   status: statusRepo,
-  pipelines: new PrismaPipelineStore(prisma, Number(process.env.MAX_PIPELINES_PER_USER ?? "5"), undefined, syncAllowlist),
+  pipelines: new PrismaPipelineStore(prisma, Number(process.env.MAX_PIPELINES_PER_USER ?? "5"), undefined, syncAllowlist,
+    // "dieselbe Person" per Graph bei der Anlage (account-Ziele); Token je Entra-Mandant
+    (tenantId, subj) => verifyIdentity(createGraphCaller(graphTokens, fetchFn, tenantId, 10_000, async () => {}), subj)),
   syncTargets: { allowlist: syncAllowlist, owners: statusRepo },
   booking: { token: cfg.secrets.bookingApiToken, repo: syncRepo },
   writeScope: cfg.api.writeScope,

@@ -22,9 +22,9 @@
  *   409 pipeline_limit_reached
  *   413 payload_too_large   415 unsupported_media_type
  *   422 idempotency_key_reused · target_required · target_not_allowed (+ reason: tenant_not_linked | domain_not_allowed |
- *       not_same_person | target_is_source | own_mailboxes_not_configured | team_not_found | booking_disabled | owner_unknown)
- *       · range_too_large
- *   503 temporarily_unavailable (+ Retry-After)
+ *       not_same_person | target_is_source | own_mailboxes_not_configured | team_not_found | booking_disabled | owner_unknown |
+ *       identity_unverified | full_mode_not_allowed) · range_too_large
+ *   503 temporarily_unavailable (+ Retry-After) · identity_check_unavailable (+ Retry-After) · busy_too_many
  *
  * Pfade werden vor dem Routing geprüft: kodierte Punkte/Slashes oder ../ führen zu 400 – damit kann niemand
  * über /webhooks/../api an der WAF-Regel für /webhooks/ vorbei auf die API zugreifen.
@@ -43,7 +43,7 @@ import { parseCreatePipelineBody, parseIdempotencyKey, type PipelineStore } from
 import { syncTargetsFor, type OwnerLookup } from "./statusApi.js";
 import { createBookingTokenCheck, parseBusyRange } from "./availabilityApi.js";
 import type { SyncAllowlist } from "../../core/src/syncTargets.js";
-import { mergeBusyIntervals, type BusyRepo } from "../../core/src/pgSyncRepo.js";
+import { BusyTooManyError, mergeBusyIntervals, type BusyRepo } from "../../core/src/pgSyncRepo.js";
 import type { Logger, SecurityEventName } from "../../core/src/logger.js";
 
 export interface AppServerDeps {
@@ -154,7 +154,14 @@ export function createAppServer(d: AppServerDeps): AppServer {
         }
         const range = parseBusyRange(req.url ?? "");
         if (!range.ok) return json(res, range.error === "range_too_large" ? 422 : 400, { error: range.error });
-        const rows = await d.booking.repo.busyIntervals(d.tenantId, range.from, range.to);
+        let rows;
+        try {
+          rows = await d.booking.repo.busyIntervals(d.tenantId, range.from, range.to);
+        } catch (err) {
+          // Mehr zusammengefasste Intervalle als die Obergrenze: nie stilles Abschneiden
+          if (err instanceof BusyTooManyError) return json(res, 503, { error: "busy_too_many", max: err.max });
+          throw err;
+        }
         const busy = mergeBusyIntervals(rows, range.from, range.to).map((b) => ({ start: b.start.toISOString(), end: b.end.toISOString() }));
         return json(res, 200, { busy });
       }
@@ -189,6 +196,8 @@ export function createAppServer(d: AppServerDeps): AppServer {
           case "idempotency_conflict": return json(res, 422, { error: "idempotency_key_reused" });
           case "limit_reached": return json(res, 409, { error: "pipeline_limit_reached", limit: r.limit });
           case "target_not_allowed": return json(res, 422, { error: "target_not_allowed", reason: r.reason });
+          case "identity_unavailable":
+            return json(res, 503, { error: "identity_check_unavailable" }, { "Retry-After": String(r.retryAfterSeconds) });
         }
       }
       const end = /^\/api\/v1\/me\/pipelines\/([^/]+)$/.exec(path);

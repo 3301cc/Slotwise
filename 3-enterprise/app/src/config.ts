@@ -8,7 +8,10 @@
  * Deployment mit offener CORS-Policy oder Platzhalter-Secrets.
  */
 import type { TokenEntry } from "../../scim/src/auth.js";
-import { isDomain, isGuid, normalizeMailbox, TEAM_ID, type LinkedTenant, type SyncAllowlist, type TeamCalendar } from "../../core/src/syncTargets.js";
+import {
+  IDENTITY_ATTRIBUTES, isDomain, isGuid, normalizeMailbox, TEAM_ID,
+  type IdentityAttribute, type LinkedTenant, type SyncAllowlist, type TeamCalendar,
+} from "../../core/src/syncTargets.js";
 
 export interface AppConfig {
   port: number;
@@ -42,6 +45,8 @@ export interface AppSecrets {
    *   teamCalendars  Team-/Abteilungskalender: { id, mailbox, label }
    */
   ownDomains: string[];
+  /** "dieselbe Person" im eigenen Mandanten: objectId (Default) | employeeId | onPremises… | localPart (Opt-in) */
+  ownDomainsIdentityAttribute: IdentityAttribute;
   linkedTenants: LinkedTenant[];
   teamCalendars: TeamCalendar[];
   /** Statisches Bearer-Token der Buchungsseite für GET /api/v1/availability/busy; null = Buchungsseite aus */
@@ -55,6 +60,7 @@ export function syncAllowlistFrom(s: AppSecrets): SyncAllowlist {
   return {
     homeEntraTenantId: s.entraTenantId.toLowerCase(),
     ownDomains: s.ownDomains,
+    ownDomainsIdentityAttribute: s.ownDomainsIdentityAttribute,
     linkedTenants: s.linkedTenants,
     teamCalendars: s.teamCalendars,
     bookingEnabled: s.bookingApiToken !== null,
@@ -166,7 +172,9 @@ function parseSyncTargets(o: Record<string, unknown>, homeTenant: string) {
     if (e.entraTenantId.toLowerCase() === homeTenant.toLowerCase()) throw new ConfigError(`${where}: eigener Mandant gehört in ownDomains`);
     const domains = domainList(e.domains, `${where}.domains`);
     if (domains.length === 0) throw new ConfigError(`${where}.domains: mindestens eine Domain`);
-    return { entraTenantId: e.entraTenantId.toLowerCase(), label: label(e.label, `${where}.label`), domains };
+    const ia = identityAttribute(e.identityAttribute ?? "employeeId", `${where}.identityAttribute`);
+    if (ia === "objectId") throw new ConfigError(`${where}.identityAttribute: objectId gilt nur im eigenen Mandanten`);
+    return { entraTenantId: e.entraTenantId.toLowerCase(), label: label(e.label, `${where}.label`), domains, identityAttribute: ia };
   });
   if (new Set(linkedTenants.map((t) => t.entraTenantId)).size !== linkedTenants.length) throw new ConfigError("APP_CONFIG.linkedTenants: doppelter Mandant");
 
@@ -178,7 +186,8 @@ function parseSyncTargets(o: Record<string, unknown>, homeTenant: string) {
     if (typeof e.id !== "string" || !TEAM_ID.test(e.id)) throw new ConfigError(`${where}.id: [a-z0-9_-], 1–64 Zeichen`);
     const mailbox = typeof e.mailbox === "string" ? normalizeMailbox(e.mailbox) : null;
     if (!mailbox) throw new ConfigError(`${where}.mailbox: ungültige Adresse`);
-    return { id: e.id, mailbox, label: label(e.label, `${where}.label`) };
+    if (e.allowFullMode !== undefined && typeof e.allowFullMode !== "boolean") throw new ConfigError(`${where}.allowFullMode: true/false`);
+    return { id: e.id, mailbox, label: label(e.label, `${where}.label`), allowFullMode: e.allowFullMode === true };
   });
   if (new Set(teamCalendars.map((t) => t.id)).size !== teamCalendars.length) throw new ConfigError("APP_CONFIG.teamCalendars: doppelte id");
 
@@ -190,7 +199,15 @@ function parseSyncTargets(o: Record<string, unknown>, homeTenant: string) {
     bookingApiToken = o.bookingApiToken;
   }
   if (o.syncTentative !== undefined && typeof o.syncTentative !== "boolean") throw new ConfigError("APP_CONFIG.syncTentative: true/false");
-  return { ownDomains, linkedTenants, teamCalendars, bookingApiToken, syncTentative: o.syncTentative === true };
+  const ownDomainsIdentityAttribute = identityAttribute(o.ownDomainsIdentityAttribute ?? "objectId", "APP_CONFIG.ownDomainsIdentityAttribute");
+  return { ownDomains, ownDomainsIdentityAttribute, linkedTenants, teamCalendars, bookingApiToken, syncTentative: o.syncTentative === true };
+}
+
+function identityAttribute(v: unknown, where: string): IdentityAttribute {
+  if (typeof v !== "string" || !(IDENTITY_ATTRIBUTES as readonly string[]).includes(v)) {
+    throw new ConfigError(`${where}: ${IDENTITY_ATTRIBUTES.join(" | ")}`);
+  }
+  return v as IdentityAttribute;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {

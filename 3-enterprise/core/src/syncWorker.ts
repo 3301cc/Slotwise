@@ -39,7 +39,8 @@ import { createHash } from "node:crypto";
 import { classifyGraphError, type FailureCategory, type GraphFailure } from "./errorHandler.js";
 import type { GraphTokenSource } from "./appToken.js";
 import type { DelayedJobQueue, Job } from "./retryQueue.js";
-import { recheckStoredTarget, type ResolvedTarget, type StoredTarget, type SyncAllowlist } from "./syncTargets.js";
+import { fullModeAllowed, recheckStoredTarget, type ResolvedTarget, type StoredTarget, type SyncAllowlist } from "./syncTargets.js";
+import { verifyIdentity } from "./identity.js";
 import type { FetchLike } from "./types.js";
 
 export const SYNC_KIND = "pipeline.delta_sync";
@@ -70,6 +71,11 @@ export interface SyncContext {
   deltaStartedAt: Date | null;
   /** Anlage der Pipeline – Anker des 403-Propagationsfensters (neuer RBAC-Scope für Teampostfächer) */
   createdAt: Date | null;
+  /** account: letzte erfolgreiche Graph-Prüfung "dieselbe Person" und Merkmal */
+  identityVerifiedAt?: Date | null;
+  identityAttribute?: string | null;
+  /** zuletzt tatsächlich geschriebener Modus */
+  effectiveMode?: "busy" | "full" | null;
 }
 
 export interface MapRow {
@@ -79,6 +85,8 @@ export interface MapRow {
   changeKey: string | null;
   startAt: Date;
   endAt: Date;
+  /** aus dem Sync-Fenster gefallen: kein Abgleich/keine Busy-API, aber die Bereinigung löscht den Zieltermin */
+  archived?: boolean;
 }
 
 export interface SyncRepo {
@@ -92,8 +100,14 @@ export interface SyncRepo {
   findCalensyncTargetIds(tenantId: string, eventIds: readonly string[]): Promise<Set<string>>;
   upsertMapping(tenantId: string, pipelineId: string, row: MapRow): Promise<void>;
   deleteMapping(pipelineId: string, sourceEventId: string): Promise<void>;
-  /** deltaLink/Fensterbeginn setzen; synced = true → last_synced_at = now(), last_sync_error = NULL */
-  saveSyncState(tenantId: string, pipelineId: string, s: { deltaLink: string | null; deltaStartedAt: Date | null; synced: boolean; errorCode?: string | null }): Promise<void>;
+  /** Zuordnung behalten (Zieltermin existiert weiter), aber als aus dem Fenster gefallen markieren */
+  archiveMapping(pipelineId: string, sourceEventId: string): Promise<void>;
+  /** Graph hat "dieselbe Person" bestätigt (Zeitpunkt + Merkmal, nie der Wert) */
+  markIdentityVerified(tenantId: string, pipelineId: string, attribute: string): Promise<void>;
+  /** deltaLink/Fensterbeginn setzen; synced = true → last_synced_at = now(), last_sync_error = errorCode */
+  saveSyncState(tenantId: string, pipelineId: string, s: {
+    deltaLink: string | null; deltaStartedAt: Date | null; synced: boolean; errorCode?: string | null; effectiveMode?: "busy" | "full";
+  }): Promise<void>;
   setSyncError(tenantId: string, pipelineId: string, code: string | null): Promise<void>;
   setPipelineStatus(tenantId: string, pipelineId: string, status: "blocked_scope" | "config_error" | "error"): Promise<void>;
 }
@@ -106,7 +120,7 @@ const TERMINAL_STATUS: Record<string, "blocked_scope" | "config_error" | "error"
 export interface SyncAlert {
   tenantId: string;
   pipelineId: string;
-  category: FailureCategory | "target_not_allowed";
+  category: FailureCategory | "target_not_allowed" | "identity_unverified";
   reason: string;
 }
 
@@ -142,12 +156,15 @@ export interface SyncOptions {
   requestTimeoutMs: number;
   /** wartet ein zweiter Job auf die Lease, kommt er nach dieser Zeit wieder */
   leaseBusyDelayMs: number;
+  /** account: "dieselbe Person" spätestens nach dieser Zeit erneut per Graph prüfen */
+  identityMaxAgeMs: number;
 }
 
 const DAY = 24 * 60 * 60_000;
 export const DEFAULT_SYNC_OPTIONS: SyncOptions = {
   pastMs: DAY, futureMs: 90 * DAY, rewindowAfterMs: DAY, includeTentative: false, pageSize: 100, maxPages: 500,
   runBudgetMs: 8 * 60_000, leaseMs: 10 * 60_000, requestTimeoutMs: 20_000, leaseBusyDelayMs: 30_000,
+  identityMaxAgeMs: DAY,
 };
 
 export type SyncOutcome = "synced" | "dropped" | "stopped" | "busy" | "rescheduled" | "failed";
@@ -158,11 +175,15 @@ export class GraphCallError extends Error {
     super(`HTTP ${status}`);
   }
 }
+/** Lauf bewusst abgebrochen (Checkpoint) – nie als Provider-Fehler klassifizieren */
+export class RunAborted extends Error {}
 /** Pipeline nicht mehr aktiv / Ziel geändert – sofort aufhören, nichts mehr aufrufen */
-class PipelineStopped extends Error {}
-class RunBudgetExceeded extends Error {}
+class PipelineStopped extends RunAborted {}
+class RunBudgetExceeded extends RunAborted {}
 /** SIGTERM: laufenden Abgleich am nächsten Checkpoint beenden und sofort neu einstellen (Lease wird freigegeben) */
-class ShuttingDown extends Error {}
+class ShuttingDown extends RunAborted {}
+/** Graph sagt: Zielpostfach gehört nicht derselben Person (oder Merkmal leer) – nie schreiben */
+class IdentityRejected extends Error {}
 
 // ---------------------------------------------------------------------------------------------------
 // Graph-Termin → Zielblock (rein funktional)
@@ -383,6 +404,7 @@ export interface SyncStats {
   loopSkipped: number;
   rejected: number;
   pruned: number;
+  archived: number;
   resets: number;
 }
 
@@ -395,6 +417,10 @@ interface Run {
   writer: TargetWriter;
   stats: SyncStats;
   deadline: number;
+  /** tatsächlich geschriebener Modus (full → busy, wenn das Team full nicht erlaubt) */
+  mode: "busy" | "full";
+  /** Modus hat sich gegenüber dem letzten Lauf geändert → alle Zieltermine einmal neu schreiben */
+  forceRewrite: boolean;
 }
 
 const alive = (c: SyncContext | null): c is SyncContext => c !== null && c.status === "active" && c.ownerActive && !!c.ownerEntraObjectId;
@@ -483,13 +509,17 @@ export class SyncWorker {
     }
 
     const target = check.target;
+    // full in einen Team-Kalender nur mit allowFullMode; sonst inhaltsfrei schreiben (nie Inhalte)
+    const mode = ctx.mode === "full" && !fullModeAllowed(this.d.allowlist, target) ? "busy" : ctx.mode;
     const run: Run = {
-      job, tenantId: job.tenantId, pipelineId, ctx, target,
+      job, tenantId: job.tenantId, pipelineId, ctx, target, mode,
+      forceRewrite: (ctx.effectiveMode ?? null) !== null && ctx.effectiveMode !== mode,
       writer: target.kind === "booking" ? new BookingWriter() : new GraphCalendarWriter(this.caller(job.tenantId, pipelineId, ctx, target), target.mailbox ?? "", target.entraTenantId),
-      stats: { pages: 0, created: 0, updated: 0, deleted: 0, unchanged: 0, loopSkipped: 0, rejected: 0, pruned: 0, resets: 0 },
+      stats: { pages: 0, created: 0, updated: 0, deleted: 0, unchanged: 0, loopSkipped: 0, rejected: 0, pruned: 0, archived: 0, resets: 0 },
       deadline: this.now().getTime() + this.o.runBudgetMs,
     };
     try {
+      if (target.kind === "account") await this.ensureIdentity(run);
       await this.sync(run, payload.full);
       await queue.complete(job.id, workerId);
       this.d.log?.({ level: "info", msg: "sync_done", pipelineId, target: target.kind, full: payload.full, ...run.stats });
@@ -503,6 +533,15 @@ export class SyncWorker {
         await queue.complete(job.id, workerId);
         this.d.log?.({ level: "info", msg: "sync_stopped", pipelineId, ...run.stats });
         return "stopped";
+      }
+      if (err instanceof IdentityRejected) {
+        // Nicht dieselbe Person (mehr): kein einziger Schreibzugriff, sichtbar + Alarm, Admin muss handeln
+        const reason = `identity_unverified:${err.message}`;
+        await queue.fail(job.id, workerId, reason);
+        await this.d.repo.setPipelineStatus(job.tenantId, pipelineId, "config_error");
+        await this.d.repo.setSyncError(job.tenantId, pipelineId, "identity_unverified");
+        await this.d.alert({ tenantId: job.tenantId, pipelineId, category: "identity_unverified", reason });
+        return "failed";
       }
       return this.handleFailure(run, payload, err);
     } finally {
@@ -557,6 +596,23 @@ export class SyncWorker {
       () => this.checkpoint(tenantId, pipelineId, ctx, target));
   }
 
+  /**
+   * account: "dieselbe Person" per Graph – vor dem ersten Schreiben, nach Wechsel des Merkmals und spätestens
+   * alle identityMaxAgeMs. Jeder Aufruf läuft über den Checkpoint (Pipeline noch aktiv?).
+   */
+  private async ensureIdentity(run: Run): Promise<void> {
+    const attribute = run.target.identityAttribute ?? "employeeId";
+    if (attribute === "localPart") return; // Opt-in ohne Graph (syncTargets.ts)
+    const at = run.ctx.identityVerifiedAt ?? null;
+    if (at && run.ctx.identityAttribute === attribute && this.now().getTime() - at.getTime() < this.o.identityMaxAgeMs) return;
+    const verdict = await verifyIdentity(this.caller(run.tenantId, run.pipelineId, run.ctx, run.target), {
+      ownerObjectId: run.ctx.ownerEntraObjectId ?? "", mailbox: run.target.mailbox ?? "", entraTenantId: run.target.entraTenantId, attribute,
+    });
+    if (verdict.kind === "unavailable") throw new GraphCallError(verdict.status, verdict.body, verdict.retryAfter);
+    if (verdict.kind === "rejected") throw new IdentityRejected(verdict.why);
+    await this.d.repo.markIdentityVerified(run.tenantId, run.pipelineId, attribute);
+  }
+
   private initialDeltaUrl(ctx: SyncContext, now: Date): string {
     const start = new Date(now.getTime() - this.o.pastMs).toISOString();
     const end = new Date(now.getTime() + this.o.futureMs).toISOString();
@@ -571,7 +627,7 @@ export class SyncWorker {
     const prefer = `odata.maxpagesize=${this.o.pageSize}, outlook.timezone="UTC", ${IMMUTABLE}`;
     const stored = safeGraphLink(run.ctx.deltaLink);
     const stale = !run.ctx.deltaStartedAt || now.getTime() - run.ctx.deltaStartedAt.getTime() > this.o.rewindowAfterMs;
-    let fresh = full || !stored || stale;
+    let fresh = full || !stored || stale || run.forceRewrite;
     let url = fresh ? this.initialDeltaUrl(run.ctx, now) : (stored as string);
     let windowStart = new Date(now.getTime() - this.o.pastMs);
     const seen = new Set<string>();
@@ -606,26 +662,53 @@ export class SyncWorker {
     }
 
     // Frisches Delta = vollständiges Bild des Fensters: Zuordnungen, die nicht mehr vorkamen, sind gelöscht
-    // (im Fenster) oder aus dem Fenster gefallen (Vergangenheit: nur die Zuordnung vergessen, Zieltermin bleibt).
+    // (im Fenster → Zieltermin löschen) oder aus dem Fenster gefallen (Vergangenheit → ARCHIVIEREN: der Zieltermin
+    // bleibt stehen, seine ID bleibt für die Bereinigung erhalten). Archivierte werden nie neu angelegt/gelöscht.
     if (fresh) {
       for (const row of await repo.listMappings(run.pipelineId)) {
         if (seen.has(row.sourceEventId)) continue;
+        if (row.archived) {
+          if (run.forceRewrite && row.targetEventId && run.writer.kind === "graph") await this.rewriteArchived(run, row.targetEventId);
+          continue;
+        }
         if (row.endAt.getTime() < windowStart.getTime()) {
-          await repo.deleteMapping(run.pipelineId, row.sourceEventId);
-          run.stats.pruned += 1;
+          if (run.writer.kind === "booking") {
+            await repo.deleteMapping(run.pipelineId, row.sourceEventId); // Buchungsseite: es gibt keinen Zieltermin
+            run.stats.pruned += 1;
+          } else {
+            if (run.forceRewrite && row.targetEventId) await this.rewriteArchived(run, row.targetEventId);
+            await repo.archiveMapping(run.pipelineId, row.sourceEventId);
+            run.stats.archived += 1;
+          }
         } else {
           await this.removeBlock(run, row.sourceEventId, row);
         }
       }
     }
+    const downgraded = run.mode !== run.ctx.mode;
     await repo.saveSyncState(run.tenantId, run.pipelineId, {
-      deltaLink, deltaStartedAt: fresh ? now : run.ctx.deltaStartedAt, synced: true,
-      errorCode: run.stats.rejected > 0 ? "event_rejected" : null,
+      deltaLink, deltaStartedAt: fresh ? now : run.ctx.deltaStartedAt, synced: true, effectiveMode: run.mode,
+      errorCode: run.stats.rejected > 0 ? "event_rejected" : downgraded ? "full_mode_not_allowed" : null,
     });
   }
 
-  private async applyPage(run: Run, events: GraphEvent[], seen: Set<string>): Promise<void> {
-    const ids = events.map((e) => e.id).filter((id): id is string => typeof id === "string" && id !== "");
+  /** Modus-Wechsel full → busy: vergangene (archivierte) Zieltermine inhaltsfrei überschreiben (ohne Zeiten) */
+  private async rewriteArchived(run: Run, targetEventId: string): Promise<void> {
+    const body = { subject: run.ctx.busyLabel ?? DEFAULT_BUSY_LABEL, showAs: "busy", location: { displayName: "" } };
+    await run.writer.update(targetEventId, { start: new Date(0), end: new Date(0), isAllDay: false, changeKey: null, body });
+  }
+
+  private async applyPage(run: Run, page: GraphEvent[], seen: Set<string>): Promise<void> {
+    // Graph: dieselbe Ressource kann in einer Delta-Antwort mehrfach vorkommen – maßgeblich ist das letzte
+    // Vorkommen. Ohne Zusammenfassung würden zwei POSTs zwei Zieltermine anlegen (einer verwaist).
+    const last = new Map<string, GraphEvent>();
+    for (const e of page) {
+      if (typeof e.id !== "string" || e.id === "") continue;
+      last.delete(e.id);
+      last.set(e.id, e);
+    }
+    const events = [...last.values()];
+    const ids = [...last.keys()];
     if (ids.length === 0) return;
     const loops = await this.d.repo.findCalensyncTargetIds(run.tenantId, ids);
     const maps = await this.d.repo.getMappings(run.pipelineId, ids);
@@ -643,7 +726,7 @@ export class SyncWorker {
         if (row) await this.removeBlock(run, e.id, row);
         continue;
       }
-      const block = eventToBlock(e, { mode: run.ctx.mode, busyLabel: run.ctx.busyLabel, includeTentative: this.o.includeTentative });
+      const block = eventToBlock(e, { mode: run.mode, busyLabel: run.ctx.busyLabel, includeTentative: this.o.includeTentative });
       if (!block) {
         if (row) await this.removeBlock(run, e.id, row); // z. B. busy → free
         continue;
@@ -664,7 +747,7 @@ export class SyncWorker {
   private async upsertBlock(run: Run, sourceEventId: string, block: TargetBlock, row: MapRow | null): Promise<void> {
     const { repo } = this.d;
     const confirmed = row !== null && (run.writer.kind === "booking" || row.targetEventId !== null);
-    if (confirmed && row.changeKey !== null && row.changeKey === block.changeKey
+    if (confirmed && !row.archived && !run.forceRewrite && row.changeKey !== null && row.changeKey === block.changeKey
         && row.startAt.getTime() === block.start.getTime() && row.endAt.getTime() === block.end.getTime()) {
       run.stats.unchanged += 1;
       return;
@@ -684,7 +767,9 @@ export class SyncWorker {
     try {
       // Begonnene, unbestätigte Anlage (Absturz zwischen POST und Speichern)? Erst suchen, dann ggf. anlegen.
       let targetId = row ? (row.targetEventId ?? (await run.writer.findByRef(ref))) : null;
-      if (targetId && (await run.writer.update(targetId, block)) === "ok") {
+      // Wechsel full → busy: einen früher kopierten Ort ausdrücklich leeren (PATCH ändert nur genannte Felder)
+      const patch = run.forceRewrite && run.mode === "busy" ? { ...block, body: { ...block.body, location: { displayName: "" } } } : block;
+      if (targetId && (await run.writer.update(targetId, patch)) === "ok") {
         await repo.upsertMapping(run.tenantId, run.pipelineId, mapRow(targetId, block.changeKey));
         run.stats.updated += 1;
         return;

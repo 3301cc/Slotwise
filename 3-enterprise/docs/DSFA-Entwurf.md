@@ -47,7 +47,7 @@ besondere Kategorien enthalten (z. B. „Arzttermin“, Art. 9 DSGVO).
 |---|---|---|
 | M1 | Keine Auswertungsfunktionen pro Person; API liefert nur den eigenen Status (`/api/v1/me/…`) | `app/src/statusApi.ts` |
 | M2 | Termininhalte nicht persistent; „Als beschäftigt markieren“ als Voreinstellung; im Modus „vollständig“ nur Titel und Ort | `core/src/syncWorker.ts`, Kanarienvogel-Tests in `core/test/syncWorker.test.ts` und `app/test/sync.pg.test.ts` |
-| M2a | Ziele nur aus einer Freigabeliste der IT (eigenes Zweitpostfach, freigegebene Team-Kalender, Buchungsseite), geprüft in API und Worker | `core/src/syncTargets.ts` |
+| M2a | Ziele nur aus einer Freigabeliste der IT (eigenes Zweitpostfach, freigegebene Team-Kalender, Buchungsseite), geprüft in API und Worker. Beim zweiten Konto bestätigt Microsoft Graph, dass Quell- und Zielpostfach derselben Person gehören (Objekt-ID bzw. Personalnummer, Wert wird nicht gespeichert; erfordert `User.Read.All`). Modus „vollständig“ für Team-Kalender nur mit Freigabe (`allowFullMode`) | `core/src/syncTargets.ts`, `core/src/identity.ts` |
 | M2b | Beenden, Deaktivieren und Löschen entfernen alle von CalenSync angelegten Zieltermine (Job in derselben Transaktion wie der Widerruf) | `core/src/cleanupWorker.ts` |
 | M3 | Protokolle schwärzen Tokens, E-Mail-Adressen und Namen; Längen- und Tiefenbegrenzung | `core/src/logger.ts`, `core/test/logger.test.ts` |
 | M4 | Exchange-RBAC begrenzt `Calendars.ReadWrite` auf eine Management Scope; kein mandantenweiter Entra-Grant | `powershell/Set-CalenSyncMailboxScope.ps1` |

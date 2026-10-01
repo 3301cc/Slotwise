@@ -16,7 +16,7 @@ import { PrismaPipelineStore } from "../src/pipelineStore.js";
 import { PrismaScimStore, type PrismaLike } from "../../scim/src/prismaStore.js";
 import { PgStatusRepo } from "../src/statusApi.js";
 import {
-  CLEANUP_KIND, createLogger, GRAPH_BASE, PgChannelRepo, PgDelayedJobQueue, PgPipelineRepo, PgSyncRepo, SYNC_KIND, SyncWorker,
+  BusyTooManyError, CLEANUP_KIND, createLogger, GRAPH_BASE, PgChannelRepo, PgDelayedJobQueue, PgPipelineRepo, PgSyncRepo, SYNC_KIND, SyncWorker,
   TargetCleanupWorker, TeardownJobWorker,
   type FetchLike, type SyncAllowlist,
 } from "../../core/src/index.js";
@@ -42,7 +42,22 @@ before(async () => {
   const mig = new pg.Client({ connectionString: u.toString() });
   await mig.connect();
   const dir = join(process.cwd(), "core/migrations");
-  await runMigrations(mig, dir, { bootstrap: true, log: () => {} });
+  // 000 ändert clusterweite Rollen (ALTER ROLE … SET). migrations.pg.test läuft parallel und macht dasselbe –
+  // zwei gleichzeitige ALTER ROLE scheitern sporadisch ("tuple concurrently updated"). Gibt es die Rollen schon,
+  // ist 000 hier überflüssig; sonst kurz warten und mit Wiederholung einspielen.
+  const roles = async () => (await admin.query(`SELECT count(*)::int AS n FROM pg_roles WHERE rolname IN ('calensync_app', 'calensync_migrator')`)).rows[0].n;
+  if ((await roles()) < 2) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await runMigrations(mig, dir, { bootstrap: true, log: () => {} });
+        break;
+      } catch (err) {
+        if (attempt >= 5) throw err;
+        await new Promise((r) => setTimeout(r, 500 * attempt));
+      }
+    }
+  }
   const r = await runMigrations(mig, dir, { bootstrap: false, log: () => {} });
   assert.ok(r.applied.includes("007_sync.sql"));
   await mig.end();
@@ -75,6 +90,10 @@ test("Migration 007: Spalten, Checks, Tabelle, Indizes, FK-Cascade, Rechte; erne
   const cols = await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'pipelines' AND column_name LIKE ANY (ARRAY['target_%', 'source_%', 'last_sync%', 'sync_lease%']) ORDER BY 1`);
   assert.deepEqual(cols.rows.map((r) => r.column_name as string).sort(), ["last_sync_error", "last_synced_at", "source_delta_link", "source_delta_started_at",
     "sync_lease_owner", "sync_lease_until", "target_entra_tenant_id", "target_kind", "target_mailbox", "target_ref"]);
+  const more = await pool.query(`SELECT column_name FROM information_schema.columns
+    WHERE (table_name = 'pipelines' AND column_name IN ('identity_verified_at', 'identity_attribute', 'effective_mode'))
+       OR (table_name = 'sync_event_map' AND column_name = 'archived_at')`);
+  assert.equal(more.rows.length, 4);
   const idx = await pool.query(`SELECT indexname FROM pg_indexes WHERE tablename = 'sync_event_map' ORDER BY 1`);
   assert.deepEqual(idx.rows.map((r) => r.indexname), ["sync_event_map_pipeline_id_start_at_idx", "sync_event_map_pkey", "sync_event_map_tenant_id_target_event_id_idx"]);
   const priv = await pool.query(`SELECT has_table_privilege('calensync_app', 'sync_event_map', 'SELECT, INSERT, UPDATE, DELETE') AS dml,
@@ -110,6 +129,7 @@ test("PgSyncRepo: Kontext, Lease, Zuordnungen, Schleifen-Lookup je Mandant, Zust
   assert.deepEqual({ ...ctx, createdAt: null }, {
     status: "active", ownerActive: true, ownerEntraObjectId: "oid-1", ownerUserName: "Max.Muster@acme.example", mode: "busy", busyLabel: "Termin",
     target: { kind: "team", mailbox: "vertrieb@acme.example", entraTenantId: null, ref: "vertrieb" }, deltaLink: null, deltaStartedAt: null, createdAt: null,
+    identityVerifiedAt: null, identityAttribute: null, effectiveMode: null,
   });
   assert.equal(await repo.getSyncContext("other", "p-team"), null, "fremder Mandant sieht nichts");
 
@@ -128,7 +148,7 @@ test("PgSyncRepo: Kontext, Lease, Zuordnungen, Schleifen-Lookup je Mandant, Zust
   await repo.upsertMapping("other", "p-other", { sourceEventId: "Z", targetEventId: "T-Z", changeKey: "c", startAt: at, endAt: end });
   await repo.upsertMapping("acme", "gibt-es-nicht", { sourceEventId: "Q", targetEventId: "T-Q", changeKey: "c", startAt: at, endAt: end });
   const m = await repo.getMappings("p-team", ["A", "B"]);
-  assert.deepEqual([...m.values()], [{ sourceEventId: "A", targetEventId: "T-A", changeKey: "ck1", startAt: at, endAt: end }]);
+  assert.deepEqual([...m.values()], [{ sourceEventId: "A", targetEventId: "T-A", changeKey: "ck1", startAt: at, endAt: end, archived: false }]);
   assert.deepEqual([...await repo.findCalensyncTargetIds("acme", ["T-A", "T-Z", "x"])], ["T-A"], "nur Zieltermine des eigenen Mandanten");
   assert.equal((await repo.listMappings("p-team")).length, 1);
   await repo.deleteMapping("p-team", "A");
@@ -163,7 +183,7 @@ test("Busy-API-SQL: nur aktive booking-Pipelines aktiver Nutzer des Mandanten, �
   await repo.upsertMapping("acme", "p-team", { sourceEventId: "d", targetEventId: "T-d", changeKey: "c", ...iv(14, 15) });
   await repo.upsertMapping("other", "p-other", { sourceEventId: "e", targetEventId: null, changeKey: "c", ...iv(16, 17) });
   const rows = await repo.busyIntervals("acme", new Date(Date.UTC(2026, 9, 2, 8)), new Date(Date.UTC(2026, 9, 2, 19)));
-  assert.deepEqual(rows.map((r) => [r.start.getUTCHours(), r.end.getUTCHours()]), [[9, 10], [9, 11]]);
+  assert.deepEqual(rows.map((r) => [r.start.getUTCHours(), r.end.getUTCHours()]), [[9, 11]], "in SQL zusammengefasst");
   await pool.query(`UPDATE scim_users SET active = false WHERE id = 'u2'`);
   assert.equal((await repo.busyIntervals("acme", new Date(Date.UTC(2026, 9, 2, 8)), new Date(Date.UTC(2026, 9, 2, 19)))).length, 1, "deaktivierter Nutzer zählt nicht");
 });
@@ -250,7 +270,9 @@ test("Echter Prisma-Client: Pipeline mit Ziel anlegen (Spalten-Mapping 007), Rep
   const prisma = new PrismaClient({ adapter: new PrismaPg(pool) });
   try {
     const allow: SyncAllowlist = { ...ALLOW, ownDomains: ["acme-alias.example"] };
-    const store = new PrismaPipelineStore(prisma as unknown as PrismaLike, 10, () => "p-new", allow);
+    const store = new PrismaPipelineStore(prisma as unknown as PrismaLike, 10, () => "p-new", allow,
+      async (_t, subj) => (subj.ownerObjectId === "oid-1" && subj.mailbox === "max.muster@acme-alias.example"
+        ? { kind: "verified", attribute: subj.attribute } : { kind: "rejected", why: "different_person" }));
     const r = await store.createPipeline({ tenantId: "acme", entraObjectId: "oid-1", mode: "busy", busyLabel: null,
       idempotencyKey: "key-0000000000000042", target: { kind: "account", mailbox: "max.muster@acme-alias.example", entraTenantId: null } });
     assert.deepEqual(r, { kind: "created", pipeline: { id: "p-new", status: "pending", mode: "busy", busyLabel: null, target: { kind: "account", label: "acme-alias.example" } } });
@@ -261,7 +283,9 @@ test("Echter Prisma-Client: Pipeline mit Ziel anlegen (Spalten-Mapping 007), Rep
     assert.equal(replay.kind, "replayed");
     const denied = await store.createPipeline({ tenantId: "acme", entraObjectId: "oid-1", mode: "busy", busyLabel: null,
       idempotencyKey: "key-0000000000000043", target: { kind: "account", mailbox: "eva@acme-alias.example", entraTenantId: null } });
-    assert.deepEqual(denied, { kind: "target_not_allowed", reason: "not_same_person" });
+    assert.deepEqual(denied, { kind: "target_not_allowed", reason: "identity_unverified" });
+    const verified = (await pool.query(`SELECT identity_attribute, identity_verified_at IS NOT NULL AS v FROM pipelines WHERE id = 'p-new'`)).rows[0];
+    assert.deepEqual(verified, { identity_attribute: "objectId", v: true });
 
   } finally {
     await prisma.$disconnect();
@@ -365,4 +389,46 @@ test("SCIM-DELETE: Tombstone behält Zielpostfach + Termin-IDs bis zur Bereinigu
     assert.deepEqual(purged, ["u1"]);
     assert.equal((await pool.query(`SELECT count(*)::int AS n FROM pipelines WHERE owner_user_id = 'u1'`)).rows[0].n, 0, "Tombstone + Pipelines endgültig weg");
   });
+});
+
+test("Review #3: Busy-API fasst in SQL zusammen – kein stilles Abschneiden (> 20 000 Zuordnungen), archivierte zählen nicht, Obergrenze → BusyTooManyError", { skip }, async () => {
+  await seed();
+  // portiert aus scratchpad/review/t3: 200 Nutzer × 101 Termine in den ersten zwei Wochen + 1 Termin an Tag 40
+  await pool.query(`INSERT INTO scim_users (id, tenant_id, user_name, user_name_normalized, external_id)
+     SELECT 'bu'||i, 'acme', 'bu'||i||'@acme.example', 'bu'||i||'@acme.example', 'oid-b'||i FROM generate_series(1,200) i`);
+  await pool.query(`INSERT INTO pipelines (id, tenant_id, owner_user_id, status, mode, target_kind)
+     SELECT 'bp'||i, 'acme', 'bu'||i, 'active', 'busy', 'booking' FROM generate_series(1,200) i`);
+  await pool.query(`INSERT INTO sync_event_map (tenant_id, pipeline_id, source_event_id, start_at, end_at)
+     SELECT 'acme', 'bp'||i, 'e'||j, timestamptz '2026-10-01T08:00Z' + j*interval '3 hours', timestamptz '2026-10-01T08:30Z' + j*interval '3 hours'
+       FROM generate_series(1,200) i, generate_series(1,101) j`);
+  await pool.query(`INSERT INTO sync_event_map (tenant_id, pipeline_id, source_event_id, start_at, end_at)
+     VALUES ('acme', 'bp1', 'late', '2026-11-10T09:00Z', '2026-11-10T17:00Z'),
+            ('acme', 'bp2', 'archiviert', '2026-11-20T09:00Z', '2026-11-20T17:00Z')`);
+  await pool.query(`UPDATE sync_event_map SET archived_at = now() WHERE source_event_id = 'archiviert'`);
+  const repo = new PgSyncRepo(pool);
+  const from = new Date("2026-10-01T00:00Z");
+  const to = new Date("2026-12-01T00:00Z");
+  const busy = await repo.busyIntervals("acme", from, to);
+  assert.equal(busy.length, 102, "101 zusammengefasste Slots + der späte Termin");
+  assert.ok(busy.some((b) => b.start.toISOString() === "2026-11-10T09:00:00.000Z"), "später Block vorhanden");
+  assert.equal(busy.some((b) => b.start.toISOString().startsWith("2026-11-20")), false, "archiviert zählt nicht");
+  assert.deepEqual([busy[0].start.toISOString(), busy[0].end.toISOString()], ["2026-10-01T11:00:00.000Z", "2026-10-01T11:30:00.000Z"]);
+  await assert.rejects(repo.busyIntervals("acme", from, to, 50), (e: unknown) => e instanceof BusyTooManyError && e.max === 50);
+});
+
+test("Review #1 (SQL): archivierte Zuordnungen bleiben für die Bereinigung, upsert hebt die Archivierung auf", { skip }, async () => {
+  await seed();
+  const repo = new PgSyncRepo(pool);
+  const at = new Date("2026-09-01T09:00:00Z");
+  await repo.upsertMapping("acme", "p-team", { sourceEventId: "alt", targetEventId: "T-alt", changeKey: "c", startAt: at, endAt: at });
+  await repo.archiveMapping("p-team", "alt");
+  assert.deepEqual((await repo.listMappings("p-team")).map((r) => [r.sourceEventId, r.archived]), [["alt", true]]);
+  assert.deepEqual([...await repo.findCalensyncTargetIds("acme", ["T-alt"])], ["T-alt"], "Schleifenschutz kennt auch archivierte");
+  await repo.upsertMapping("acme", "p-team", { sourceEventId: "alt", targetEventId: "T-alt", changeKey: "c2", startAt: at, endAt: at });
+  assert.equal((await repo.getMappings("p-team", ["alt"])).get("alt")?.archived, false);
+  await repo.markIdentityVerified("acme", "p-team", "employeeId");
+  await repo.saveSyncState("acme", "p-team", { deltaLink: null, deltaStartedAt: null, synced: true, effectiveMode: "busy" });
+  const ctx = await repo.getSyncContext("acme", "p-team");
+  assert.deepEqual([ctx?.identityAttribute, ctx?.identityVerifiedAt instanceof Date, ctx?.effectiveMode], ["employeeId", true, "busy"]);
+  await assert.rejects(pool.query(`UPDATE pipelines SET identity_attribute = 'mail' WHERE id = 'p-team'`), /violates/);
 });

@@ -10,7 +10,8 @@
 //                      webhook_channels_due_stop, webhook_channels_renew_due, job_queue_*
 //   CHECK-Constraints  webhook_channels_provider_valid, webhook_channels_google_verifiable,
 //                      pipelines_mode_valid, pipelines_busy_label_len, pipelines_target_kind_valid,
-//                      pipelines_target_shape, pipelines_last_sync_error_code, sync_event_map_interval, job_queue.status
+//                      pipelines_target_shape, pipelines_last_sync_error_code, pipelines_identity_attribute_valid,
+//                      pipelines_effective_mode_valid, sync_event_map_interval, job_queue.status
 //   Rechte             audit_events: kein UPDATE/DELETE für calensync_app (001/003)
 // job_queue wird nur per $executeRaw / pg benutzt (core/src/retryQueue.ts) und ist deshalb kein Modell.
 
@@ -90,6 +91,11 @@ model Pipeline {
   /// Bereinigung der Zieltermine nach Widerruf: angefordert (selber Commit wie die Kappung) / erledigt
   cleanupRequestedAt   DateTime? @map("cleanup_requested_at") @db.Timestamptz(6)
   cleanupDoneAt        DateTime? @map("cleanup_done_at") @db.Timestamptz(6)
+  /// account: letzte Graph-Prüfung "dieselbe Person" und Merkmal (nie der Wert)
+  identityVerifiedAt   DateTime? @map("identity_verified_at") @db.Timestamptz(6)
+  identityAttribute    String?   @map("identity_attribute")
+  /// zuletzt geschriebener Modus (busy | full)
+  effectiveMode        String?   @map("effective_mode")
 
   owner    ScimUser       @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
   eventMap SyncEventMap[]
@@ -109,6 +115,8 @@ model SyncEventMap {
   startAt       DateTime @map("start_at") @db.Timestamptz(6)
   endAt         DateTime @map("end_at") @db.Timestamptz(6)
   updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  /// aus dem Sync-Fenster gefallen; Bereinigung löscht den Zieltermin trotzdem
+  archivedAt    DateTime? @map("archived_at") @db.Timestamptz(6)
 
   pipeline Pipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
 

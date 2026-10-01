@@ -37,6 +37,7 @@ interface PRow {
   target: SyncContext["target"]; deltaLink: string | null; deltaStartedAt: Date | null;
   lastSyncedAt: Date | null; lastSyncError: string | null; leaseOwner: string | null; leaseUntil: number; createdAt: Date;
   cleanupRequestedAt: Date | null; cleanupDoneAt: Date | null;
+  identityVerifiedAt: Date | null; identityAttribute: string | null; effectiveMode: "busy" | "full" | null;
 }
 interface URow { id: string; externalId: string; userName: string; active: boolean }
 
@@ -52,7 +53,8 @@ class MemRepo implements SyncRepo, CleanupRepo {
       tenantId: "acme", status: "active", ownerUserId: "u1", mode: "busy", busyLabel: "Termin",
       target: { kind: "team", mailbox: "vertrieb@acme.example", entraTenantId: null, ref: "vertrieb" },
       deltaLink: null, deltaStartedAt: null, lastSyncedAt: null, lastSyncError: null, leaseOwner: null, leaseUntil: 0,
-      createdAt: new Date("2026-01-01T00:00:00Z"), cleanupRequestedAt: null, cleanupDoneAt: null, ...o,
+      createdAt: new Date("2026-01-01T00:00:00Z"), cleanupRequestedAt: null, cleanupDoneAt: null,
+      identityVerifiedAt: null, identityAttribute: null, effectiveMode: null, ...o,
     });
   }
   /** wie revokeInTx / endPipeline */
@@ -81,7 +83,8 @@ class MemRepo implements SyncRepo, CleanupRepo {
     const u = this.users.get(p.ownerUserId);
     if (!u) return null;
     return { status: p.status, ownerActive: u.active, ownerEntraObjectId: u.externalId, ownerUserName: u.userName, mode: p.mode,
-      busyLabel: p.busyLabel, target: { ...p.target }, deltaLink: p.deltaLink, deltaStartedAt: p.deltaStartedAt, createdAt: p.createdAt };
+      busyLabel: p.busyLabel, target: { ...p.target }, deltaLink: p.deltaLink, deltaStartedAt: p.deltaStartedAt, createdAt: p.createdAt,
+      identityVerifiedAt: p.identityVerifiedAt, identityAttribute: p.identityAttribute, effectiveMode: p.effectiveMode };
   }
   async acquireSyncLease(_t: string, id: string, owner: string, ms: number) {
     const p = this.pipelines.get(id)!;
@@ -112,12 +115,19 @@ class MemRepo implements SyncRepo, CleanupRepo {
     }
     return out;
   }
-  async upsertMapping(_t: string, id: string, row: MapRow) { if (this.pipelines.has(id)) this.m(id).set(row.sourceEventId, { ...row }); }
+  async upsertMapping(_t: string, id: string, row: MapRow) { if (this.pipelines.has(id)) this.m(id).set(row.sourceEventId, { ...row, archived: false }); }
   async deleteMapping(id: string, s: string) { this.m(id).delete(s); }
-  async saveSyncState(_t: string, id: string, s: { deltaLink: string | null; deltaStartedAt: Date | null; synced: boolean; errorCode?: string | null }) {
+  async archiveMapping(id: string, s: string) { const r = this.m(id).get(s); if (r) r.archived = true; }
+  async markIdentityVerified(_t: string, id: string, attribute: string) {
+    const p = this.pipelines.get(id)!;
+    p.identityVerifiedAt = new Date(this.now());
+    p.identityAttribute = attribute;
+  }
+  async saveSyncState(_t: string, id: string, s: { deltaLink: string | null; deltaStartedAt: Date | null; synced: boolean; errorCode?: string | null; effectiveMode?: "busy" | "full" }) {
     const p = this.pipelines.get(id)!;
     p.deltaLink = s.deltaLink;
     p.deltaStartedAt = s.deltaStartedAt;
+    if (s.effectiveMode) p.effectiveMode = s.effectiveMode;
     if (s.synced) { p.lastSyncedAt = new Date(this.now()); p.lastSyncError = s.errorCode ?? null; }
   }
   async setSyncError(_t: string, id: string, code: string | null) { this.pipelines.get(id)!.lastSyncError = code; }
@@ -139,6 +149,8 @@ class FakeGraph {
   rounds: GraphEvent[][][] = [];
   roundNo = 0;
   targets = new Map<string, Map<string, Record<string, unknown>>>(); // mailbox → id → body
+  /** GET /users/{oid|upn}: Identitätsprüfung (Schlüssel klein) */
+  users = new Map<string, Record<string, unknown>>();
   inject: Injected[] = [];
   onRequest?: (r: Req) => void;
   private seq = 0;
@@ -172,6 +184,11 @@ class FakeGraph {
         ...(last ? { "@odata.deltaLink": `${GRAPH_BASE}/users/src/calendarView/delta?$deltatoken=t${key}` }
                  : { "@odata.nextLink": `${GRAPH_BASE}/users/src/delta-next?round=${key}&p=${page + 1}` }),
       });
+    }
+    const um = /^\/v1\.0\/users\/([^/]+)$/.exec(u.pathname);
+    if (um && init.method === "GET") {
+      const user = this.users.get(decodeURIComponent(um[1]).toLowerCase());
+      return user ? this.res(200, user) : this.res(404, { error: { code: "Request_ResourceNotFound" } });
     }
     // Ziel: /users/{mailbox}/events[/{id}]
     const m = /^\/v1\.0\/users\/([^/]+)\/events(?:\/([^/]+))?$/.exec(u.pathname);
@@ -224,17 +241,23 @@ const tokens = (): GraphTokenSource & { calls: Array<string | null>; invalidated
   };
 };
 
-function setup(o: { pipeline?: Partial<PRow>; options?: Partial<SyncOptions>; log?: (e: Record<string, unknown>) => void } = {}) {
-  const repo = new MemRepo();
+function setup(o: { pipeline?: Partial<PRow>; options?: Partial<SyncOptions>; log?: (e: Record<string, unknown>) => void;
+  clock?: { t: Date }; allowlist?: SyncAllowlist } = {}) {
+  const now = () => o.clock?.t ?? NOW;
+  const repo = new MemRepo(() => now().getTime());
   repo.users.set("u1", { id: "u1", externalId: "oid-1", userName: "Max.Muster@acme.example", active: true });
   repo.addPipeline("p1", o.pipeline);
   const graph = new FakeGraph();
-  const queue = new InMemoryDelayedJobQueue(() => NOW.getTime(), () => 0.5);
+  // Identitäten: Inhaber (Heim), Alias desselben Objekts (eigener Mandant), Tochter-Postfach mit gleicher employeeId
+  graph.users.set("oid-1", { id: "oid-1", employeeId: "E-1" });
+  graph.users.set("max.muster@acme-alias.example", { id: "oid-1", employeeId: "E-1" });
+  graph.users.set("max.muster@tochter.example", { id: "oid-tochter-9", employeeId: "E-1" });
+  const queue = new InMemoryDelayedJobQueue(() => now().getTime(), () => 0.5);
   const tok = tokens();
   const alerts: SyncAlert[] = [];
   const worker = new SyncWorker({
-    queue, repo, tokens: tok, fetchFn: graph.fetch, allowlist: ALLOW, workerId: "w1",
-    alert: (a) => { alerts.push(a); }, log: o.log, now: () => NOW, random: () => 0.5, options: o.options,
+    queue, repo, tokens: tok, fetchFn: (u, i) => graph.fetch(u, i), allowlist: o.allowlist ?? ALLOW, workerId: "w1",
+    alert: (a) => { alerts.push(a); }, log: o.log, now, random: () => 0.5, options: o.options,
   });
   const enqueue = (full = false, pipelineId = "p1") => queue.enqueue("acme", SYNC_KIND, { pipelineId, full }, { dedupeKey: `delta:${pipelineId}` });
   const runOnce = async (full = false) => {
@@ -254,18 +277,22 @@ const TEAMBOX = "vertrieb@acme.example";
 // ---------------------------------------------------------------------------------------------------
 // Allowlist (rein funktional) – gemeinsam für API und Worker
 // ---------------------------------------------------------------------------------------------------
-test("Allowlist: account nur Same-Person in verknüpftem Mandanten bzw. eigener Alias-Domain, team/booking nur aus Config", () => {
+test("Allowlist: account nur in verknüpftem Mandanten bzw. eigener Alias-Domain (Person prüft Graph), team/booking nur aus Config", () => {
   const owner = "Max.Muster@acme.example";
   const acc = (mailbox: string, entraTenantId: string | null = null) => resolveSyncTarget(ALLOW, owner, { kind: "account", mailbox, entraTenantId });
-  assert.deepEqual(acc("max.muster@tochter.example", LINKED), { ok: true, target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED, ref: null, label: "Acme Tochter GmbH" } });
-  assert.deepEqual(acc("eva.chefin@tochter.example", LINKED), { ok: false, reason: "not_same_person" });
+  assert.deepEqual(acc("max.muster@tochter.example", LINKED), { ok: true, target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED, ref: null, label: "Acme Tochter GmbH", identityAttribute: "employeeId" } });
+  // anderer lokaler Teil: strukturell erlaubt, dieselbe Person entscheidet erst Graph (employeeId)
+  assert.equal(acc("eva.chefin@tochter.example", LINKED).ok, true);
+  // Opt-in localPart: ohne Graph bleibt der gleiche lokale Teil Pflicht
+  const lp: SyncAllowlist = { ...ALLOW, linkedTenants: [{ ...ALLOW.linkedTenants[0], identityAttribute: "localPart" }], ownDomainsIdentityAttribute: "localPart" };
+  assert.deepEqual(resolveSyncTarget(lp, owner, { kind: "account", mailbox: "eva.chefin@tochter.example", entraTenantId: LINKED }), { ok: false, reason: "not_same_person" });
+  assert.deepEqual(resolveSyncTarget(lp, owner, { kind: "account", mailbox: "ceo@acme-alias.example", entraTenantId: null }), { ok: false, reason: "not_same_person" });
   assert.deepEqual(acc("max.muster@evil.example", LINKED), { ok: false, reason: "domain_not_allowed" });
   assert.deepEqual(acc("max.muster@tochter.example", "aaaaaaaa-0000-0000-0000-000000000000"), { ok: false, reason: "tenant_not_linked" });
   assert.deepEqual(acc("max.muster@tochter.example"), { ok: false, reason: "domain_not_allowed" }, "Tochter-Domain ohne Mandant = eigener Mandant");
-  assert.deepEqual(acc("max.muster@acme-alias.example"), { ok: true, target: { kind: "account", mailbox: "max.muster@acme-alias.example", entraTenantId: null, ref: null, label: "acme-alias.example" } });
+  assert.deepEqual(acc("max.muster@acme-alias.example"), { ok: true, target: { kind: "account", mailbox: "max.muster@acme-alias.example", entraTenantId: null, ref: null, label: "acme-alias.example", identityAttribute: "objectId" } });
   assert.deepEqual(acc("max.muster@acme-alias.example", HOME), acc("max.muster@acme-alias.example"), "eigener Mandant explizit = ohne");
   assert.deepEqual(acc("max.muster@acme.example"), { ok: false, reason: "target_is_source" });
-  assert.deepEqual(acc("ceo@acme-alias.example"), { ok: false, reason: "not_same_person" });
   assert.deepEqual(resolveSyncTarget({ ...ALLOW, ownDomains: [] }, owner, { kind: "account", mailbox: "max.muster@acme-alias.example", entraTenantId: null }), { ok: false, reason: "own_mailboxes_not_configured" });
   assert.deepEqual(resolveSyncTarget(ALLOW, null, { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED }), { ok: false, reason: "owner_unknown" });
   assert.deepEqual(resolveSyncTarget(ALLOW, owner, { kind: "team", teamId: "einkauf" }), { ok: false, reason: "team_not_found" });
@@ -273,11 +300,10 @@ test("Allowlist: account nur Same-Person in verknüpftem Mandanten bzw. eigener 
   assert.deepEqual(resolveSyncTarget({ ...ALLOW, bookingEnabled: false }, owner, { kind: "booking" }), { ok: false, reason: "booking_disabled" });
   // Worker-Zweitprüfung: geändertes Team-Postfach, fremdes Konto
   assert.deepEqual(recheckStoredTarget(ALLOW, owner, { kind: "team", mailbox: "alt@acme.example", entraTenantId: null, ref: "vertrieb" }), { ok: false, reason: "team_mailbox_changed" });
-  assert.deepEqual(recheckStoredTarget(ALLOW, owner, { kind: "account", mailbox: "eva@tochter.example", entraTenantId: LINKED, ref: null }), { ok: false, reason: "not_same_person" });
   assert.deepEqual(recheckStoredTarget(ALLOW, owner, { kind: null, mailbox: null, entraTenantId: null, ref: null }), { ok: false, reason: "target_missing" });
   assert.deepEqual(accountSuggestions(ALLOW, owner), [
-    { entraTenantId: null, label: "acme-alias.example", mailbox: "max.muster@acme-alias.example" },
-    { entraTenantId: LINKED, label: "Acme Tochter GmbH", mailbox: "max.muster@tochter.example" },
+    { entraTenantId: null, label: "acme-alias.example", mailbox: "max.muster@acme-alias.example", verified: false },
+    { entraTenantId: LINKED, label: "Acme Tochter GmbH", mailbox: "max.muster@tochter.example", verified: false },
   ]);
   assert.deepEqual(targetLabel(ALLOW, { kind: "team", mailbox: TEAMBOX, entraTenantId: null, ref: "vertrieb" }), { kind: "team", label: "Vertrieb" });
   // Syntax
@@ -395,7 +421,8 @@ test("Sync: 410 syncStateNotFound → Zustand verwerfen, frisches Delta, nicht m
   assert.equal(r.synced, 1);
   assert.match(s.graph.requests[1].url, /calendarView\/delta\?startDateTime=/, "zweiter Aufruf ist ein frisches Delta");
   assert.deepEqual([...s.graph.box(TEAMBOX).keys()].sort(), ["T-1", "T-past"], "im Fenster gelöschter Termin weg, vergangener Zieltermin bleibt");
-  assert.deepEqual([...rows.keys()], ["A"], "Zuordnung des vergangenen Termins vergessen");
+  assert.deepEqual([...rows.keys()].sort(), ["A", "alt"], "Zuordnung des vergangenen Termins bleibt (archiviert) für die Bereinigung");
+  assert.equal(rows.get("alt")!.archived, true);
   assert.match(s.repo.pipelines.get("p1")!.deltaLink ?? "", /deltatoken=t1/);
 
   // Zweites 410 im selben Lauf → kein Endlos-Reset, normale Fehlerbehandlung
@@ -499,9 +526,10 @@ test("Sync: account im verknüpften Mandanten – Lesen mit Heim-Token, Schreibe
   s.graph.inject.push({ match: (r) => r.method === "POST", status: 401 });
   await s.runOnce(true);
   const byMethod = s.graph.requests.map((r) => `${r.method}:${r.headers.Authorization}`);
-  assert.deepEqual(byMethod, ["GET:Bearer tok-home", `POST:Bearer tok-${LINKED}`, `POST:Bearer tok-${LINKED}`]);
+  // Identität: Zielpostfach mit Tochter-Token, Inhaber mit Heim-Token; dann Delta (Heim), dann Schreiben (Tochter)
+  assert.deepEqual(byMethod, [`GET:Bearer tok-${LINKED}`, "GET:Bearer tok-home", "GET:Bearer tok-home", `POST:Bearer tok-${LINKED}`, `POST:Bearer tok-${LINKED}`]);
   assert.deepEqual(s.tok.invalidated, [LINKED]);
-  assert.ok(s.graph.requests[1].url.startsWith(`${GRAPH_BASE}/users/${encodeURIComponent("max.muster@tochter.example")}/events`));
+  assert.ok(s.graph.requests[3].url.startsWith(`${GRAPH_BASE}/users/${encodeURIComponent("max.muster@tochter.example")}/events`));
 });
 
 test("Token-Cache: verschiedene Entra-Mandanten teilen nie ein Token; aud/URL je Mandant; invalidate trifft nur einen", async () => {
@@ -535,7 +563,7 @@ test("Token-Cache: verschiedene Entra-Mandanten teilen nie ein Token; aud/URL je
 
 test("Sync: Worker prüft die Allowlist erneut – unzulässiges Ziel → config_error + Alarm, kein Provider-Aufruf", async () => {
   for (const target of [
-    { kind: "account", mailbox: "eva.chefin@tochter.example", entraTenantId: LINKED, ref: null },
+    { kind: "account", mailbox: "max.muster@evil.example", entraTenantId: LINKED, ref: null },
     { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: "aaaaaaaa-0000-0000-0000-000000000000", ref: null },
     { kind: "team", mailbox: "ceo@acme.example", entraTenantId: null, ref: "vertrieb" },
     { kind: "team", mailbox: TEAMBOX, entraTenantId: null, ref: "geloescht" },
@@ -662,7 +690,9 @@ for (const mode of ["busy", "full"] as const) {
     const lines: string[] = [];
     const logger = createLogger({ service: "test", write: (x) => lines.push(x), flushOnExit: false, minLevel: "debug" });
     const log = (e: Record<string, unknown>) => { const { level, msg, ...rest } = e; (level === "warn" ? logger.warn : level === "error" ? logger.error : logger.info)(String(msg), rest); };
-    const s = setup({ pipeline: { mode, busyLabel: mode === "busy" ? "Termin" : null }, log });
+    // full nur in ein Team mit allowFullMode (Review #5); ohne wird inhaltsfrei geschrieben – eigener Test
+    const allowlist = { ...ALLOW, teamCalendars: [{ ...ALLOW.teamCalendars[0], allowFullMode: true }] };
+    const s = setup({ pipeline: { mode, busyLabel: mode === "busy" ? "Termin" : null }, log, allowlist });
     const rich = (id: string, o: Partial<GraphEvent> & { at?: string; until?: string } = {}) => ({
       ...ev(id, o), subject: `${c}-subject`, location: { displayName: `${c}-location`, address: { street: `${c}-street` } },
       body: { contentType: "html", content: `<p>${c}-body</p>` }, bodyPreview: `${c}-preview`,
@@ -847,4 +877,134 @@ test("Purge nach SCIM-DELETE wartet auf offene Bereinigungen; Notbremse nach 8 T
   const brake = mk(new Date(NOW.getTime() - 9 * 24 * 3_600_000), 1);
   assert.equal((await brake.go()).purged, 1);
   assert.deepEqual([brake.purged, brake.alerts], [["u1"], ["cleanup_deadline"]]);
+});
+
+// ---------------------------------------------------------------------------------------------------
+// Review-Regressionen (scratchpad/review t1, t2, t4 portiert; schlagen ohne die Korrekturen fehl)
+// ---------------------------------------------------------------------------------------------------
+test("Review #1: Neuaufspannen des Fensters archiviert vergangene Zuordnungen (Zieltermin bleibt) – Bereinigung löscht auch die Historie", async () => {
+  const clock = { t: new Date("2026-10-01T08:00:00Z") };
+  const s = setup({ clock });
+  s.graph.rounds.push([[ev("A"), ev("B", { at: "2026-10-20T09:00:00.0000000", until: "2026-10-20T10:00:00.0000000" })]]);
+  await s.runOnce(true);
+  assert.equal(s.graph.box(TEAMBOX).size, 2);
+
+  clock.t = new Date("2026-10-04T08:00:00Z"); // Fenster > 24 h alt → frisches Delta; A endete vor > 1 Tag
+  s.graph.rounds.push([[ev("B", { at: "2026-10-20T09:00:00.0000000", until: "2026-10-20T10:00:00.0000000" })]]);
+  const before = s.graph.requests.length;
+  await s.runOnce(false);
+  assert.equal(s.graph.writes().length, 2, "kein Löschen/Neuanlegen beim Archivieren (nur die zwei Erst-POSTs)");
+  assert.equal(s.graph.requests.length - before, 1, "nur der Delta-GET");
+  assert.equal(s.repo.maps.get("p1")!.get("A")?.archived, true);
+
+  clock.t = new Date("2026-10-06T08:00:00Z"); // nächstes Neuaufspannen: Archiv bleibt unberührt
+  s.graph.rounds.push([[ev("B", { at: "2026-10-20T09:00:00.0000000", until: "2026-10-20T10:00:00.0000000" })]]);
+  await s.runOnce(false);
+  assert.equal(s.graph.writes().length, 2);
+  assert.equal(s.repo.maps.get("p1")!.get("A")?.archived, true);
+
+  s.repo.revoke("p1");
+  const c = withCleanup(s);
+  assert.equal((await c.run()).cleaned, 1);
+  assert.deepEqual([...s.graph.box(TEAMBOX).keys()], [], "auch der vergangene Zieltermin ist weg");
+});
+
+test("Review #1: Buchungsseite – vergangene Zuordnungen werden gelöscht (es gibt keinen Zieltermin); archivierte zählen nie als belegt", async () => {
+  const clock = { t: new Date("2026-10-01T08:00:00Z") };
+  const s = setup({ clock, pipeline: { target: { kind: "booking", mailbox: null, entraTenantId: null, ref: null } } });
+  s.graph.rounds.push([[ev("A")]]);
+  await s.runOnce(true);
+  clock.t = new Date("2026-10-04T08:00:00Z");
+  s.graph.rounds.push([[]]);
+  await s.runOnce(false);
+  assert.equal(s.repo.maps.get("p1")!.size, 0);
+});
+
+test("Review #4: derselbe Quelltermin zweimal auf einer Delta-Seite → genau ein Zieltermin, Bereinigung hinterlässt keine Waise", async () => {
+  const s = setup();
+  s.graph.rounds.push([[ev("A"), ev("A", { changeKey: "ck-A-2", at: "2026-10-02T11:00:00.0000000", until: "2026-10-02T12:00:00.0000000" })]]);
+  await s.runOnce(true);
+  assert.equal(s.graph.box(TEAMBOX).size, 1);
+  const only = [...s.graph.box(TEAMBOX).values()][0];
+  assert.deepEqual(only.start, { dateTime: "2026-10-02T11:00:00", timeZone: "UTC" }, "letztes Vorkommen gilt");
+  s.repo.revoke("p1");
+  await withCleanup(s).run();
+  assert.equal(s.graph.box(TEAMBOX).size, 0);
+});
+
+test("Review #2: Worker prüft dieselbe Person per Graph – fremdes Postfach mit gleichem lokalen Teil → kein Schreiben, identity_unverified", async () => {
+  // Jana Schmidt (Inhaberin) → jana@acme-alias.example gehört Jana Weber (anderes Entra-Objekt)
+  const s = setup({ pipeline: { target: { kind: "account", mailbox: "max.muster@acme-alias.example", entraTenantId: null, ref: null } } });
+  s.graph.users.set("max.muster@acme-alias.example", { id: "oid-andere-person" });
+  s.graph.rounds.push([[ev("A")]]);
+  assert.equal((await s.runOnce(true)).failed, 1);
+  assert.equal(s.graph.writes().length, 0);
+  const p = s.repo.pipelines.get("p1")!;
+  assert.deepEqual([p.status, p.lastSyncError, p.identityVerifiedAt], ["config_error", "identity_unverified", null]);
+  assert.equal(s.alerts[0]?.category, "identity_unverified");
+
+  // gleiche Person (dasselbe Objekt) → geprüft, Zeitpunkt gespeichert, keine erneute Prüfung innerhalb von 24 h
+  const clock = { t: NOW };
+  const ok = setup({ clock, pipeline: { target: { kind: "account", mailbox: "max.muster@acme-alias.example", entraTenantId: null, ref: null } } });
+  ok.graph.rounds.push([[ev("A")]]);
+  assert.equal((await ok.runOnce(true)).synced, 1);
+  assert.equal(ok.repo.pipelines.get("p1")!.identityAttribute, "objectId");
+  const userGets = () => ok.graph.requests.filter((r) => /\/users\/[^/]+\?\$select=/.test(r.url)).length;
+  assert.equal(userGets(), 1);
+  ok.graph.rounds.push([[]]);
+  await ok.runOnce(false);
+  assert.equal(userGets(), 1, "innerhalb von 24 h keine erneute Prüfung");
+  // nach 25 h erneut; inzwischen gehört das Postfach jemand anderem → Stopp
+  clock.t = new Date(NOW.getTime() + 25 * 3_600_000);
+  ok.graph.users.set("max.muster@acme-alias.example", { id: "oid-andere-person" });
+  ok.graph.rounds.push([[ev("B")]]);
+  const writes = ok.graph.writes().length;
+  assert.equal((await ok.runOnce(false)).failed, 1);
+  assert.equal(ok.graph.writes().length, writes, "kein Schreiben nach fehlgeschlagener Neuprüfung");
+
+  // verknüpfter Mandant: employeeId muss auf beiden Seiten vorhanden und gleich sein
+  for (const [target, expect] of [[{ id: "x", employeeId: "E-1" }, "synced"], [{ id: "x", employeeId: "E-2" }, "failed"], [{ id: "x", employeeId: "" }, "failed"]] as const) {
+    const l = setup({ pipeline: { target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED, ref: null } } });
+    l.graph.users.set("max.muster@tochter.example", { ...target });
+    l.graph.rounds.push([[ev("A")]]);
+    const r = await l.runOnce(true);
+    assert.equal(r[expect], 1, JSON.stringify(target));
+  }
+  // Graph vorübergehend nicht erreichbar → Retry, nicht schreiben
+  const t = setup({ pipeline: { target: { kind: "account", mailbox: "max.muster@tochter.example", entraTenantId: LINKED, ref: null } } });
+  t.graph.inject.push({ match: (r) => r.url.includes("$select="), status: 503 });
+  t.graph.rounds.push([[ev("A")]]);
+  assert.equal((await t.runOnce(true)).rescheduled, 1);
+  assert.equal(t.graph.writes().length, 0);
+});
+
+test("Review #5: full-Modus in ein Team ohne allowFullMode → nur inhaltsfreie Zieltermine, lastError full_mode_not_allowed; Herabstufung schreibt alles neu", async () => {
+  const content = () => ev("A", { subject: "Vorstand vertraulich", location: { displayName: "Raum Geheim" } });
+  const s = setup({ pipeline: { mode: "full", busyLabel: null } });
+  s.graph.rounds.push([[content()]]);
+  await s.runOnce(true);
+  const sent = s.graph.writes().map((w) => w.body ?? "").join("");
+  assert.equal(sent.includes("Vorstand") || sent.includes("Raum Geheim"), false);
+  assert.equal(JSON.parse(s.graph.writes()[0].body!).subject, "Beschäftigt");
+  assert.equal(s.repo.pipelines.get("p1")!.lastSyncError, "full_mode_not_allowed");
+
+  // mit allowFullMode: Inhalte erlaubt; danach Freigabe entzogen → alle Zieltermine inhaltsfrei neu (auch archivierte)
+  const allowFull = { ...ALLOW, teamCalendars: [{ ...ALLOW.teamCalendars[0], allowFullMode: true }] };
+  const clock = { t: NOW };
+  const f = setup({ clock, pipeline: { mode: "full", busyLabel: null }, allowlist: allowFull });
+  f.graph.rounds.push([[content(), ev("OLD", { subject: "Alt-Geheim", location: { displayName: "Alt-Raum" } })]]);
+  await f.runOnce(true);
+  assert.equal(f.graph.box(TEAMBOX).get("T-1")!.subject, "Vorstand vertraulich");
+  f.repo.maps.get("p1")!.get("OLD")!.archived = true; // inzwischen aus dem Fenster gefallen
+  const down = new SyncWorker({ queue: f.queue, repo: f.repo, tokens: f.tok, fetchFn: (u, i) => f.graph.fetch(u, i), allowlist: ALLOW,
+    workerId: "w1", alert: () => {}, now: () => clock.t, random: () => 0.5 });
+  f.graph.rounds.push([[content()]]); // unveränderter changeKey – trotzdem neu schreiben
+  await f.enqueue(false);
+  assert.equal((await down.tick(10)).synced, 1);
+  for (const b of f.graph.box(TEAMBOX).values()) {
+    assert.equal(b.subject, "Beschäftigt");
+    assert.deepEqual(b.location, { displayName: "" });
+    assert.equal(b.showAs, "busy");
+  }
+  assert.deepEqual([f.repo.pipelines.get("p1")!.effectiveMode, f.repo.pipelines.get("p1")!.lastSyncError], ["busy", "full_mode_not_allowed"]);
 });

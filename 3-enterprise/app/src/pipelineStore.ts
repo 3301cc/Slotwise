@@ -22,9 +22,13 @@ import { CLEANUP_KIND } from "../../core/src/cleanupWorker.js";
 import { teardownDedupeKey } from "../../scim/src/types.js";
 import { lockUserForWrite, withTxRetry, type PipelineRow, type PrismaLike } from "../../scim/src/prismaStore.js";
 import {
-  EMPTY_ALLOWLIST, parseTargetRequest, resolveSyncTarget, targetLabel,
-  type SyncAllowlist, type SyncTargetKind, type TargetRejection, type TargetRequest,
+  EMPTY_ALLOWLIST, fullModeAllowed, parseTargetRequest, resolveSyncTarget, targetLabel,
+  type ResolvedTarget, type SyncAllowlist, type SyncTargetKind, type TargetRejection, type TargetRequest,
 } from "../../core/src/syncTargets.js";
+import type { IdentitySubject, IdentityVerdict } from "../../core/src/identity.js";
+
+/** Graph-Prüfung "dieselbe Person" (core/src/identity.ts); läuft VOR der Transaktion, nie unter der User-Sperre */
+export type IdentityCheck = (tenantId: string, s: IdentitySubject) => Promise<IdentityVerdict>;
 
 export type PipelineMode = "busy" | "full";
 
@@ -52,6 +56,8 @@ export type CreatePipelineResult =
   | { kind: "created" | "replayed"; pipeline: PipelineDto }
   | { kind: "user_not_provisioned" }
   | { kind: "target_not_allowed"; reason: TargetRejection }
+  /** Graph vorübergehend nicht erreichbar → 503 + Retry-After, nie "erlaubt" */
+  | { kind: "identity_unavailable"; retryAfterSeconds: number }
   | { kind: "idempotency_conflict" }
   | { kind: "limit_reached"; limit: number };
 
@@ -93,7 +99,31 @@ export class PrismaPipelineStore implements PipelineStore {
     private readonly newId: () => string = randomUUID,
     /** Admin-Allowlist der Sync-Ziele (APP_CONFIG); leer = kein Ziel wählbar */
     private readonly targets: SyncAllowlist = EMPTY_ALLOWLIST,
+    /** fehlt sie, sind account-Ziele (außer Opt-in localPart) nicht anlegbar */
+    private readonly identity?: IdentityCheck,
+    private readonly now: () => Date = () => new Date(),
   ) {}
+
+  /** Ziel + Modus + dieselbe Person – ohne DB-Sperre (Graph-Aufruf). Ergebnis wird unter der Sperre erneut geprüft. */
+  private async precheck(i: CreatePipelineInput, ownerUserName: string | null, ownerObjectId: string | null):
+      Promise<{ ok: true; target: ResolvedTarget; verifiedAttribute: string | null } | { ok: false; result: CreatePipelineResult }> {
+    const t = resolveSyncTarget(this.targets, ownerUserName, i.target);
+    if (!t.ok) return { ok: false, result: { kind: "target_not_allowed", reason: t.reason } };
+    if (i.mode === "full" && !fullModeAllowed(this.targets, t.target)) {
+      return { ok: false, result: { kind: "target_not_allowed", reason: "full_mode_not_allowed" } };
+    }
+    if (t.target.kind !== "account") return { ok: true, target: t.target, verifiedAttribute: null };
+    const attribute = t.target.identityAttribute ?? "employeeId";
+    if (attribute === "localPart") return { ok: true, target: t.target, verifiedAttribute: "localPart" };
+    if (!this.identity || !ownerObjectId) return { ok: false, result: { kind: "target_not_allowed", reason: "identity_unverified" } };
+    const v = await this.identity(i.tenantId, { ownerObjectId, mailbox: t.target.mailbox ?? "", entraTenantId: t.target.entraTenantId, attribute });
+    if (v.kind === "unavailable") {
+      const sec = Number(v.retryAfter);
+      return { ok: false, result: { kind: "identity_unavailable", retryAfterSeconds: Number.isFinite(sec) && sec > 0 ? Math.min(Math.ceil(sec), 300) : 5 } };
+    }
+    if (v.kind === "rejected") return { ok: false, result: { kind: "target_not_allowed", reason: "identity_unverified" } };
+    return { ok: true, target: t.target, verifiedAttribute: attribute };
+  }
 
   endPipeline(i: EndPipelineInput): Promise<EndPipelineResult> {
     return endPipelineInStore(this.db, i);
@@ -103,10 +133,14 @@ export class PrismaPipelineStore implements PipelineStore {
     // User-ID vorab ohne Sperre auflösen (nur für den Sperrschlüssel); maßgeblich ist die Prüfung NACH der Sperre
     const pre = await this.db.scimUser.findFirst({
       where: { tenantId: i.tenantId, externalId: i.entraObjectId, deletionRequestedAt: null },
-      select: { id: true },
+      select: { id: true, userName: true },
     });
     if (!pre) return { kind: "user_not_provisioned" };
     const userId = pre.id;
+    // Ziel/Modus/Person VOR der Sperre (Graph-Aufruf darf die SCIM-Sperre nie halten); Objekt-ID = oid aus dem Token
+    const pc = await this.precheck(i, pre.userName ?? null, i.entraObjectId);
+    if (!pc.ok) return pc.result;
+    const verifiedAt = pc.verifiedAttribute && pc.verifiedAttribute !== "localPart" ? this.now() : null;
 
     return withTxRetry(this.db, async (tx) => {
       await lockUserForWrite(tx, i.tenantId, userId);
@@ -117,10 +151,13 @@ export class PrismaPipelineStore implements PipelineStore {
       });
       if (!user) return { kind: "user_not_provisioned" } as const;
 
-      // Ziel nur aus der Allowlist; Same-Person-Prüfung gegen den userName NACH der Sperre (frischer Stand)
+      // Ziel erneut NACH der Sperre (frischer userName); muss dasselbe Ziel ergeben wie die Vorprüfung
       const t = resolveSyncTarget(this.targets, user.userName ?? null, i.target);
       if (!t.ok) return { kind: "target_not_allowed", reason: t.reason } as const;
       const target = t.target;
+      if (target.mailbox !== pc.target.mailbox || target.entraTenantId !== pc.target.entraTenantId) {
+        return { kind: "target_not_allowed", reason: "identity_unverified" } as const;
+      }
 
       const existing = await tx.pipeline.findFirst({
         where: { tenantId: i.tenantId, ownerUserId: userId, idempotencyKey: i.idempotencyKey },
@@ -150,6 +187,8 @@ export class PrismaPipelineStore implements PipelineStore {
           targetMailbox: target.mailbox,
           targetEntraTenantId: target.entraTenantId,
           targetRef: target.ref,
+          identityVerifiedAt: verifiedAt,
+          identityAttribute: pc.verifiedAttribute,
         },
       });
 

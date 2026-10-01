@@ -13,7 +13,7 @@ import { EntraTokenVerifier } from "../src/entraAuth.js";
 import { createAppServer, type AppServerDeps } from "../src/server.js";
 import { PgStatusRepo } from "../src/statusApi.js";
 import { parseBusyRange } from "../src/availabilityApi.js";
-import { InMemoryDelayedJobQueue, type BusyInterval, type FetchLike, type PgLike, type SyncAllowlist } from "../../core/src/index.js";
+import { BusyTooManyError, InMemoryDelayedJobQueue, type BusyInterval, type FetchLike, type PgLike, type SyncAllowlist } from "../../core/src/index.js";
 import { MemoryScimStore } from "../../scim/src/memoryStore.js";
 import { HashedTokenAuthenticator } from "../../scim/src/auth.js";
 
@@ -38,7 +38,7 @@ const env = (extra: Record<string, unknown>) => ({
 
 test("Config: Sync-Ziele optional; angegeben streng geprüft und normalisiert", () => {
   const empty = loadConfig(env({}));
-  assert.deepEqual(syncAllowlistFrom(empty.secrets), { homeEntraTenantId: TID, ownDomains: [], linkedTenants: [], teamCalendars: [], bookingEnabled: false });
+  assert.deepEqual(syncAllowlistFrom(empty.secrets), { homeEntraTenantId: TID, ownDomains: [], ownDomainsIdentityAttribute: "objectId", linkedTenants: [], teamCalendars: [], bookingEnabled: false });
   assert.equal(empty.secrets.syncTentative, false);
   const full = loadConfig(env({
     ownDomains: ["Acme-Alias.example"],
@@ -47,9 +47,9 @@ test("Config: Sync-Ziele optional; angegeben streng geprüft und normalisiert", 
     bookingApiToken: BOOKING_TOKEN, syncTentative: true,
   }));
   assert.deepEqual(syncAllowlistFrom(full.secrets), {
-    homeEntraTenantId: TID, ownDomains: ["acme-alias.example"],
-    linkedTenants: [{ entraTenantId: LINKED, label: "Tochter GmbH", domains: ["tochter.example"] }],
-    teamCalendars: [{ id: "vertrieb", mailbox: "vertrieb@acme.example", label: "Vertrieb" }], bookingEnabled: true,
+    homeEntraTenantId: TID, ownDomains: ["acme-alias.example"], ownDomainsIdentityAttribute: "objectId",
+    linkedTenants: [{ entraTenantId: LINKED, label: "Tochter GmbH", domains: ["tochter.example"], identityAttribute: "employeeId" }],
+    teamCalendars: [{ id: "vertrieb", mailbox: "vertrieb@acme.example", label: "Vertrieb", allowFullMode: false }], bookingEnabled: true,
   });
   assert.equal(full.secrets.syncTentative, true);
   const bad: Array<[Record<string, unknown>, RegExp]> = [
@@ -64,6 +64,10 @@ test("Config: Sync-Ziele optional; angegeben streng geprüft und normalisiert", 
     [{ teamCalendars: [{ id: "v", mailbox: "v@a.de", label: "V" }, { id: "v", mailbox: "w@a.de", label: "W" }] }, /doppelte id/],
     [{ bookingApiToken: "kurz" }, /bookingApiToken/],
     [{ syncTentative: "ja" }, /syncTentative/],
+    [{ linkedTenants: [{ entraTenantId: LINKED, label: "a", domains: ["a.de"], identityAttribute: "objectId" }] }, /nur im eigenen Mandanten/],
+    [{ linkedTenants: [{ entraTenantId: LINKED, label: "a", domains: ["a.de"], identityAttribute: "mail" }] }, /identityAttribute/],
+    [{ ownDomainsIdentityAttribute: "upn" }, /ownDomainsIdentityAttribute/],
+    [{ teamCalendars: [{ id: "v", mailbox: "v@a.de", label: "V", allowFullMode: "ja" }] }, /allowFullMode/],
   ];
   for (const [extra, re] of bad) assert.throws(() => loadConfig(env(extra)), (e: unknown) => e instanceof ConfigError && re.test(e.message), JSON.stringify(extra));
 });
@@ -130,10 +134,10 @@ test("GET /me/sync-targets: Vorschläge aus dem eigenen userName, Teams nur id+l
     assert.equal(r.status, 200);
     assert.deepEqual(r.json, {
       account: { allowed: true, suggestions: [
-        { entraTenantId: null, label: "acme-alias.example", mailbox: "max.muster@acme-alias.example" },
-        { entraTenantId: LINKED, label: "Tochter GmbH", mailbox: "max.muster@tochter.example" },
+        { entraTenantId: null, label: "acme-alias.example", mailbox: "max.muster@acme-alias.example", verified: false },
+        { entraTenantId: LINKED, label: "Tochter GmbH", mailbox: "max.muster@tochter.example", verified: false },
       ] },
-      team: [{ id: "vertrieb", label: "Vertrieb" }],
+      team: [{ id: "vertrieb", label: "Vertrieb", fullMode: false }],
       booking: { enabled: true },
     });
     assert.equal(JSON.stringify(r.json).includes("vertrieb@acme.example"), false, "kein Team-Postfach im Browser");
@@ -218,5 +222,19 @@ test("GET /availability/busy: Token timing-sicher, Zeitraum geprüft, Intervalle
   await withApp({ booking: { token: null, repo } }, async (port) => {
     const r = await call(port, "GET", "/api/v1/availability/busy?from=2026-10-02T08:00:00Z&to=2026-10-03T08:00:00Z", { Authorization: `Bearer ${BOOKING_TOKEN}` });
     assert.deepEqual([r.status, r.json.error], [404, "booking_api_disabled"]);
+  });
+});
+
+test("Review #5: sync-targets zeigt je Team fullMode; Review #3: zu viele Belegt-Intervalle → 503 busy_too_many statt Abschneiden", async () => {
+  const owners = { getActiveUserName: async () => "Max.Muster@acme.example" };
+  const allow = { ...ALLOW, teamCalendars: [{ ...ALLOW.teamCalendars[0], allowFullMode: true }, { id: "empfang", mailbox: "empfang@acme.example", label: "Empfang" }] };
+  await withApp({ syncTargets: { allowlist: allow, owners } }, async (port) => {
+    const r = await call(port, "GET", "/api/v1/me/sync-targets", { Authorization: `Bearer ${tok()}` });
+    assert.deepEqual(r.json.team, [{ id: "vertrieb", label: "Vertrieb", fullMode: true }, { id: "empfang", label: "Empfang", fullMode: false }]);
+  });
+  const repo = { busyIntervals: async (): Promise<BusyInterval[]> => { throw new BusyTooManyError(5000); } };
+  await withApp({ booking: { token: BOOKING_TOKEN, repo } }, async (port) => {
+    const r = await call(port, "GET", "/api/v1/availability/busy?from=2026-10-02T08:00:00Z&to=2026-10-03T00:00:00Z", { Authorization: `Bearer ${BOOKING_TOKEN}` });
+    assert.deepEqual([r.status, r.json], [503, { error: "busy_too_many", max: 5000 }]);
   });
 });

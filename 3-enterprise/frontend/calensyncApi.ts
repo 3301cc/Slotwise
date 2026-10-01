@@ -61,10 +61,28 @@ export interface SyncStatus {
 
 /** GET /api/v1/me/sync-targets – was der Nutzer als Ziel wählen darf */
 export interface SyncTargets {
-  account: { allowed: boolean; suggestions: { entraTenantId: string | null; label: string; mailbox: string }[] };
-  team: { id: string; label: string }[];
+  /**
+   * Vorschläge aus lokalem Teil × freigegebenen Domains – verified ist immer false: ob das Postfach wirklich
+   * derselben Person gehört, prüft der Server erst beim Anlegen per Microsoft Graph (sonst 422 identity_unverified).
+   */
+  account: { allowed: boolean; suggestions: { entraTenantId: string | null; label: string; mailbox: string; verified: boolean }[] };
+  /** fullMode: „Mit Details“ (Betreff + Ort) ist für diesen Team-Kalender freigegeben; sonst nur „Nur belegt“ anbieten */
+  team: { id: string; label: string; fullMode: boolean }[];
   booking: { enabled: boolean };
 }
+
+/** reason bei 422 target_not_allowed → deutsche Meldung */
+export const TARGET_REJECTION_MESSAGES: Record<string, string> = {
+  identity_unverified: "Das Postfach konnte nicht eindeutig Ihnen zugeordnet werden. Bitte wenden Sie sich an Ihre IT.",
+  full_mode_not_allowed: "Für diesen Team-Kalender ist nur „Nur belegt“ freigegeben.",
+  not_same_person: "Das Postfach gehört nicht zu Ihrem Konto.",
+  tenant_not_linked: "Dieser Mandant ist nicht freigegeben.",
+  domain_not_allowed: "Diese Domain ist nicht freigegeben.",
+  target_is_source: "Das ist bereits Ihr Quellkalender.",
+  own_mailboxes_not_configured: "Zweite Konten im eigenen Unternehmen sind nicht freigegeben.",
+  team_not_found: "Dieser Team-Kalender ist nicht (mehr) freigegeben.",
+  booking_disabled: "Die Buchungsseite ist nicht freigegeben.",
+};
 
 export type SyncTarget =
   | { kind: "account"; mailbox: string; entraTenantId: string | null }
@@ -146,6 +164,11 @@ export const PIPELINE_ERROR_MESSAGES: Record<string, string> = {
   invalid_request: "Microsoft 365 hat den Abgleich abgelehnt – bitte an Ihre IT wenden.",
   exhausted: "Abgleich nach mehreren Versuchen abgebrochen – bitte an Ihre IT wenden.",
   event_rejected: "Ein einzelner Termin wurde vom Zielkalender abgelehnt; die übrigen werden abgeglichen.",
+  identity_unverified: "Das Zielpostfach konnte nicht (mehr) eindeutig Ihnen zugeordnet werden – der Abgleich ist angehalten. Bitte an Ihre IT wenden.",
+  full_mode_not_allowed: "Für diesen Team-Kalender sind nur Belegt-Zeiten freigegeben; Details werden nicht übertragen.",
+  cleanup_failed: "Die Termine im Zielkalender konnten nicht vollständig entfernt werden – Ihre IT ist informiert.",
+  cleanup_target_not_allowed: "Die Termine im Zielkalender können nicht entfernt werden, weil das Ziel nicht mehr freigegeben ist – Ihre IT ist informiert.",
+  cleanup_transient: "Das Entfernen der Termine im Zielkalender wird automatisch wiederholt.",
   target_not_found: "Der Zielkalender existiert nicht mehr.",
   mailbox_not_found: "Das Zielpostfach wurde nicht gefunden.",
   calendar_not_found: "Der Kalender wurde nicht gefunden.",
