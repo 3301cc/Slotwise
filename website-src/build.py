@@ -144,6 +144,20 @@ def main():
         "Startseite (cr)",
     )
 
+    # 4c) Hauptmenü: „Dashboard“ nach FAQ. /dashboard ist eine statische Seite außerhalb der SPA,
+    #     daher ein normales <a> statt NavLink (If) – sonst greift die 404-Route der SPA.
+    s = replace_once(
+        s,
+        '{label:"FAQ",to:"/faq"}];',
+        '{label:"FAQ",to:"/faq"},{label:"Dashboard",to:"/dashboard",ext:!0}];',
+        "Hauptmenü (ec)",
+    )
+    nav_old = 'ec.map(a=>(0,ze.jsx)(If,{to:a.to,className:Oh,children:a.label},a.to))'
+    nav_new = 'ec.map(a=>a.ext?(0,ze.jsx)("a",{href:a.to,className:Oh({isActive:!1}),children:a.label},a.to):(0,ze.jsx)(If,{to:a.to,className:Oh,children:a.label},a.to))'
+    if s.count(nav_old) != 2:
+        sys.exit("Menü-Rendering (Desktop + Mobil) nicht gefunden")
+    s = s.replace(nav_old, nav_new)
+
     # 5) Texte
     s = replace_once(
         s,
