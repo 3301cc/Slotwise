@@ -3,7 +3,7 @@
  *
  * Bewusst gegen ein strukturelles Minimal-Interface typisiert statt gegen den generierten PrismaClient:
  * so kompiliert dieses Modul unabhängig vom generierten Client, und jeder echte PrismaClient mit dem Schema
- * aus prisma/scim.prisma erfüllt das Interface.
+ * aus prisma/schema.prisma (Repo-Root) erfüllt das Interface.
  *
  * Kern-Garantie (transaktionale Outbox): Kappung und Teardown-Auftrag sind EIN Commit.
  *   pipelines → 'revoked' · provider_tokens → gelöscht · webhook_channels → stop_requested
@@ -50,7 +50,10 @@ import {
   StoreBusyError,
 } from "./types.js";
 
-type Args = Record<string, unknown>;
+// any statt Record<string, unknown>: Prismas generierte Delegates verlangen exakte Argument-Typen (SelectSubset),
+// ein Record mit Index-Signatur wäre dem echten PrismaClient nicht zuweisbar (Rückgabetypen bleiben geprüft).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Args = any;
 
 interface CountResult {
   count: number;

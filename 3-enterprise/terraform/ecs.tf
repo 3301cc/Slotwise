@@ -456,7 +456,8 @@ resource "aws_ecs_task_definition" "migrate" {
         { name = "DB_NAME", value = aws_rds_cluster.this.database_name },
         { name = "DB_PORT", value = tostring(aws_rds_cluster.this.port) },
         { name = "DB_USER", value = "calensync_migrator" },
-        { name = "PRISMA_SCHEMA", value = "prisma/schema.prisma" },
+        # Kein PRISMA_SCHEMA: das Schema legen allein die SQL-Migrationen an (core/migrations/001 ff.).
+        # prisma/schema.prisma dient nur dem Client; "prisma migrate deploy" ohne prisma/migrations bricht mit P3005 ab.
         { name = "DB_IAM_AUTH", value = "true" },
         { name = "DB_POOL_MAX", value = "2" },
       ]

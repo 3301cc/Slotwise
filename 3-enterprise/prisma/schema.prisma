@@ -1,0 +1,147 @@
+// Prisma-Client-Schema des Mandanten-Backends (app/ + core/ + scim/).
+//
+// Quelle der Wahrheit für das DATENBANKSCHEMA sind die SQL-Migrationen in core/migrations (000–006), ausgeführt
+// von app/src/migrate.ts. Diese Datei bildet sie für den generierten Client nur ab (Spalten 1:1 per @map/@@map)
+// und wird NICHT für Migrationen benutzt (kein prisma/migrations, kein `prisma db push`).
+// Prüfen nach jeder Migration:  npx prisma db pull --print  gegen eine frisch migrierte Datenbank.
+//
+// In SQL vorhanden, in Prisma 6 nicht ausdrückbar (nur für den Client irrelevant):
+//   partielle Indizes  scim_users_tombstones, pipelines_owner_idempotency, webhook_channels_one_live,
+//                      webhook_channels_due_stop, webhook_channels_renew_due, job_queue_*
+//   CHECK-Constraints  webhook_channels_provider_valid, webhook_channels_google_verifiable,
+//                      pipelines_mode_valid, pipelines_busy_label_len, job_queue.status
+//   Rechte             audit_events: kein UPDATE/DELETE für calensync_app (001/003)
+// job_queue wird nur per $executeRaw / pg benutzt (core/src/retryQueue.ts) und ist deshalb kein Modell.
+
+generator client {
+  provider      = "prisma-client-js"
+  // Laufzeit-Image: linux/arm64 (Fargate Graviton), Debian 12 mit OpenSSL 3
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  // Nur für die Prisma-CLI (generate/validate/db pull). Die App verbindet sich über @prisma/adapter-pg mit dem
+  // IAM-Pool aus core/src/dbAuth.ts (app/src/main.ts), nicht über diese URL.
+  url      = env("DATABASE_URL")
+}
+
+/// SCIM-provisionierte Nutzer (001; deletion_requested_at aus 003)
+model ScimUser {
+  id                  String    @id @default(uuid())
+  tenantId            String    @map("tenant_id")
+  userName            String    @map("user_name")
+  userNameNormalized  String    @map("user_name_normalized")
+  /// Entra-Objekt-ID
+  externalId          String?   @map("external_id")
+  active              Boolean   @default(true)
+  displayName         String?   @map("display_name")
+  givenName           String?   @map("given_name")
+  familyName          String?   @map("family_name")
+  formattedName       String?   @map("formatted_name")
+  emails              Json      @default("[]")
+  department          String?
+  version             Int       @default(1)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  deprovisionedAt     DateTime? @map("deprovisioned_at") @db.Timestamptz(6)
+  /// SCIM DELETE: Tombstone ohne PII bis zum erfolgreichen Provider-Teardown; danach purgeDeletedUser
+  deletionRequestedAt DateTime? @map("deletion_requested_at") @db.Timestamptz(6)
+
+  pipelines Pipeline[]
+  tokens    ProviderToken[]
+
+  @@unique([tenantId, userNameNormalized])
+  @@unique([tenantId, externalId])
+  @@index([tenantId, active])
+  @@map("scim_users")
+}
+
+/// Sync-Pipeline je Nutzer (001; mode/busy_label/idempotency_key/created_at aus 005)
+model Pipeline {
+  id             String    @id
+  tenantId       String    @map("tenant_id")
+  ownerUserId    String    @map("owner_user_id")
+  /// pending | pending_scope | active | paused | revoked | blocked_scope | config_error | error
+  status         String    @default("active")
+  revokedReason  String?   @map("revoked_reason")
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  /// busy | full
+  mode           String?
+  busyLabel      String?   @map("busy_label")
+  idempotencyKey String?   @map("idempotency_key")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  owner ScimUser @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, ownerUserId, status])
+  @@map("pipelines")
+}
+
+/// Verschlüsselte Provider-Refresh-Tokens (nur bei delegiertem OAuth; im Admin-Consent-Modell leer).
+/// ciphertext = AES-256-GCM(dataKey), dataKey = KMS-verschlüsselt mit alias/<tenant>-tokens.
+model ProviderToken {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  userId           String   @map("user_id")
+  provider         String
+  ciphertext       Bytes
+  encryptedDataKey Bytes    @map("encrypted_data_key")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user ScimUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, provider])
+  @@map("provider_tokens")
+}
+
+/// Webhook-Abo bei Microsoft Graph oder Google (001; Teardown 003, Google 004, Verlängerung 006).
+/// userId/pipelineId BEWUSST ohne @relation: die Zeile muss das Löschen des Users überleben, bis das Abo beim
+/// Provider beendet ist (core/src/subscriptionTeardown.ts).
+model WebhookChannel {
+  id                     String    @id
+  tenantId               String    @map("tenant_id")
+  userId                 String    @map("user_id")
+  pipelineId             String    @map("pipeline_id")
+  /// microsoft | google
+  provider               String
+  providerSubscriptionId String    @map("provider_subscription_id")
+  /// Google: X-Goog-Resource-ID (channels.stop)
+  providerResourceId     String?   @map("provider_resource_id")
+  clientState            String?   @map("client_state")
+  expiresAt              DateTime? @map("expires_at") @db.Timestamptz(6)
+  stopRequestedAt        DateTime? @map("stop_requested_at") @db.Timestamptz(6)
+  stoppedAt              DateTime? @map("stopped_at") @db.Timestamptz(6)
+  /// stopped | already_gone | expired | subscription_removed | renew_404_subscription_gone
+  stopNote               String?   @map("stop_note")
+  stopAttempts           Int       @default(0) @map("stop_attempts")
+  nextStopAttemptAt      DateTime? @map("next_stop_attempt_at") @db.Timestamptz(6)
+  lastStopError          String?   @map("last_stop_error")
+  /// Google: höchste angenommene X-Goog-Message-Number (Replay-Schutz)
+  lastMessageNumber      BigInt?   @map("last_message_number")
+  lastRenewedAt          DateTime? @map("last_renewed_at") @db.Timestamptz(6)
+  renewError             String?   @map("renew_error")
+  renewPausedUntil       DateTime? @map("renew_paused_until") @db.Timestamptz(6)
+
+  @@unique([provider, providerSubscriptionId], map: "webhook_channels_sub")
+  @@index([tenantId, userId])
+  @@map("webhook_channels")
+}
+
+/// Manipulationsevidentes Audit-Log (Hash-Kette je Mandant). Append-only: calensync_app hat kein UPDATE/DELETE.
+model AuditEvent {
+  seq          BigInt   @id @default(autoincrement())
+  tenantId     String   @map("tenant_id")
+  requestId    String   @map("request_id")
+  actor        String
+  action       String
+  targetUserId String?  @map("target_user_id")
+  outcome      String
+  detail       Json
+  at           DateTime @db.Timestamptz(6)
+  prevHash     String   @map("prev_hash")
+  hash         String   @unique
+
+  @@index([tenantId, seq])
+  @@map("audit_events")
+}

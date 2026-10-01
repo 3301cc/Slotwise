@@ -1,7 +1,9 @@
 /**
  * Einmal-Task im Deployment (ECS run-task, siehe Terraform "migrate" / "db-bootstrap"):
  *
- *   node dist/app/src/migrate.js               Migrator: Prisma-Schema (falls PRISMA_SCHEMA gesetzt) + core/migrations
+ *   node dist/app/src/migrate.js               Migrator: core/migrations (001 = Basisschema; Prisma-Migrationen nur,
+ *                                              falls PRISMA_SCHEMA gesetzt UND prisma/migrations vorhanden ist –
+ *                                              im Standard-Deployment nicht: prisma/schema.prisma ist nur der Client)
  *                                              Login als calensync_migrator per IAM-Token
  *   node dist/app/src/migrate.js --bootstrap   Einmalig: 000_bootstrap_roles.sql als Master-User
  *
@@ -38,7 +40,8 @@ async function main(): Promise<void> {
     user = env("DB_USER");
     password = await rdsTokenSource({ host, port, user, region: env("AWS_REGION") }).getAuthToken();
 
-    // 1) Prisma-Schema der Anwendung (Tabellen scim_users, pipelines, webhook_channels …)
+    // 1) Optional: Prisma-Migrationen. Standard ist AUS – die Tabellen scim_users, pipelines, webhook_channels,
+    //    provider_tokens, audit_events legt core/migrations/001_base_schema.sql an.
     const schema = process.env.PRISMA_SCHEMA;
     if (schema) {
       const url = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}` +
