@@ -1226,6 +1226,51 @@ function SwDashboardMock() {
   );
 }
 
+// Startseite: kompakter Live-Feed (die volle Ansicht mit Kennzahlen und Transkripten bleibt auf /ki-agent).
+// Beispieldaten aus dem Demo-Protokoll (Lh); deshalb „Beispiel“ statt „Live“, keine Anrufernummern.
+const SwFeedCalls = Lh, SwFeedTone = Sp, SwCx = H;
+function SwLiveFeedCompact() {
+  const rows = SwFeedCalls.slice(0, 4);
+  return (
+    <SwSection tone="wash" aria-labelledby="live-feed-title">
+      <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-12">
+        <div>
+          <SwBadge tone="emerald" dot>KI-Agent · DE, EN</SwBadge>
+          <h2 id="live-feed-title" className="mt-4 font-display text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Was dein Agent übernommen hat — nachvollziehbar.</h2>
+          <p className="mt-3 text-base leading-relaxed text-slate-600">Du entscheidest, wie viel der Agent allein macht. Jeder Anruf wird zusammengefasst und im Kalender abgelegt. Transkripte werden nach 30 Tagen gelöscht.</p>
+          <div className="mt-5"><SwButton as={SwLink} to="/ki-agent" variant="secondary">So funktioniert der Agent<SwArrow size={16} /></SwButton></div>
+        </div>
+        <SwCard className="overflow-hidden">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <p className="text-sm font-semibold text-slate-900">Gesprächsprotokoll <span className="font-normal text-slate-500">· neueste zuerst</span></p>
+            <SwBadge tone="neutral">Beispiel</SwBadge>
+          </div>
+          <ol className="max-h-[22rem] divide-y divide-slate-100 overflow-y-auto" tabIndex={0} aria-label="Beispiel-Gesprächsprotokoll">
+            {rows.map((c) => {
+              const tone = SwFeedTone[c.status] ?? "neutral";
+              return (
+                <li key={c.id} className="flex items-start gap-3 px-4 py-3">
+                  <span className={SwCx("mt-0.5 grid h-8 w-8 flex-none place-items-center rounded-lg", tone === "emerald" && "bg-emerald-50 text-emerald-600", tone === "rose" && "bg-rose-50 text-rose-600", tone === "amber" && "bg-amber-50 text-amber-600", tone === "neutral" && "bg-slate-100 text-slate-500")}><SwPhone size={14} /></span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <SwBadge tone={tone}>{c.status}</SwBadge>
+                      <span className="tabular text-xs text-slate-400">{c.time}</span>
+                    </div>
+                    <p className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-slate-600">{c.summary}</p>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+          <div className="border-t border-slate-100 px-4 py-2.5 text-center">
+            <SwLink to="/ki-agent" className="text-sm font-medium text-slate-600 hover:text-slate-900">Alle Interaktionen ansehen</SwLink>
+          </div>
+        </SwCard>
+      </div>
+    </SwSection>
+  );
+}
+
 function SwDashboardSection() {
   return (
     <SwSection tone="white" aria-labelledby="dash-title">
