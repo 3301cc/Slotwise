@@ -224,6 +224,17 @@ def main():
         "Impressum-Abschnitte (Einzelunternehmen)",
     )
 
+    # 4f) Preisseite: Abo-Checkout über Stripe (SwPlanCta/SwBillingNotice aus SitePatches.jsx).
+    #     Der ursprüngliche Button bleibt als fallback erhalten – ohne /api/billing/config {enabled:true} ändert sich nichts.
+    plan_cta = '(0,b.jsxs)(P,{as:"a",href:ot,variant:a?"primary":"secondary",className:"w-full",children:[i?"Kostenlos starten":`${K.trial.days} Tage testen`,(0,b.jsx)(rt,{size:14})]})'
+    s = replace_once(s, plan_cta, '(0,b.jsx)(SwPlanCta,{id:e,yearly:l,highlight:a,fallback:' + plan_cta + '})', "Preiskarte-Button (Mp)")
+    s = replace_once(
+        s,
+        '(0,b.jsx)("div",{className:"mt-10 grid gap-6 md:grid-cols-2 xl:grid-cols-4",children:hu.map(',
+        '(0,b.jsx)(SwBillingNotice,{}),(0,b.jsx)("div",{className:"mt-10 grid gap-6 md:grid-cols-2 xl:grid-cols-4",children:hu.map(',
+        "Preisseite: Testmodus-Hinweis (rr)",
+    )
+
     # 5) Texte
     s = replace_once(
         s,

@@ -21,6 +21,7 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 | `slotwise-website-online/server/standalone.js` | eigener Server ohne Vercel (Hetzner, OVH, Docker) |
 | `slotwise-website-online/api/_lib/core/agent/` | KI-Agent: Regelwerk (portiert aus `2-packages-platform`), Bedrock-Client, Twilio, Kalender, Aktivität, Orchestrator |
 | `slotwise-website-online/api/agent/*.js` | Vercel-Einstiege des Agenten: `voice-webhook.js` (Twilio), `intake.js` (E-Mail), `[action].js` für alle Dashboard-Endpunkte (Vercel Hobby erlaubt max. 12 Funktionen) |
+| `slotwise-website-online/api/_lib/core/billing.js`, `api/billing/[action].js`, `checkout/erfolg/` | Stripe-Abo-Checkout der Preisseite (siehe „Abo-Checkout (Stripe)“) |
 | `slotwise-website-online/dashboard/` | Dashboard-Vorschau (`/dashboard`): Markup, Darstellung (`dashboard.js`), Datenschicht (`dashboard-data.js`), Ansichten Kunden / Event-Typen / Berichte (`views.js`, Hash-Routing `#kunden`, `#event-typen`, `#berichte`), Erklär-Tour (`tour.js`, eigenes CSS, kein Build nötig), gebautes CSS |
 | `website-src/dashboard/` | Tailwind-Quelle und -Konfiguration des Dashboards |
 | `slotwise-website-online/dashboard/enterprise.js`, `auth/callback/`, `vendor/msal-browser.min.js` | Microsoft-365-Anbindung ans Enterprise-Backend (`3-enterprise/`): aktiv, sobald die `CALENSYNC_API`/`ENTRA_*`-Werte in `site-config.js` gesetzt sind |
@@ -141,10 +142,55 @@ Ohne diese Variablen antwortet `/api/waitlist` im Deployment mit 503 und das For
 
 Export: `curl -H "Authorization: Bearer $WAITLIST_ADMIN_TOKEN" https://…/api/waitlist/export > warteliste.csv`
 
+## Abo-Checkout (Stripe)
+
+```
+/preise ──GET──▶ /api/billing/config   { enabled, test }      (aus → Buttons bleiben bei der Warteliste)
+        ──POST─▶ /api/billing/checkout { plan, interval } ─▶ Stripe Checkout Session (price_data inline) ─▶ { url }
+Stripe  ──POST─▶ /api/billing/webhook  (Signatur über den Roh-Body) ─▶ Store: billing:sub:<sub_id>, Liste billing:log
+```
+
+Logik in `api/_lib/core/billing.js`, Vercel-Einstieg `api/billing/[action].js` (eine Funktion für alle drei Routen).
+Preise stehen serverseitig in `PLAN_PRICES` (Professional 15 € / 12 €, Business 24 € / 19 € pro Host und Monat, netto);
+ein Test vergleicht sie mit `2-packages-platform/packages/platform/config/plans.json`. Produkte oder Preise müssen im
+Stripe-Dashboard nicht angelegt werden. Starter bleibt Warteliste, Enterprise Gesprächstermin.
+
+| Key | Pflicht | Inhalt |
+|---|---|---|
+| `STRIPE_SECRET_KEY` | ja | Geheimer Schlüssel `sk_test_…` (oder eingeschränkter `rk_test_…` mit Schreibrecht auf Checkout Sessions). Ohne: Checkout aus, Preisseite unverändert |
+| `STRIPE_WEBHOOK_SECRET` | ja | Signatur-Geheimnis des Webhook-Endpunkts (`whsec_…`). Ohne: Checkout ebenfalls aus, damit keine Abos unbemerkt abgeschlossen werden |
+| `STRIPE_LIVE` | nein | Nur `"1"` erlaubt einen Live-Schlüssel (`sk_live_…`/`rk_live_…`). Sonst sperrt ein Live-Schlüssel die Abrechnung (Log: „Live-Schlüssel, aber STRIPE_LIVE …“) – Schutz, damit vor dem Livegang der App kein echtes Geld eingezogen wird |
+| `STRIPE_REQUIRE_TOS` | nein | `"1"`: Kunde muss im Checkout den AGB zustimmen (`consent_collection`). Vorher im Stripe-Dashboard unter Einstellungen → Öffentliche Unternehmensdetails eine AGB-URL hinterlegen, sonst lehnt Stripe jede Session ab |
+| `STRIPE_AUTOMATIC_TAX` | nein | `"1"`: Stripe Tax berechnet die Umsatzsteuer (`automatic_tax`). Die Preise sind netto (`tax_behavior: exclusive`); **ohne Stripe Tax wird keine MwSt. aufgeschlagen**. Stripe Tax im Dashboard aktivieren und die Steuerregistrierung (Deutschland) eintragen, dann setzen |
+| `SITE_URL` | ja | Basis für Rücksprung-Adressen: `<SITE_URL>/checkout/erfolg?session_id=…` und `<SITE_URL>/preise?checkout=abgebrochen` |
+
+Gespeichert wird im selben Store wie die Warteliste (Upstash Redis Frankfurt): je Abo `subscriptionId`, `customerId`,
+`checkoutSessionId`, `status`, `plan`, `interval`, `quantity`, `email`, `updated` (+ `lastPaymentFailedAt`), dazu die letzten
+200 Ereignisse ohne E-Mail und je Ereignis-ID ein Merker für 7 Tage (doppelte Zustellung). Die Rate-Grenze für Checkout-Starts
+ist 10 je IP in 10 Minuten.
+
+**Stripe einrichten:**
+
+1. Testmodus: Entwickler → API-Schlüssel → geheimen Schlüssel als `STRIPE_SECRET_KEY` (Vercel, Production + Preview).
+2. Entwickler → Webhooks → Endpunkt hinzufügen: URL `https://<SITE_URL>/api/billing/webhook`, Ereignisse
+   `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`,
+   `customer.subscription.deleted`, `invoice.payment_failed`. Signatur-Geheimnis als `STRIPE_WEBHOOK_SECRET`.
+3. Einstellungen → Kunden-E-Mails: „Erfolgreiche Zahlungen“ und Rechnungs-E-Mails einschalten (die Erfolgsseite kündigt eine
+   Bestätigung von Stripe an).
+4. Optional: AGB-URL hinterlegen → `STRIPE_REQUIRE_TOS=1`; Stripe Tax aktivieren → `STRIPE_AUTOMATIC_TAX=1`.
+5. Neu deployen. `GET /api/billing/config` zeigt `{"enabled":true,"test":true}`, die Preisseite „Jetzt abonnieren“ und den
+   Hinweis „Testmodus – es wird nichts abgebucht.“ Testkarte `4242 4242 4242 4242`.
+6. Live erst nach dem App-Start: Webhook-Endpunkt im Live-Modus neu anlegen (eigenes `whsec_…`), `STRIPE_SECRET_KEY=sk_live_…`
+   und `STRIPE_LIVE=1` setzen.
+
+Lokal testen: `stripe listen --forward-to localhost:3000/api/billing/webhook` liefert ein `whsec_…` für `npm run dev`.
+Der Webhook prüft die Signatur über die unveränderten Bytes (`readRawBody` in `http.js`, funktioniert mit node:http,
+Express ohne vorgeschalteten Body-Parser und Vercel); ein vorher zu JSON geparster Body wird mit 400 abgelehnt.
+
 ## Vor dem Livegang
 
 - Firmendaten in `site-config.js` eintragen → Entwurfs-Banner und `noindex` verschwinden automatisch.
-- Datenschutzerklärung rechtlich prüfen lassen (Abschnitte „Hosting dieser Website (Vercel)“ und „Warteliste“ nennen Vercel, Mailjet und Upstash).
+- Datenschutzerklärung rechtlich prüfen lassen (Abschnitte „Hosting dieser Website (Vercel)“ und „Warteliste“ nennen Vercel, Mailjet und Upstash; „Zahlungsabwicklung über Stripe“ nennt Stripe).
 - Sobald `app.slotwise.app` läuft: `VITE_APP_LIVE: "1"` in `site-config.js`.
 
 ## Mehrere Praxen (Mandanten)

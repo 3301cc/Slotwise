@@ -3,6 +3,7 @@
  *
  * Wird mit esbuild kompiliert und von scripts/apply-patches.py hinter die KI-Agent-Seite gesetzt.
  * Ersetzt im Bundle: ur (Demo-Widget), dr (/anmelden), nr (Layout), $h (Datenschutzerklärung).
+ * Ergänzt die Preisseite (Mp/rr) um den Stripe-Abo-Checkout: SwPlanCta, SwBillingNotice (Anker in build.py).
  * Nutzt swH/swF und die Sw*-Aliase aus KiAgentPage.jsx.
  *
  * Bundle-Bezeichner: Ue Card · P Button · re Badge · ge Section · H classNames · Ve Link
@@ -287,6 +288,101 @@ function SwWaitlistDialog() {
         </div>
       )}
     </>
+  );
+}
+
+// =====================================================================
+// Abo-Checkout (Stripe) auf /preise
+//   Nur wenn GET /api/billing/config { enabled: true } liefert: Professional/Business → „Jetzt abonnieren“.
+//   Sonst (aus, Fehler, keine API) bleibt der ursprüngliche Button (fallback) unverändert stehen.
+// =====================================================================
+let swBillingPromise = null;
+function swLoadBilling() {
+  if (!swBillingPromise) {
+    swBillingPromise = fetch("/api/billing/config", { headers: { Accept: "application/json" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => ({ enabled: Boolean(d && d.enabled === true), test: Boolean(d && d.enabled === true && d.test === true) }))
+      .catch(() => ({ enabled: false, test: false }));
+  }
+  return swBillingPromise;
+}
+function swUseBilling() {
+  const [billing, setBilling] = (0, cn.useState)(null);
+  (0, cn.useEffect)(() => {
+    let alive = true;
+    swLoadBilling().then((b) => alive && setBilling(b));
+    return () => { alive = false; };
+  }, []);
+  return billing;
+}
+
+const SW_CHECKOUT_PLANS = ["professional", "business"];
+const SW_CHECKOUT_ERRORS = {
+  rate_limited: "Zu viele Versuche. Bitte versuch es in ein paar Minuten noch einmal.",
+  billing_disabled: "Die Online-Bestellung ist gerade nicht verfügbar. Bitte versuch es später noch einmal.",
+  default: "Der Bezahlvorgang konnte nicht gestartet werden. Bitte versuch es noch einmal oder später.",
+};
+
+function SwPlanCta({ id, yearly, highlight, fallback }) {
+  const billing = swUseBilling();
+  const [busy, setBusy] = (0, cn.useState)(false);
+  const [error, setError] = (0, cn.useState)(null);
+  // Zurück aus Stripe über den Browser (bfcache): Button wieder freigeben
+  (0, cn.useEffect)(() => {
+    const onShow = (ev) => { if (ev.persisted) setBusy(false); };
+    window.addEventListener("pageshow", onShow);
+    return () => window.removeEventListener("pageshow", onShow);
+  }, []);
+  if (!billing || !billing.enabled || !SW_CHECKOUT_PLANS.includes(id)) return fallback;
+
+  async function start() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ plan: id, interval: yearly ? "year" : "month" }),
+      });
+      const d = await r.json().catch(() => null);
+      if (r.ok && d && typeof d.url === "string" && /^https:\/\//.test(d.url)) {
+        window.location.assign(d.url);
+        return;
+      }
+      setError(SW_CHECKOUT_ERRORS[d && d.error] || SW_CHECKOUT_ERRORS.default);
+    } catch {
+      setError(SW_CHECKOUT_ERRORS.default);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="w-full">
+      <SwButton variant={highlight ? "primary" : "secondary"} className="w-full" onClick={start} disabled={busy} aria-busy={busy ? "true" : undefined} data-checkout={id}>
+        {busy ? "Weiter zu Stripe …" : "Jetzt abonnieren"}
+        {!busy && <SwArrow size={14} />}
+      </SwButton>
+      {error && <p role="alert" className="mt-2 text-center text-xs font-medium text-red-700">{error}</p>}
+    </div>
+  );
+}
+
+/** Über den Plänen: Hinweis im Testmodus und nach Abbruch auf der Stripe-Seite (?checkout=abgebrochen). */
+function SwBillingNotice() {
+  const billing = swUseBilling();
+  const [cancelled] = (0, cn.useState)(() => typeof location !== "undefined" && new URLSearchParams(location.search).get("checkout") === "abgebrochen");
+  const test = Boolean(billing && billing.enabled && billing.test);
+  if (!test && !cancelled) return null;
+  return (
+    <div className="mt-6 flex flex-col items-center gap-2 text-center">
+      {test && (
+        <p className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800" data-billing-test>
+          Testmodus – es wird nichts abgebucht.
+        </p>
+      )}
+      {cancelled && <p role="status" className="text-sm text-slate-600">Bestellung abgebrochen – es wurde nichts berechnet.</p>}
+    </div>
   );
 }
 
@@ -756,6 +852,46 @@ function $h() {
         <p>
           Du kannst deine Einwilligung jederzeit widerrufen: über den Austragen-Link in jeder E-Mail von uns oder per Nachricht an {ht.email}.
           Wir löschen deine Daten nach dem Widerruf, spätestens wenn die Warteliste nach dem Start von CalenSync aufgelöst wird.
+        </p>
+      </SwPrivacySection>
+
+      <SwPrivacySection title="Zahlungsabwicklung über Stripe">
+        <p>
+          Wenn du auf der Preisseite ein Abo abschließt, leiten wir dich zur Bezahlseite von Stripe weiter. Anbieter ist die Stripe Payments
+          Europe, Ltd., 1 Grand Canal Street Lower, Grand Canal Dock, Dublin, D02 H210, Irland. Verarbeitet werden die Angaben, die du dort
+          machst: Name, E-Mail-Adresse, Rechnungsadresse, gegebenenfalls Firmenname und Umsatzsteuer-Identifikationsnummer, Zahlungsdaten
+          (etwa Kartennummer oder IBAN) sowie gewählter Plan, Abrechnungszeitraum und Anzahl der Hosts; dazu technische Daten wie IP-Adresse
+          und Geräte- und Browserangaben. Deine Zahlungsdaten erhalten wir nicht, sie bleiben bei Stripe.
+        </p>
+        <p>
+          Zweck ist der Abschluss und die Durchführung des Abovertrags einschließlich Zahlungsabwicklung und Rechnungsstellung.
+          Rechtsgrundlage ist Art. 6 Abs. 1 lit. b DSGVO. Die Angaben sind für den Vertragsschluss erforderlich; ohne sie ist eine
+          Bestellung nicht möglich.
+        </p>
+        <p>
+          Für die Zahlungsabwicklung handelt Stripe in unserem Auftrag als Auftragsverarbeiter nach Art. 28 DSGVO. Für die
+          Betrugsprävention und die Erfüllung eigener gesetzlicher Pflichten (etwa zur Geldwäscheprävention und aus dem Finanzaufsichtsrecht)
+          ist Stripe eigenständig verantwortlich; dafür gilt die Datenschutzerklärung von Stripe:{" "}
+          <a href="https://stripe.com/de/privacy" target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 underline underline-offset-2">stripe.com/de/privacy</a>.
+        </p>
+        <p>
+          Stripe kann Daten an die Stripe, Inc. in den USA übermitteln. Stripe, Inc. ist unter dem EU-U.S. Data Privacy Framework
+          zertifiziert; die Übermittlung stützt sich damit auf den Angemessenheitsbeschluss der EU-Kommission (Art. 45 DSGVO), ergänzend auf
+          die EU-Standardvertragsklauseln (Art. 46 Abs. 2 lit. c DSGVO).
+        </p>
+        <p>
+          Über Abschluss und Änderungen des Abos benachrichtigt uns Stripe über eine signierte Schnittstelle (Webhook). Wir speichern dazu je
+          Abo nur: Abo- und Kundennummer bei Stripe, Nummer des Bezahlvorgangs, Status, Plan, Abrechnungszeitraum, Anzahl der Hosts,
+          E-Mail-Adresse, den Zeitpunkt der letzten Änderung und gegebenenfalls einer fehlgeschlagenen Zahlung. Dazu kommt ein Protokoll der
+          letzten 200 Ereignisse (Art, Zeitpunkt, Abonummer, Status, Plan) ohne E-Mail-Adresse. Die Nummer jeder Benachrichtigung bewahren wir
+          sieben Tage auf, damit doppelte Zustellungen nicht doppelt verarbeitet werden. Gespeichert wird in der Redis-Datenbank in der Region
+          Frankfurt am Main (siehe Abschnitt „Warteliste“). Zur Missbrauchsabwehr wird beim Start des Bezahlvorgangs ein Hashwert deiner
+          IP-Adresse für zehn Minuten zwischengespeichert.
+        </p>
+        <p>
+          Die Abodaten speichern wir für die Dauer des Vertrags und löschen sie, sobald sie für die Vertragsabwicklung nicht mehr
+          erforderlich sind. Rechnungen erstellt und speichert Stripe für uns; sie werden nach den steuer- und handelsrechtlichen
+          Aufbewahrungspflichten (§ 147 AO, § 257 HGB) zehn Jahre aufbewahrt.
         </p>
       </SwPrivacySection>
 
