@@ -204,6 +204,26 @@ def main():
     )
     s = replace_once(s, '{label:"KI-Agent",to:"/ki-agent"},', '{label:"KI-Agent",to:"/ki-agent"},{label:"F\\xFCr Praxen",to:"/praxen"},', "Menüpunkt Praxen")
 
+    # 4e) Impressum: Rechtsform "Einzelunternehmen" (VITE_COMPANY_LEGAL_FORM). Inhaber statt "Vertreten durch",
+    #     Registereintrag und USt-IdNr. nur, wenn ausgefüllt (kein Handelsregister / keine USt-IdNr. ist dort zulässig).
+    #     Sonst würden deren Platzhalter die Seite dauerhaft als unvollständig (noindex) markieren.
+    ez = '(fl.VITE_COMPANY_LEGAL_FORM||"").trim()==="Einzelunternehmen"'
+    s = replace_once(
+        s,
+        'representative:Yl(fl.VITE_COMPANY_REPRESENTATIVE,"Vertretungsberechtigte Person"),register:Yl(fl.VITE_COMPANY_REGISTER,"Registergericht und -nummer"),vatId:Yl(fl.VITE_COMPANY_VAT_ID,"USt-IdNr."),',
+        f'legalForm:(fl.VITE_COMPANY_LEGAL_FORM||"").trim()||null,'
+        f'representative:{ez}?((fl.VITE_COMPANY_REPRESENTATIVE||"").trim()||Yl(fl.VITE_COMPANY_NAME,"Firma / Rechtsform")):Yl(fl.VITE_COMPANY_REPRESENTATIVE,"Vertretungsberechtigte Person"),'
+        f'register:{ez}&&!(fl.VITE_COMPANY_REGISTER||"").trim()?null:Yl(fl.VITE_COMPANY_REGISTER,"Registergericht und -nummer"),'
+        f'vatId:{ez}&&!(fl.VITE_COMPANY_VAT_ID||"").trim()?null:Yl(fl.VITE_COMPANY_VAT_ID,"USt-IdNr."),',
+        "Impressum-Felder (Einzelunternehmen)",
+    )
+    s = replace_once(
+        s,
+        '(0,x.jsxs)("section",{children:[(0,x.jsx)(Ie,{children:"Vertreten durch"}),(0,x.jsx)("p",{className:"mt-2",children:ht.representative})]}),(0,x.jsxs)("section",{children:[(0,x.jsx)(Ie,{children:"Registereintrag"}),(0,x.jsx)("p",{className:"mt-2",children:ht.register})]}),(0,x.jsxs)("section",{children:[(0,x.jsx)(Ie,{children:"Umsatzsteuer-Identifikationsnummer"}),(0,x.jsx)("p",{className:"mt-2",children:ht.vatId})]})',
+        '(0,x.jsxs)("section",{children:[(0,x.jsx)(Ie,{children:ht.legalForm==="Einzelunternehmen"?"Inhaber":"Vertreten durch"}),(0,x.jsx)("p",{className:"mt-2",children:ht.legalForm?[ht.representative," (",ht.legalForm,")"]:ht.representative})]}),ht.register&&(0,x.jsxs)("section",{children:[(0,x.jsx)(Ie,{children:"Registereintrag"}),(0,x.jsx)("p",{className:"mt-2",children:ht.register})]}),ht.vatId&&(0,x.jsxs)("section",{children:[(0,x.jsx)(Ie,{children:"Umsatzsteuer-Identifikationsnummer"}),(0,x.jsx)("p",{className:"mt-2",children:ht.vatId})]})',
+        "Impressum-Abschnitte (Einzelunternehmen)",
+    )
+
     # 5) Texte
     s = replace_once(
         s,
