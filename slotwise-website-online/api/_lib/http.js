@@ -20,6 +20,8 @@ const agentApi = require("./core/agent/api");
 
 const { scopedStore, tenantConfig, tenantByToken, tenantByNumber } = require("./core/tenants");
 const { createBilling } = require("./core/billing");
+const { createGoogle } = require("./core/google");
+const crypto = require("node:crypto");
 
 /** Eine Instanz je Prozess (Vercel: je Function-Container). */
 let instance = null;
@@ -33,12 +35,18 @@ function getBilling() {
   if (!billing) { const wl = getWaitlist(); billing = createBilling(wl.config, { store: wl.store }); }
   return billing;
 }
+let google = null;
+function getGoogle() {
+  if (!google) { const wl = getWaitlist(); google = createGoogle(wl.config, { store: wl.store }); }
+  return google;
+}
 /** tenant = null → Einzelbetrieb wie bisher (Schlüssel ohne Präfix, damit bestehende Daten erhalten bleiben). */
 function getAgent(tenant = null) {
   const id = tenant ? tenant.id : "default";
   if (!agents.has(id)) {
     const wl = getWaitlist();
-    agents.set(id, createAgent(tenantConfig(wl.config, tenant), { store: tenant ? scopedStore(wl.store, tenant.id) : wl.store }));
+    // google: Kalender-Anbindung des Mandanten (null, wenn „Google Kalender verbinden“ nicht eingerichtet ist)
+    agents.set(id, createAgent(tenantConfig(wl.config, tenant), { store: tenant ? scopedStore(wl.store, tenant.id) : wl.store, google: getGoogle().forTenant(id) }));
   }
   return agents.get(id);
 }
@@ -66,6 +74,32 @@ function agentRoute(method, by, run) {
       if (!tenant) return { status: 200, body: '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="de-DE">Diese Rufnummer ist nicht vergeben. Auf Wiederhören.</Say><Hangup/></Response>', headers: { "Content-Type": "text/xml; charset=utf-8" } };
     }
     return run(getAgent(tenant), tenantConfig(wl.config, tenant), i);
+  });
+}
+
+/**
+ * Google-Kalender-Route (core/google.js). connect/status/disconnect: Bearer bestimmt den Mandanten wie bei agentRoute
+ * (ohne TENANTS_JSON: WAITLIST_ADMIN_TOKEN, Mandant "default"). callback: ohne Bearer, der state trägt den Mandanten.
+ */
+function bearerMatches(expected, headers) {
+  const given = Buffer.from(String((headers && headers.authorization) || "").replace(/^Bearer\s+/i, ""));
+  const want = Buffer.from(String(expected || ""));
+  return want.length > 0 && given.length === want.length && crypto.timingSafeEqual(given, want);
+}
+function googleRoute(method, action) {
+  return handler(method, (wl, i) => {
+    const g = getGoogle();
+    if (!g.enabled) return g.disabled();
+    if (action === "callback") return g.callback(i);
+    if (wl.config.tenantsError) return { status: 503, body: { error: "config_error", detail: "TENANTS_JSON ungültig – siehe /api/agent/status" }, headers: { "Content-Type": "application/json" } };
+    const tenants = wl.config.tenants || [];
+    let tenantId = "default";
+    if (tenants.length) {
+      const t = tenantByToken(tenants, i.headers);
+      if (!t) return unauthorized;
+      tenantId = t.id;
+    } else if (!bearerMatches(wl.config.adminToken, i.headers)) return unauthorized;
+    return g[action](i, tenantId);
   });
 }
 
@@ -158,8 +192,8 @@ async function toInput(req, config, { raw = false } = {}) {
 function writeResult(res, result) {
   res.statusCode = result.status;
   res.setHeader("Cache-Control", "no-store");
+  for (const [k, v] of Object.entries(result.headers || {})) res.setHeader(k, v);   // auch bei Weiterleitungen (Set-Cookie)
   if (result.redirect) { res.setHeader("Location", result.redirect); return res.end(); }
-  for (const [k, v] of Object.entries(result.headers || {})) res.setHeader(k, v);
   if (result.body === undefined) return res.end();
   res.end(typeof result.body === "string" ? result.body : JSON.stringify(result.body));
 }
@@ -220,6 +254,11 @@ const routes = {
   "GET /api/billing/config": handler("GET", () => getBilling().publicConfig()),
   "POST /api/billing/checkout": handler("POST", (wl, i) => getBilling().checkout(i)),
   "POST /api/billing/webhook": rawHandler("POST", (wl, i) => getBilling().webhook(i)),
+  // Google Kalender verbinden (OAuth + Belegt-Abgleich + Termine eintragen)
+  "POST /api/google/connect": googleRoute("POST", "connect"),
+  "GET /api/google/callback": googleRoute("GET", "callback"),
+  "GET /api/google/status": googleRoute("GET", "status"),
+  "POST /api/google/disconnect": googleRoute("POST", "disconnect"),
 };
 
 /** Ein einzelner Handler für alle Routen (node:http, Express `app.use(apiHandler)`, Fastify über `fastify-express`). */
@@ -233,4 +272,4 @@ function apiHandler(req, res, next) {
   return writeResult(res, { status: 404, body: { error: "not_found" }, headers: { "Content-Type": "application/json" } });
 }
 
-module.exports = { handler, rawHandler, routes, apiHandler, toInput, writeResult, getWaitlist, getAgent, getBilling, readBody, readRawBody };
+module.exports = { handler, rawHandler, routes, apiHandler, toInput, writeResult, getWaitlist, getAgent, getBilling, getGoogle, readBody, readRawBody };

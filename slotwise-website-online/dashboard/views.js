@@ -657,6 +657,130 @@
   }
 
   // =====================================================================
+  // Google Kalender verbinden (Karte in der Übersicht neben Microsoft 365)
+  //   Nur live (Admin-Token): Status, „Google Kalender verbinden“ (Weiterleitung zu Google), „Trennen“.
+  //   Rücksprung von /api/google/callback mit ?google=connected bzw. ?google=error&reason=<code> → Meldung.
+  // =====================================================================
+  const GOOGLE_REASONS = {
+    access_denied: "Der Zugriff wurde bei Google abgelehnt. Es wurde nichts verbunden.",
+    missing_scope: "Ohne die Freigabe „Verfügbarkeit sehen“ (Frei/Belegt) kann CalenSync nicht abgleichen. Bitte erneut verbinden und den Zugriff vollständig erlauben.",
+    session_mismatch: "Die Verbindung wurde in einem anderen Browser begonnen oder ist abgelaufen. Bitte hier erneut auf „Google Kalender verbinden“ klicken.",
+    invalid_state: "Der Verbindungslink ist abgelaufen oder wurde schon benutzt. Bitte erneut verbinden.",
+    no_refresh_token: "Google hat keinen dauerhaften Zugriff erteilt. Bitte erneut verbinden.",
+    token_exchange_failed: "Google hat die Anmeldung nicht bestätigt. Bitte in ein paar Minuten erneut versuchen.",
+  };
+  const GOOGLE_BADGE = {
+    connected: ["Verbunden", "border-indigo-200 bg-indigo-50 text-indigo-700"],
+    off: ["Nicht verbunden", "border-slate-200 bg-slate-50 text-slate-600"],
+    reconnect: ["Neu verbinden", "border-amber-200 bg-amber-50 text-amber-900"],
+    na: ["Nicht eingerichtet", "border-slate-200 bg-slate-50 text-slate-500"],
+    demo: ["Vorschau", "border-slate-200 bg-slate-50 text-slate-500"],
+  };
+  const G = { flash: null, busy: false };
+
+  function googleFlashFromUrl() {
+    let q;
+    try { q = new URLSearchParams(location.search); } catch { return; }
+    const v = q.get("google");
+    if (!v) return;
+    if (v === "connected") G.flash = { ok: true, text: "Google Kalender verbunden. Belegte Zeiten werden ab sofort berücksichtigt." };
+    else if (v === "error") G.flash = { ok: false, text: GOOGLE_REASONS[q.get("reason")] || "Die Verbindung mit Google ist fehlgeschlagen. Bitte erneut versuchen." };
+    q.delete("google"); q.delete("reason");
+    const rest = q.toString();
+    try { history.replaceState(null, "", location.pathname + (rest ? `?${rest}` : "") + location.hash); } catch { /* egal */ }
+  }
+
+  function renderGoogle(st, err) {
+    const body = $("#google-body"), badge = $("#google-badge");
+    if (!body || !badge) return;
+    const setBadge = (k) => { badge.textContent = GOOGLE_BADGE[k][0]; badge.className = `rounded-full border px-2.5 py-0.5 text-xs font-medium ${GOOGLE_BADGE[k][1]}`; };
+    const flash = G.flash ? `<p class="mb-3 rounded-lg border px-3 py-2 text-xs ${G.flash.ok ? "border-indigo-200 bg-indigo-50 text-indigo-800" : "border-red-200 bg-red-50 text-red-800"}" role="${G.flash.ok ? "status" : "alert"}">${esc(G.flash.text)}</p>` : "";
+    const connectBtn = (label, disabled) => `<button type="button" class="btn-primary" data-g-connect ${disabled ? "disabled" : ""}>${svg(I.cal)}${label}</button>`;
+    if (err) {
+      setBadge("off");
+      body.innerHTML = `${flash}<p class="text-sm text-red-700" role="alert">Status konnte nicht geladen werden.</p><button type="button" class="btn-ghost mt-3" data-g-reload>Erneut versuchen</button>`;
+      return;
+    }
+    if (!st) { body.innerHTML = `${flash}<p class="text-sm text-slate-500">Lade Status …</p>`; return; }
+    if (st.demo) {
+      setBadge("demo");
+      body.innerHTML = `${flash}<p class="text-sm text-slate-600">In der Vorschau nicht verfügbar. Mit hinterlegtem Admin-Token (Live-Modus) lässt sich hier der Google Kalender verbinden: Der Assistent bietet dann keine Zeiten an, die dort belegt sind, und trägt feste Buchungen ein.</p>
+        <div class="mt-3">${connectBtn("Google Kalender verbinden", true)}</div>`;
+      return;
+    }
+    if (!st.enabled) {
+      setBadge("na");
+      body.innerHTML = `${flash}<p class="text-sm text-slate-600">Google Kalender ist auf diesem Server nicht eingerichtet. Die Einrichtung (Google Cloud Console, <code class="text-xs">GOOGLE_CLIENT_SECRET</code>) steht in der README.</p>`;
+      return;
+    }
+    if (st.connected) {
+      setBadge("connected");
+      const since = st.connectedAt ? fmtDate.format(new Date(st.connectedAt)) : "";
+      body.innerHTML = `${flash}
+        <p class="text-sm text-slate-700">Verbunden mit <b class="break-all text-slate-900">${esc(st.email || "Google-Konto")}</b>${since ? ` <span class="text-slate-500">seit ${esc(since)}</span>` : ""}.</p>
+        <ul class="mt-2 space-y-1 text-xs text-slate-600">
+          <li>Belegte Zeiten aus dem Hauptkalender werden bei jeder Terminsuche berücksichtigt (nur „belegt“, keine Inhalte).</li>
+          <li>${st.writeEvents ? "Feste Buchungen trägt CalenSync als privaten Termin mit Namen ein, ohne Telefonnummer." : "Termine werden nicht eingetragen – bei der Google-Freigabe wurde „Termine bearbeiten“ nicht erlaubt."}</li>
+        </ul>
+        <div class="mt-4 flex flex-wrap gap-2"><button type="button" class="btn-ghost" data-g-disconnect ${G.busy ? "disabled" : ""}>Trennen</button></div>`;
+      return;
+    }
+    const reconnect = st.lastError === "reconnect_required";
+    setBadge(reconnect ? "reconnect" : "off");
+    body.innerHTML = `${flash}
+      ${reconnect ? `<p class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">Der Zugriff auf ${esc(st.email || "den Google Kalender")} ist abgelaufen oder wurde widerrufen. Bis zur neuen Verbindung gleicht CalenSync nicht mit Google ab.</p>` : ""}
+      <p class="text-sm text-slate-600">Der Assistent bietet keine Zeiten an, die im Google Kalender belegt sind, und trägt feste Buchungen dort ein. Die Anmeldung läuft direkt bei Google; CalenSync sieht kein Passwort.</p>
+      <div class="mt-4">${connectBtn(reconnect ? "Google Kalender neu verbinden" : "Google Kalender verbinden", G.busy)}</div>`;
+  }
+
+  async function refreshGoogle() {
+    renderGoogle(null);
+    try { renderGoogle(await API.googleStatus()); } catch (e) { console.error("[google]", e && e.message); renderGoogle(null, true); }
+  }
+
+  function initGoogleCard() {
+    const box = $("#google-kalender");
+    if (!box) return;
+    googleFlashFromUrl();
+    if (G.flash) requestAnimationFrame(() => box.scrollIntoView({ block: "center" }));
+    box.addEventListener("click", async (e) => {
+      if (e.target.closest("[data-g-reload]")) return refreshGoogle();
+      const c = e.target.closest("[data-g-connect]");
+      if (c && !G.busy) {
+        G.busy = true; c.disabled = true; c.textContent = "Weiter zu Google …";
+        try {
+          const { url } = await API.googleConnect();
+          if (!/^https:\/\/accounts\.google\.com\//.test(String(url))) throw new Error("unerwartete Adresse");
+          location.assign(url);
+          return; // Seite wird verlassen; bfcache-Rückkehr setzt pageshow zurück
+        } catch (err) {
+          console.error("[google]", err && err.message);
+          G.busy = false; G.flash = { ok: false, text: "Die Verbindung konnte nicht gestartet werden. Bitte erneut versuchen." };
+          return refreshGoogle();
+        }
+      }
+      const d = e.target.closest("[data-g-disconnect]");
+      if (d && !G.busy) {
+        if (!window.confirm("Google Kalender trennen? CalenSync gleicht danach nicht mehr mit Google ab und trägt keine Termine mehr ein. Bereits eingetragene Termine bleiben im Kalender.")) return;
+        G.busy = true; d.disabled = true; d.textContent = "Wird getrennt …";
+        try {
+          const r = await API.googleDisconnect();
+          G.flash = { ok: true, text: r && r.revoked ? "Google Kalender getrennt und Zugriff bei Google widerrufen." : "Google Kalender getrennt. Der Zugriff lässt sich zusätzlich unter myaccount.google.com → Sicherheit → Drittanbieter-Apps entfernen." };
+        } catch (err) {
+          console.error("[google]", err && err.message);
+          G.flash = { ok: false, text: "Trennen fehlgeschlagen. Bitte erneut versuchen." };
+        }
+        G.busy = false;
+        return refreshGoogle();
+      }
+    });
+    // Zurück von Google über den Browser (bfcache): Button wieder freigeben
+    window.addEventListener("pageshow", (ev) => { if (ev.persisted && G.busy) { G.busy = false; refreshGoogle(); } });
+    refreshGoogle();
+  }
+  initGoogleCard();
+
+  // =====================================================================
   // Router
   // =====================================================================
   const VIEWS = { kunden: { init: initKunden }, "event-typen": { init: initEventTypes }, berichte: { init: initBerichte } };

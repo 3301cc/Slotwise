@@ -22,6 +22,7 @@ Ausgeliefert wird `slotwise-website-online/` (Vercel, Root Directory = dieser Or
 | `slotwise-website-online/api/_lib/core/agent/` | KI-Agent: Regelwerk (portiert aus `2-packages-platform`), Bedrock-Client, Twilio, Kalender, Aktivität, Orchestrator |
 | `slotwise-website-online/api/agent/*.js` | Vercel-Einstiege des Agenten: `voice-webhook.js` (Twilio), `intake.js` (E-Mail), `[action].js` für alle Dashboard-Endpunkte (Vercel Hobby erlaubt max. 12 Funktionen) |
 | `slotwise-website-online/api/_lib/core/billing.js`, `api/billing/[action].js`, `checkout/erfolg/` | Stripe-Abo-Checkout der Preisseite (siehe „Abo-Checkout (Stripe)“) |
+| `slotwise-website-online/api/_lib/core/google.js`, `api/google/[action].js` | „Google Kalender verbinden“: OAuth, Belegt-Abgleich und Termine eintragen (siehe „Google Kalender verbinden“) |
 | `slotwise-website-online/dashboard/` | Dashboard-Vorschau (`/dashboard`): Markup, Darstellung (`dashboard.js`), Datenschicht (`dashboard-data.js`), Ansichten Kunden / Event-Typen / Berichte (`views.js`, Hash-Routing `#kunden`, `#event-typen`, `#berichte`), Erklär-Tour (`tour.js`, eigenes CSS, kein Build nötig), gebautes CSS |
 | `website-src/dashboard/` | Tailwind-Quelle und -Konfiguration des Dashboards |
 | `slotwise-website-online/dashboard/enterprise.js`, `auth/callback/`, `vendor/msal-browser.min.js` | Microsoft-365-Anbindung ans Enterprise-Backend (`3-enterprise/`): aktiv, sobald die `CALENSYNC_API`/`ENTRA_*`-Werte in `site-config.js` gesetzt sind |
@@ -187,10 +188,61 @@ Lokal testen: `stripe listen --forward-to localhost:3000/api/billing/webhook` li
 Der Webhook prüft die Signatur über die unveränderten Bytes (`readRawBody` in `http.js`, funktioniert mit node:http,
 Express ohne vorgeschalteten Body-Parser und Vercel); ein vorher zu JSON geparster Body wird mit 400 abgelehnt.
 
+## Google Kalender verbinden
+
+```
+Dashboard ──POST─▶ /api/google/connect  (Bearer)  ─▶ { url } + HttpOnly-Cookie ─▶ Google-Anmeldung (Code + PKCE S256 + state)
+Google    ──GET──▶ /api/google/callback?code&state ─▶ Token-Austausch ─▶ Store: google:conn (Refresh-Token AES-256-GCM)
+                                                   ─▶ 302 /dashboard/?google=connected  bzw.  ?google=error&reason=<code>
+Dashboard ──GET──▶ /api/google/status   (Bearer)  ─▶ { enabled, connected, email?, connectedAt?, lastError?, writeEvents? }
+          ──POST─▶ /api/google/disconnect (Bearer) ─▶ Widerruf bei Google (best effort) + Löschen
+Agent     ── freeBusy.query("primary") bei Suche (fail-open) und letzter Prüfung (fail-closed) · events.insert bei fester Buchung
+```
+
+Logik in `api/_lib/core/google.js`, Kalender-Anbindung in `api/_lib/core/agent/calendar.js`, Vercel-Einstieg
+`api/google/[action].js` (eine Funktion für alle vier Routen – Vercel Hobby: jetzt 10 von 12 Funktionen). Je Mandant eine
+Verbindung im eigenen Schlüsselraum (`t:<id>:google:conn`, Einzelbetrieb `google:conn`); Bearer wie bei den Agenten-Routen
+(`WAITLIST_ADMIN_TOKEN` bzw. `adminToken` aus `TENANTS_JSON`). Karte „Google Kalender“ in der Dashboard-Übersicht (nur live).
+
+| Key | Pflicht | Inhalt |
+|---|---|---|
+| `GOOGLE_CLIENT_SECRET` | ja | Client-Secret des OAuth-Clients (`GOCSPX-…`). Nur als Umgebungsvariable, nie ins Repo. Ohne: Funktion aus, Endpunkte antworten 503 `{ "enabled": false }`, Dashboard zeigt „Nicht eingerichtet“ |
+| `GOOGLE_CLIENT_ID` | nein | Client-ID (öffentlich). Standard: `437100738800-2cqlbpg2obj5ft673c2gr4d4c5hp0krj.apps.googleusercontent.com` |
+| `SITE_URL` | ja | Basis der Redirect-URI, `https://…` (lokal auch `http://localhost:<port>`) |
+| `WAITLIST_SECRET` | ja | Aus ihm wird per HKDF (`slotwise-google-token-v1`) der Schlüssel für die Refresh-Tokens abgeleitet. **Wechsel = alle Verbindungen müssen neu verbunden werden** |
+| `KV_REST_API_URL`/`KV_REST_API_TOKEN` | ja (Deployment) | Store für Verbindungen und `state` (10 Minuten, einmalig) |
+
+**Redirect-URI (exakt so eintragen):** `<SITE_URL>/api/google/callback`, z. B. `https://slotwise.app/api/google/callback`.
+Das Dashboard muss unter derselben Domain wie `SITE_URL` geöffnet werden: Der Rücksprung prüft ein Cookie aus dem Browser, der die
+Verbindung gestartet hat (Fehler sonst `reason=session_mismatch`; Vorschau-Deployments mit anderer Domain gehen daher nicht).
+
+**Google Cloud Console einrichten:**
+
+1. Projekt wählen (das der Client-ID oben) → APIs & Dienste → Bibliothek → **Google Calendar API** aktivieren.
+2. OAuth-Zustimmungsbildschirm (Google Auth Platform → Branding/Zielgruppe): Typ „Extern“, App-Name, Support-E-Mail,
+   Startseite, Link zur Datenschutzerklärung (`<SITE_URL>/datenschutz`) und autorisierte Domain (Domain von `SITE_URL`).
+3. Datenzugriff/Bereiche: `openid`, `…/auth/userinfo.email`, `https://www.googleapis.com/auth/calendar.freebusy`,
+   `https://www.googleapis.com/auth/calendar.events.owned`.
+4. Clients → OAuth-Client „Webanwendung“: autorisierte Weiterleitungs-URI `<SITE_URL>/api/google/callback` (für lokale Tests
+   zusätzlich `http://localhost:3000/api/google/callback`). Client-Secret als `GOOGLE_CLIENT_SECRET` in Vercel (Production).
+5. Solange die App im Status „Testen“ ist: unter Zielgruppe die Google-Konten als **Testnutzer** eintragen (max. 100); alle
+   anderen sehen „Zugriff blockiert“. Refresh-Tokens laufen im Testmodus nach 7 Tagen ab (Dashboard zeigt dann „Neu verbinden“).
+6. Für alle Nutzer: App veröffentlichen und **Verifizierung** beantragen. `calendar.freebusy` und `calendar.events.owned` sind
+   sensible Bereiche → Prüfung durch Google (Begründung, Demo-Video, Datenschutzerklärung mit „Limited Use“-Hinweis – steht im
+   Abschnitt „Google Kalender verbinden“ der Datenschutzerklärung). Ohne Verifizierung zeigt Google einen Warnhinweis.
+
+Verhalten: Belegte Zeiten aus dem Hauptkalender werden ~60 s je Fenster im Prozess zwischengespeichert (Timeout 3 s). Ist Google
+nicht erreichbar, bietet die Suche trotzdem Slots an (fail-open), die letzte Prüfung vor dem Buchen gilt aber als belegt
+(fail-closed, `kind: "unverified"`) – wie bei CalenSync Enterprise. Feste Buchungen (Automatik oder Freigabe im Dashboard) werden als
+privater Termin „Termin: <Name>“ eingetragen (Praxismodus: „Termin (Slotwise)“ ohne Namen), ohne Telefonnummer, E-Mail oder
+Notizen, ohne Einladung; Fehler dabei brechen keine Buchung ab. Widerruft jemand den Zugriff bei Google (`invalid_grant`), gilt die
+Verbindung als getrennt (`lastError: "reconnect_required"`) und es wird ohne Google weitergebucht, bis neu verbunden ist.
+Access-Tokens liegen nur im Arbeitsspeicher; Logs und Weiterleitungen enthalten weder Tokens noch Googles Fehlertexte.
+
 ## Vor dem Livegang
 
 - Firmendaten in `site-config.js` eintragen → Entwurfs-Banner und `noindex` verschwinden automatisch.
-- Datenschutzerklärung rechtlich prüfen lassen (Abschnitte „Hosting dieser Website (Vercel)“ und „Warteliste“ nennen Vercel, Mailjet und Upstash; „Zahlungsabwicklung über Stripe“ nennt Stripe).
+- Datenschutzerklärung rechtlich prüfen lassen (Abschnitte „Hosting dieser Website (Vercel)“ und „Warteliste“ nennen Vercel, Mailjet und Upstash; „Zahlungsabwicklung über Stripe“ nennt Stripe; „Google Kalender verbinden“ nennt Google und enthält den „Limited Use“-Hinweis).
 - Sobald `app.slotwise.app` läuft: `VITE_APP_LIVE: "1"` in `site-config.js`.
 
 ## Mehrere Praxen (Mandanten)
