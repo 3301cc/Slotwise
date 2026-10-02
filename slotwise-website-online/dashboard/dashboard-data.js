@@ -13,7 +13,7 @@
  *   POST /api/agent/decision { id, action }       → Vorschlag freigeben/ablehnen
  *   GET  /api/waitlist/stats                      → { confirmed }          ← Zähler „Verifizierte Leads“
  * Ohne Token: Beispieldaten (MOCK) – die Formen sind identisch.
- * Noch Mock (kein Endpunkt): Metriken Conversion / gesparte Zeit, Kunden, Event-Typen, Berichte
+ * Noch Mock (kein Endpunkt): Kunden, Event-Typen, Berichte
  * (Änderungen landen im localStorage dieses Browsers; geplante Endpunkte stehen bei getContacts() ff.).
  */
 (function (global) {
@@ -47,8 +47,6 @@
   const MOCK = {
     /** @type {Metric[]} */
     metrics: [
-      { id: "conversion", label: "Buchungs-Conversion", value: 14.2, unit: "percent", delta: 3.1, deltaLabel: "seit KI-Agent aktiv", icon: "trend", tone: "emerald" },
-      { id: "timeSaved", label: "KI-gesparte Zeit", value: 4.5, unit: "hours", delta: 0.8, deltaLabel: "diese Woche", icon: "clock", tone: "indigo" },
       { id: "eventTypes", label: "Aktive Event-Typen", value: 3, unit: "count", deltaLabel: "Erstgespräch · Strategie · Demo", icon: "layers", tone: "slate" },
       { id: "verifiedLeads", label: "Verifizierte Leads", value: 27, unit: "count", delta: 5, deltaLabel: "Warteliste, Double-Opt-in", icon: "shield", tone: "emerald" },
     ],
@@ -204,7 +202,7 @@
 
     async getMetrics() {
       await this.ensureMode();
-      const m = await delay(this._set("metrics")); // Conversion/Zeit: noch ohne Endpunkt
+      const m = await delay(this._set("metrics"));
       if (this.praxis) { const ot = m.find((x) => x.id === "openTasks"); if (ot) ot.value = (await this.getTasks()).length; }
       const active = this._local(this._key(EVENTS_BASE), this._set("eventTypes")).filter((t) => t.active);
       const et = m.find((x) => x.id === "eventTypes");

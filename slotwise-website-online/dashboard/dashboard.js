@@ -39,7 +39,10 @@
     if (m.unit === "hours") return `${m.value.toLocaleString("de-DE", { maximumFractionDigits: 1 })} Std`;
     return m.value.toLocaleString("de-DE");
   }
+  // Spalten passend zur Anzahl Kacheln (Unternehmen 2, Praxis 4), damit keine halbe Reihe leer bleibt
+  const KPI_GRID = { 2: "grid grid-cols-1 gap-3 sm:grid-cols-2", 3: "grid grid-cols-1 gap-3 sm:grid-cols-3", 4: "grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" };
   function renderMetrics(list) {
+    $("#kpi-grid").className = KPI_GRID[list.length] || KPI_GRID[4];
     $("#kpi-grid").innerHTML = list.map((m) => `
       <article class="card p-5" aria-label="${esc(m.label)}">
         <div class="flex items-start justify-between gap-3">
@@ -213,8 +216,6 @@
     if (API.live) {
       mode.innerHTML = `<span class="rounded bg-indigo-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-50">Live</span>Feed, Kalender und Einstellungen kommen vom Agenten${status && status.model ? ` (Modell: ${esc(status.model)})` : ""}.`;
       mode.className = "inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900";
-    } else if (status && !status.ready) {
-      mode.innerHTML = `<span class="rounded bg-amber-900 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-50">Demo</span>Agent noch nicht eingerichtet (fehlt: ${esc(status.missing.join(", "))}). Beispieldaten.`;
     }
     const [metrics, activity, week, settings] = await Promise.all([API.getMetrics(), API.getActivity(), API.getWeek(), API.getSettings()]);
     renderMetrics(metrics); renderActivity(activity); renderWeek(week); fillSettings(settings);

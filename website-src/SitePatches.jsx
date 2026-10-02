@@ -291,7 +291,7 @@ function SwWaitlistDialog() {
 }
 
 // =====================================================================
-// Layout mit Entwurfs-Hinweis
+// Layout: ohne sichtbaren Entwurfs-Hinweis. Solange Pflichtangaben fehlen (_p), bleibt die Seite auf noindex.
 // =====================================================================
 function SwDraftBanner() {
   (0, cn.useEffect)(() => {
@@ -300,15 +300,7 @@ function SwDraftBanner() {
     if (!m) { m = document.createElement("meta"); m.name = "robots"; document.head.appendChild(m); }
     m.content = "noindex, nofollow";
   }, []);
-  return (
-    <div role="note" className="border-b border-amber-300 bg-amber-100 text-amber-950">
-      <div className="mx-auto flex max-w-[1200px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-[13px] sm:px-6">
-        <span className="rounded bg-amber-950 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wider text-amber-50">Entwurf</span>
-        <span>Vorschauversion vor dem Start: Anbieterangaben in Impressum und Datenschutzerklärung werden vor dem Livegang ergänzt.</span>
-        <SwLink to="/impressum" className="font-semibold underline underline-offset-2">Impressum</SwLink>
-      </div>
-    </div>
-  );
+  return null;
 }
 
 function nr() {
@@ -895,8 +887,6 @@ function $h() {
 // Startseite: Dashboard-Sektion (kompakte Nachbildung von /dashboard)
 // =====================================================================
 const SW_DASH_KPIS = [
-  { label: "Buchungs-Conversion", value: "14,2 %", delta: "+3,1 Pkt.", note: "seit KI-Agent aktiv" },
-  { label: "KI-gesparte Zeit", value: "4,5 Std", delta: "+0,8 Std", note: "diese Woche" },
   { label: "Aktive Event-Typen", value: "3", delta: "", note: "Erstgespräch · Strategie · Demo" },
   { label: "Verifizierte Leads", value: "27", delta: "+5", note: "Warteliste, Double-Opt-in" },
 ];
@@ -914,7 +904,7 @@ const SW_DASH_EVENTS = [
 const SW_DASH_POINTS = [
   { title: "Wochenkalender mit KI-Vorschlägen", text: "Gebuchte Termine, offene Vorschläge des Agenten und Puffer auf einen Blick — in deiner Zeitzone." },
   { title: "Freigaben per Klick", text: "Der Agent bereitet Antwort und Slot vor, du gibst frei. Oder er bucht selbstständig innerhalb deiner Regeln." },
-  { title: "Live-Feed und Kennzahlen", text: "Jeder Anruf, jede Buchung, jede Absage — protokolliert, mit Conversion und gesparter Zeit." },
+  { title: "Live-Feed und Kennzahlen", text: "Jeder Anruf, jede Buchung, jede Absage — protokolliert und nachvollziehbar." },
 ];
 
 function SwDashEvent({ ev }) {
@@ -964,7 +954,7 @@ function SwDashboardMock() {
         <div className="bg-slate-50 p-4 sm:p-5">
           <p className="text-[11px] text-slate-500">Mittwoch, 30. September</p>
           <p className="font-display text-base font-bold tracking-tight text-slate-900 sm:text-lg">Hallo Jana, dein Agent hat übernommen.</p>
-          <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-2">
             {SW_DASH_KPIS.map((k) => (
               <div key={k.label} className="rounded-xl border border-slate-100 bg-white p-3">
                 <p className="truncate text-[11px] text-slate-500">{k.label}</p>
