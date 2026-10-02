@@ -182,7 +182,7 @@ Für Google-Ziele gibt es `WorkloadIdentityGoogleTokenProvider` (`core/src/googl
 
 **Änderung:** `findBySubscriptionIds` (ein Lookup mit `= ANY($1)`) und `enqueueMany` (ein mehrzeiliger INSERT,
 nach `(kind, dedupe_key)` sortiert, Duplikate im Batch zusammengefasst). Feste Last: 2 Roundtrips je Request,
-unabhängig von der Batchgröße. Dazu Zeitbudget 2,5 s mit 503 (Graph stellt erneut zu), DB-Fehler → 503 statt
+unabhängig von der Batchgröße. Dazu Zeitbudget 2,2 s mit 503 und Alarm `webhook_enqueue_timeout` (Graph stellt erneut zu), DB-Fehler → 503 statt
 202, Body-Limit 1 MiB als Stream, neuer `node:http`-Adapter `webhookHttp.ts`.
 
 **Messung** (Details `core/bench/webhook-ingress/README.md`): bei 3 000 Notifications/s und 1 ms DB-RTT

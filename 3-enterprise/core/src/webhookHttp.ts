@@ -3,6 +3,8 @@
  *
  *   POST /webhooks/graph?validationToken=…   → 200 text/plain (Validierung)
  *   POST /webhooks/graph  {value:[…]}         → 202 | 400 | 413 | 415 | 503
+ *   Pfad mit ../, //, kodierten Punkten/Slashes → 400 (zusätzlich zur Prüfung im App-Server, falls der Listener
+ *   einmal direkt eingebunden wird)
  *
  * Speicher: Der Body wird als Stream gelesen und hart begrenzt (Default 1 MiB). Wird die Grenze überschritten,
  * bricht der Adapter sofort mit 413 ab, ohne den Rest zu puffern. Am Ende genau ein Buffer.concat + JSON.parse.
@@ -12,8 +14,19 @@ import { handleGraphWebhook, type GuardDeps, type GuardStats } from "./webhookGu
 
 export interface WebhookHttpOptions {
   maxBodyBytes?: number;
+  /** Sicherheitsereignis (Log-Ebene "security"), z. B. logger.security("bad_path", …) */
+  onSecurity?: (event: "bad_path") => void;
   /** Metrik-Hook, z. B. Prometheus/CloudWatch EMF */
   onResult?: (status: number, durationMs: number, stats: GuardStats | null) => void;
+}
+
+// /./ und /../ (mittendrin oder am Ende), doppelte Slashes, kodierte Punkte/Slashes/Backslashes, Backslash, NUL
+// (gleiche Regel wie scim/src/httpGuards.ts → isBadPath, hier ohne Abhängigkeit auf das SCIM-Paket)
+const BAD_PATH = /(\/\.\.?(\/|$))|%2e|%2f|%5c|%00|\\|\/\/|\u0000/i;
+export function isBadWebhookPath(url: string | undefined): boolean {
+  const raw = url ?? "/";
+  const q = raw.indexOf("?");
+  return BAD_PATH.test(q >= 0 ? raw.slice(0, q) : raw);
 }
 
 function finish(res: ServerResponse, status: number, contentType?: string, body?: string): void {
@@ -73,6 +86,12 @@ export function createGraphWebhookListener(deps: GuardDeps, opts: WebhookHttpOpt
     let stats: GuardStats | null = null;
     let status = 500;
     try {
+      if (isBadWebhookPath(req.url)) {
+        req.resume();
+        status = 400;
+        try { opts.onSecurity?.("bad_path"); } catch { /* ignoriert */ }
+        return finish(res, status);
+      }
       if (req.method !== "POST") {
         status = 405;
         return finish(res, status);
