@@ -171,8 +171,15 @@ const cleanupWorker = new TargetCleanupWorker({
 
 const app = createAppServer({
   tenantId: cfg.tenantId,
-  webhook: { repo: channels, queue, securityEvent: (e) => logger.security("client_state_mismatch", { ...e }) },
-  webhookOptions: { onResult: (status, ms) => { if (status >= 500 || ms > 2000) log({ level: "warn", path: "/webhooks/graph", status, ms: Math.round(ms) }); } },
+  webhook: {
+    repo: channels, queue,
+    securityEvent: (e) => logger.security("client_state_mismatch", { ...e }),
+    alert: (e) => logger.alert(e.kind, { path: "/webhooks/graph", budgetMs: e.budgetMs, notifications: e.notifications, ...(e.error ? { error: e.error } : {}) }),
+  },
+  webhookOptions: {
+    onSecurity: (event) => logger.security(event, { path: "/webhooks/graph" }),
+    onResult: (status, ms) => { if (status >= 500 || ms > 2000) log({ level: "warn", path: "/webhooks/graph", status, ms: Math.round(ms) }); },
+  },
   googleWebhook: { repo: channels, queue, securityEvent: (e) => logger.security("webhook_rejected", { ...e }) },
   googleWebhookOptions: { onResult: (r, ms) => { if (r.status >= 500 || ms > 2000) log({ level: "warn", path: "/webhooks/google", status: r.status, ms: Math.round(ms) }); } },
   scim: {

@@ -19,6 +19,7 @@ const { createAgent } = require("./core/agent/agent");
 const agentApi = require("./core/agent/api");
 
 const { scopedStore, tenantConfig, tenantByToken, tenantByNumber } = require("./core/tenants");
+const { createBilling } = require("./core/billing");
 
 /** Eine Instanz je Prozess (Vercel: je Function-Container). */
 let instance = null;
@@ -26,6 +27,11 @@ const agents = new Map(); // je Mandant ein Agent mit eigenem Schlüsselraum
 function getWaitlist() {
   if (!instance) instance = createWaitlist(fromEnv());
   return instance;
+}
+let billing = null;
+function getBilling() {
+  if (!billing) { const wl = getWaitlist(); billing = createBilling(wl.config, { store: wl.store }); }
+  return billing;
 }
 /** tenant = null → Einzelbetrieb wie bisher (Schlüssel ohne Präfix, damit bestehende Daten erhalten bleiben). */
 function getAgent(tenant = null) {
@@ -81,6 +87,42 @@ async function readBody(req) {
   return parseText(Buffer.concat(chunks).toString("utf8"), ct);
 }
 
+/**
+ * Unveränderte Bytes des Bodys – für Signaturen über den Roh-Body (Stripe-Webhook). Greift nie auf ein
+ * Vercel-req.body zu (Getter würde parsen), sondern liest den Stream:
+ *   - node:http / Express ohne Body-Parser: Stream ist unberührt.
+ *   - Vercel (@vercel/node): liest den Body vorab, stellt ihn aber für 'data'/'end'-Listener wieder bereit
+ *     (restoreBody); deshalb hier Listener statt for-await.
+ *   - Express mit express.raw()/text(): req.body ist Buffer/String; mit verify-Hook oft req.rawBody.
+ *   - Schon zu einem Objekt geparst: Bytes verloren → null (Webhook antwortet 400 statt falsch zu prüfen).
+ */
+const MAX_RAW_BODY = 512 * 1024;
+function readRawBody(req, limit = MAX_RAW_BODY) {
+  if (Buffer.isBuffer(req.rawBody)) return Promise.resolve(req.rawBody.length <= limit ? req.rawBody : null);
+  if (typeof req.rawBody === "string") return Promise.resolve(Buffer.from(req.rawBody, "utf8"));
+  const d = Object.getOwnPropertyDescriptor(req, "body");
+  if (d && "value" in d && d.value !== undefined && d.value !== null) {
+    if (Buffer.isBuffer(d.value)) return Promise.resolve(d.value.length <= limit ? d.value : null);
+    if (typeof d.value === "string") return Promise.resolve(Buffer.from(d.value, "utf8"));
+    return Promise.resolve(null);
+  }
+  if (typeof req.on !== "function") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const chunks = []; let size = 0, done = false;
+    const finish = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+    const timer = setTimeout(() => finish(null), 10_000);
+    req.on("data", (c) => {
+      if (done) return;
+      const b = Buffer.isBuffer(c) ? c : Buffer.from(c);
+      size += b.length;
+      if (size > limit) return finish(null);
+      chunks.push(b);
+    });
+    req.on("end", () => finish(Buffer.concat(chunks)));
+    req.on("error", () => finish(null));
+  });
+}
+
 function baseUrlFor(req, config) {
   if (config.siteUrl) return config.siteUrl;
   const proto = String(req.headers["x-forwarded-proto"] || "http").split(",")[0].trim();
@@ -89,7 +131,7 @@ function baseUrlFor(req, config) {
 }
 
 /** Normalisiert node:http / Express / Fastify(raw) / Vercel zu reinen Daten. */
-async function toInput(req, config) {
+async function toInput(req, config, { raw = false } = {}) {
   const url = new URL(req.url || "/", "http://local");
   const query = req.query && typeof req.query === "object" && !Array.isArray(req.query)
     ? req.query
@@ -107,7 +149,8 @@ async function toInput(req, config) {
     headers: req.headers || {},
     ip,
     baseUrl: baseUrlFor(req, config),
-    body: method === "POST" || method === "PUT" ? await readBody(req) : undefined,
+    body: !raw && (method === "POST" || method === "PUT") ? await readBody(req) : undefined,
+    rawBody: raw && method === "POST" ? await readRawBody(req) : undefined,
   };
 }
 
@@ -140,6 +183,21 @@ function handler(method, run) {
   };
 }
 
+/** Wie handler, aber mit input.rawBody (Buffer der unveränderten Bytes) statt geparstem input.body. */
+function rawHandler(method, run) {
+  return async function (req, res) {
+    const wl = getWaitlist();
+    if (String(req.method || "GET").toUpperCase() !== method) return writeResult(res, { status: 405, body: { error: "method_not_allowed" }, headers: { Allow: method, "Content-Type": "application/json" } });
+    try {
+      const input = await toInput(req, wl.config, { raw: true });
+      writeResult(res, await run(wl, input));
+    } catch (err) {
+      console.error("[billing] unerwarteter Fehler:", err);
+      writeResult(res, { status: 500, body: { error: "internal" }, headers: { "Content-Type": "application/json" } });
+    }
+  };
+}
+
 /** Routen-Tabelle – von Vercel-Dateien, dem Standalone-Server und Express gleichermaßen genutzt. */
 const routes = {
   "POST /api/waitlist": handler("POST", (wl, i) => wl.subscribe(i)),
@@ -158,6 +216,10 @@ const routes = {
   "GET /api/agent/status": handler("GET", (wl, i) => agentApi.status(getAgent(null), wl.config, i)),
   "GET /api/agent/tasks": agentRoute("GET", "token", (a, c, i) => agentApi.tasks(a, c, i)),
   "POST /api/agent/tasks": agentRoute("POST", "token", (a, c, i) => agentApi.taskDone(a, c, i)),
+  // Stripe-Abo-Checkout
+  "GET /api/billing/config": handler("GET", () => getBilling().publicConfig()),
+  "POST /api/billing/checkout": handler("POST", (wl, i) => getBilling().checkout(i)),
+  "POST /api/billing/webhook": rawHandler("POST", (wl, i) => getBilling().webhook(i)),
 };
 
 /** Ein einzelner Handler für alle Routen (node:http, Express `app.use(apiHandler)`, Fastify über `fastify-express`). */
@@ -171,4 +233,4 @@ function apiHandler(req, res, next) {
   return writeResult(res, { status: 404, body: { error: "not_found" }, headers: { "Content-Type": "application/json" } });
 }
 
-module.exports = { handler, routes, apiHandler, toInput, writeResult, getWaitlist, getAgent, readBody };
+module.exports = { handler, rawHandler, routes, apiHandler, toInput, writeResult, getWaitlist, getAgent, getBilling, readBody, readRawBody };

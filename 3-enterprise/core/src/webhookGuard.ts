@@ -6,7 +6,8 @@
  *     Deshalb hier nur prüfen + Jobs einstellen, keine Graph-Aufrufe.
  *   * Feste Datenbanklast je Request, unabhängig von der Batchgröße: genau EIN Lookup (… = ANY($1)) und EIN
  *     mehrzeiliger INSERT (enqueueMany, nach Schlüssel sortiert). Vorher: 2 Roundtrips JE Notification.
- *   * Zeitbudget (Default 2,5 s): Ist die Datenbank zu langsam, antwortet der Eingang mit 503, statt Graph
+ *   * Zeitbudget (Default 2,2 s, Reserve für Netz/TLS unter Graphs 3-s-Grenze): Ist die Datenbank zu langsam,
+ *     antwortet der Eingang mit 503 (Alarm "webhook_enqueue_timeout"), statt Graph
  *     warten zu lassen. Graph stellt erneut zu; die dedupe_keys machen die Wiederholung folgenlos.
  *   * Notifications eines Channels mit stop_requested_at / stopped_at oder einer nicht aktiven Pipeline
  *     werden verworfen – NICHTS wird gelesen oder gespeichert (zweite Verteidigungslinie beim Offboarding).
@@ -34,8 +35,13 @@ export interface GuardDeps {
   repo: GuardRepo;
   queue: Pick<DelayedJobQueue, "enqueueMany">;
   securityEvent: (e: { kind: "client_state_mismatch"; tenantId: string; channelId: string }) => void;
+  /**
+   * Betriebsalarm (Log-Ebene "alert"): Zeitbudget überschritten oder DB-Fehler beim Lookup/Enqueue → 503.
+   * Nur Zähler und feste Codes, nie Payload-Inhalte.
+   */
+  alert?: (e: { kind: "webhook_enqueue_timeout" | "webhook_enqueue_failed"; budgetMs: number; notifications: number; error?: string }) => void;
   now?: () => Date;
-  /** Max. Zeit für Lookup + Enqueue, danach 503. Default 2 500 ms (unter Graphs 3-s-Grenze). */
+  /** Max. Zeit für Lookup + Enqueue, danach 503. Default 2 200 ms (DEFAULT_BUDGET_MS). */
   budgetMs?: number;
   /** Max. Notifications je Request; darüber 413. Default 1 000. */
   maxNotifications?: number;
@@ -89,6 +95,9 @@ function safeEqual(a: string, b: string): boolean {
 
 class BudgetExceeded extends Error {}
 
+/** Zeitbudget für Lookup + Enqueue: 2,2 s lassen ~0,8 s Reserve für Netz, TLS und ALB unter Graphs 3-s-Grenze. */
+export const DEFAULT_BUDGET_MS = 2_200;
+
 export async function handleGraphWebhook(req: GraphWebhookRequest, d: GuardDeps): Promise<GuardResponse> {
   const stats = newStats();
 
@@ -101,7 +110,7 @@ export async function handleGraphWebhook(req: GraphWebhookRequest, d: GuardDeps)
   if (value.length > (d.maxNotifications ?? 1_000)) return { status: 413, stats };
 
   const work = processBatch(value as GraphNotification[], d, stats);
-  const budgetMs = d.budgetMs ?? 2_500;
+  const budgetMs = d.budgetMs ?? DEFAULT_BUDGET_MS;
   let timer: NodeJS.Timeout | undefined;
   try {
     await Promise.race([
@@ -114,13 +123,31 @@ export async function handleGraphWebhook(req: GraphWebhookRequest, d: GuardDeps)
     if (err instanceof BudgetExceeded) {
       // Die DB-Arbeit läuft im Hintergrund weiter (oder scheitert); Graph stellt erneut zu, dedupe_key fängt Doppel.
       work.catch(() => undefined);
+      safeAlert(d, { kind: "webhook_enqueue_timeout", budgetMs, notifications: value.length });
       return { status: 503, stats };
     }
-    return { status: 503, stats }; // DB-Fehler: Graph soll erneut zustellen, nichts wurde quittiert
+    // DB-Fehler: Graph soll erneut zustellen, nichts wurde quittiert. Nur Fehlername/-code, keine Nachricht mit Daten.
+    safeAlert(d, { kind: "webhook_enqueue_failed", budgetMs, notifications: value.length, error: errorCode(err) });
+    return { status: 503, stats };
   } finally {
     if (timer) clearTimeout(timer);
   }
   return { status: 202, stats };
+}
+
+function errorCode(err: unknown): string {
+  if (err && typeof err === "object") {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string" && /^[A-Za-z0-9_]{1,40}$/.test(code)) return code;
+    const name = (err as { name?: unknown }).name;
+    if (typeof name === "string" && /^[A-Za-z0-9_]{1,40}$/.test(name)) return name;
+  }
+  return "unknown";
+}
+
+// Ein Fehler im Alarm-Hook darf die Antwort an Graph nie verändern
+function safeAlert(d: GuardDeps, e: Parameters<NonNullable<GuardDeps["alert"]>>[0]): void {
+  try { d.alert?.(e); } catch { /* ignoriert */ }
 }
 
 async function processBatch(items: readonly GraphNotification[], d: GuardDeps, stats: GuardStats): Promise<void> {

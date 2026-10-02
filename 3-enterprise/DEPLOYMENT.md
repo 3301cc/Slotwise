@@ -368,7 +368,7 @@ Niemand trägt die URL von Hand bei Microsoft ein, und der Browser bekommt keine
 |---|---|
 | Netz | ALB nimmt 443 weltweit an (Graph-Absender-IPs sind nicht fest). Eine optionale IP-Allowlist gilt nur für `/api` und `/scim` (WAF-Regel `allowlist-except-webhooks`). |
 | WAF | Common Rule Set ohne 8-KB-Body-Grenze für `/webhooks/`, eigenes Rate-Limit `webhook_rate_limit_per_5min`, IP-Reputation |
-| App | Validierungs-Token wird nur als `text/plain` zurückgegeben; `clientState` wird timing-sicher geprüft (Abweichung = Sicherheitsereignis im Log); unbekannte Abos und Abos gesperrter Nutzer werden verworfen; Body max. 1 MiB; Zeitbudget 2,5 s, sonst 503 (Graph wiederholt) |
+| App | Validierungs-Token wird nur als `text/plain` zurückgegeben; `clientState` wird timing-sicher geprüft (Abweichung = Sicherheitsereignis im Log); unbekannte Abos und Abos gesperrter Nutzer werden verworfen; Body max. 1 MiB (Stream, Abbruch ohne Puffern); Pfade mit `..`/`//` → 400; Zeitbudget 2,2 s, sonst 503 (Graph wiederholt) und Alarm `webhook_enqueue_timeout`/`webhook_enqueue_failed`. Smoke-Test nach jedem Deployment: `bash terraform/checks/smoke-test-webhook.sh https://<tenant>.calensync.de` (Exit 0 = ok) |
 | Last | 2 DB-Roundtrips je Request, gemessen bis > 900 Requests/s, CI-Gates in `calensync-qa/.github/workflows/webhook-ingress.yml` |
 
 Graph-Change-Notifications haben **keine HMAC-Signatur** im Header; der `clientState` ist der vorgesehene

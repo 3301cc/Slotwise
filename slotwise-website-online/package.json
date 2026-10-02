@@ -5,6 +5,6 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "dev": "node scripts/dev-server.js",
-    "test": "node --test scripts/waitlist.test.js scripts/agent.test.js scripts/tenants.test.js"
+    "test": "node --test scripts/waitlist.test.js scripts/agent.test.js scripts/tenants.test.js scripts/billing.test.js"
   }
 }

@@ -35,6 +35,9 @@ function fromEnv(env = process.env) {
     tenants: t.tenants,
     tenantsError: t.error,   // "" = in Ordnung; sonst Grund ohne Tokens
 
+    // Stripe-Abo-Checkout (core/billing.js). Ohne Schlüssel: aus, die Preisseite bleibt bei der Warteliste.
+    billing: stripeConfig(env),
+
     // KI-Agent (Telefon + E-Mail)
     agent: {
       model: env.AGENT_MODEL || "",                                    // "fake" = deterministisches Testmodell ohne AWS
@@ -60,6 +63,32 @@ function fromEnv(env = process.env) {
       },
     },
   };
+}
+
+/**
+ * Stripe: Testschlüssel (sk_test_/rk_test_) gehen immer, Live-Schlüssel (sk_live_/rk_live_) nur mit STRIPE_LIVE="1".
+ * So kann vor dem Livegang der App kein echtes Geld eingezogen werden, auch wenn versehentlich ein Live-Schlüssel gesetzt ist.
+ * error: "" = in Ordnung oder schlicht nicht eingerichtet; sonst ein Grund ohne Schlüsselinhalt (landet im Log).
+ */
+function stripeConfig(env) {
+  const secretKey = String(env.STRIPE_SECRET_KEY || "").trim();
+  const webhookSecret = String(env.STRIPE_WEBHOOK_SECRET || "").trim();
+  const liveAllowed = env.STRIPE_LIVE === "1";
+  const base = {
+    enabled: false, test: true, secretKey: "", webhookSecret: "", error: "",
+    requireTos: env.STRIPE_REQUIRE_TOS === "1",
+    automaticTax: env.STRIPE_AUTOMATIC_TAX === "1",
+  };
+  if (!secretKey && !webhookSecret) return base;
+  const isTest = /^(sk|rk)_test_[A-Za-z0-9]+$/.test(secretKey);
+  const isLive = /^(sk|rk)_live_[A-Za-z0-9]+$/.test(secretKey);
+  let error = "";
+  if (!secretKey) error = "STRIPE_SECRET_KEY fehlt (STRIPE_WEBHOOK_SECRET ist gesetzt) – Abrechnung aus";
+  else if (isLive && !liveAllowed) error = "STRIPE_SECRET_KEY ist ein Live-Schlüssel, aber STRIPE_LIVE ist nicht \"1\" – Abrechnung gesperrt, damit vor dem Livegang kein echtes Geld eingezogen wird";
+  else if (!isTest && !isLive) error = "STRIPE_SECRET_KEY hat kein gültiges Format (erwartet sk_test_… oder, mit STRIPE_LIVE=\"1\", sk_live_…) – Abrechnung aus";
+  else if (!/^whsec_\S+$/.test(webhookSecret)) error = "STRIPE_WEBHOOK_SECRET fehlt oder hat kein gültiges Format (whsec_…) – Abrechnung aus, sonst gingen abgeschlossene Abos verloren";
+  if (error) return { ...base, test: !isLive, error };
+  return { ...base, enabled: true, test: isTest, secretKey, webhookSecret };
 }
 
 /** Produktiv nur, wenn Signatur, Speicher und Mailversand eingerichtet sind. Lokal reicht der Dateispeicher. */

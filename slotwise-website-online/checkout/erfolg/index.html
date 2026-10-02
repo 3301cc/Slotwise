@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Danke für deine Bestellung – CalenSync</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/fonts.css" />
+    <link rel="stylesheet" href="/dashboard/dashboard.css" />
+  </head>
+  <body class="grid min-h-screen place-items-center bg-slate-50 p-4 text-slate-900 antialiased">
+    <!-- Rücksprung von Stripe Checkout (success_url). Bewusst ohne Abfrage der session_id: der Abschluss kommt per Webhook. -->
+    <main class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-card">
+      <p class="mx-auto grid h-10 w-10 place-items-center rounded-full bg-indigo-50 text-indigo-600" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+      </p>
+      <h1 class="mt-4 font-display text-lg font-bold">Danke für deine Bestellung!</h1>
+      <p class="mt-2 text-sm text-slate-600">
+        Dein CalenSync-Abo ist abgeschlossen. Stripe, unser Zahlungsdienstleister, schickt dir in Kürze eine Bestätigung per E-Mail.
+      </p>
+      <p class="mt-2 text-sm text-slate-600">
+        Sobald die CalenSync-App startet, bekommst du deine Zugangsdaten ebenfalls per E-Mail. Du musst dafür nichts weiter tun.
+      </p>
+      <p class="mt-6 flex flex-wrap justify-center gap-2">
+        <a href="/" class="btn-primary">Zur Startseite</a>
+        <a href="/preise" class="btn-ghost">Zu den Preisen</a>
+      </p>
+    </main>
+  </body>
+</html>
