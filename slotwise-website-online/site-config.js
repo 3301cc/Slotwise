@@ -9,7 +9,8 @@ window.SLOTWISE_ENV = {
   VITE_APP_URL: "https://app.slotwise.app",
   VITE_DEMO_PHONE: "",          // z. B. "+49 211 1234567" → „Demo anrufen“-Button auf /ki-agent
 
-  VITE_COMPANY_NAME: "",        // z. B. "Slotwise GmbH"
+  VITE_COMPANY_NAME: "Etienne Schnaudt",   // laut Gewerbeschein
+  VITE_COMPANY_LEGAL_FORM: "Einzelunternehmen", // "Einzelunternehmen": Inhaber statt "Vertreten durch", Register/USt-IdNr. nur wenn gesetzt
   VITE_COMPANY_STREET: "",
   VITE_COMPANY_CITY: "",        // z. B. "40213 Düsseldorf"
   VITE_COMPANY_EMAIL: "",
