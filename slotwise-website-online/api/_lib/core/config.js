@@ -38,6 +38,10 @@ function fromEnv(env = process.env) {
     // Stripe-Abo-Checkout (core/billing.js). Ohne Schlüssel: aus, die Preisseite bleibt bei der Warteliste.
     billing: stripeConfig(env),
 
+    // „Google Kalender verbinden“ (core/google.js). Client-ID ist öffentlich, das Secret kommt nur aus der Umgebung.
+    // Ohne GOOGLE_CLIENT_SECRET (oder ohne SITE_URL/WAITLIST_SECRET/Store): aus, Endpunkte antworten 503 { enabled: false }.
+    google: googleConfig(env),
+
     // KI-Agent (Telefon + E-Mail)
     agent: {
       model: env.AGENT_MODEL || "",                                    // "fake" = deterministisches Testmodell ohne AWS
@@ -91,6 +95,18 @@ function stripeConfig(env) {
   return { ...base, enabled: true, test: isTest, secretKey, webhookSecret };
 }
 
+const DEFAULT_GOOGLE_CLIENT_ID = "437100738800-2cqlbpg2obj5ft673c2gr4d4c5hp0krj.apps.googleusercontent.com";
+
+/** error: "" = in Ordnung oder schlicht nicht eingerichtet; sonst ein Grund ohne Secret (landet im Log). */
+function googleConfig(env) {
+  const clientId = String(env.GOOGLE_CLIENT_ID || "").trim() || DEFAULT_GOOGLE_CLIENT_ID;
+  const clientSecret = String(env.GOOGLE_CLIENT_SECRET || "").trim();
+  if (!/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(clientId)) {
+    return { clientId: "", clientSecret: "", error: "GOOGLE_CLIENT_ID hat kein gültiges Format (…apps.googleusercontent.com) – Google Kalender aus" };
+  }
+  return { clientId, clientSecret, error: "" };
+}
+
 /** Produktiv nur, wenn Signatur, Speicher und Mailversand eingerichtet sind. Lokal reicht der Dateispeicher. */
 function readiness(config) {
   if (!config.deployed) return { ready: true, mode: "local", missing: [] };
@@ -101,4 +117,4 @@ function readiness(config) {
   return { ready: missing.length === 0, mode: "production", missing };
 }
 
-module.exports = { fromEnv, readiness };
+module.exports = { fromEnv, readiness, DEFAULT_GOOGLE_CLIENT_ID };

@@ -45,7 +45,9 @@ function createAgent(config, deps = {}) {
   const log = deps.log || console;
   const model = deps.model !== undefined ? deps.model : createModel(config);
   const sendSms = deps.sendSms || (config.agent.twilio ? smsSender(config.agent.twilio) : consoleSms(log.log));
-  const calendar = deps.calendar || createCalendar(store, { timezone: config.agent.timezone, now, log, busySource: config.agent.enterpriseBusy || null, fetch: deps.fetch });
+  const calendar = deps.calendar || createCalendar(store, { timezone: config.agent.timezone, now, log, busySource: config.agent.enterpriseBusy || null, fetch: deps.fetch, google: deps.google || null,
+    // Praxismodus: kein Patientenname im Google-Termintitel (Gesundheitsdaten bei Google, Art. 9 DSGVO)
+    googleEventNames: async () => (await settings.get()).industry !== "praxis" });
   const activity = deps.activity || createActivity(store, now);
   const settings = deps.settings || createSettings(store, now);
   const tasks = deps.tasks || createTasks(store, now);
@@ -87,8 +89,8 @@ function createAgent(config, deps = {}) {
       const label = formatForSpeech(Date.parse(start), calendar.timezone);
       const pConflict = await calendar.conflictFor(start, end);
       if (pConflict && pConflict.unverified) {
-        // CalenSync nicht erreichbar (fail-closed): nichts vormerken, keine ungeprüften Alternativen – Rückruf anbieten
-        await activity.log({ kind: "conflict", text: `Terminwunsch ${label} nicht vorgemerkt: Microsoft-365-Kalender gerade nicht prüfbar – Rückruf angeboten`, channel: session.channel });
+        // CalenSync/Google nicht erreichbar (fail-closed): nichts vormerken, keine ungeprüften Alternativen – Rückruf anbieten
+        await activity.log({ kind: "conflict", text: `Terminwunsch ${label} nicht vorgemerkt: ${calLabel(pConflict.source)} gerade nicht prüfbar – Rückruf angeboten`, channel: session.channel });
         return { tool: name, booked: false, conflict: true, unverified: true, alternatives: [], say: "Ich kann diesen Termin gerade nicht verbindlich prüfen. Ich nehme gern eine Rückrufbitte für Sie auf. Ist das in Ordnung?" };
       }
       if (pConflict) {
@@ -110,8 +112,8 @@ function createAgent(config, deps = {}) {
       const conflict = await calendar.conflictFor(start, end);
       const who = `${args.name} (${args.email})`;
       if (conflict && conflict.unverified) {
-        // CalenSync nicht erreichbar (fail-closed): nicht buchen, keine ungeprüften Alternativen – Buchungslink per SMS
-        await activity.log({ kind: "conflict", text: `Buchung ${formatForSpeech(Date.parse(start), calendar.timezone)} für ${who} nicht ausgeführt: Microsoft-365-Kalender gerade nicht prüfbar – Buchungslink angeboten`, channel: session.channel });
+        // CalenSync/Google nicht erreichbar (fail-closed): nicht buchen, keine ungeprüften Alternativen – Buchungslink per SMS
+        await activity.log({ kind: "conflict", text: `Buchung ${formatForSpeech(Date.parse(start), calendar.timezone)} für ${who} nicht ausgeführt: ${calLabel(conflict.source)} gerade nicht prüfbar – Buchungslink angeboten`, channel: session.channel });
         return { tool: name, booked: false, conflict: true, unverified: true, alternatives: [], say: "Ich kann diesen Termin gerade nicht verbindlich bestätigen. Ich schicke Ihnen den Buchungslink per SMS, dann können Sie es gleich noch einmal versuchen." };
       }
       if (conflict) {
@@ -126,8 +128,8 @@ function createAgent(config, deps = {}) {
       const slot = { id: crypto.randomUUID(), start, end, title: "Erstgespräch", with: args.name, email: args.email, phone: args.phone_e164, notes: args.notes || "", source: "ai", channel: session.channel, createdAt: new Date(now()).toISOString() };
       const label = formatForSpeech(Date.parse(start), calendar.timezone);
       if (cfg.autonomy === "auto") {
-        await calendar.addBooking(slot);
-        await activity.log({ kind: "booked", text: `${session.channel === "email" ? "Per E-Mail" : "Telefonisch"} gebucht: ${slot.title} mit ${args.name}, ${label} – Bestätigung per SMS versendet`, ref: { type: "slot", id: slot.id }, channel: session.channel });
+        const saved = await calendar.addBooking(slot);
+        await activity.log({ kind: "booked", text: `${session.channel === "email" ? "Per E-Mail" : "Telefonisch"} gebucht: ${slot.title} mit ${args.name}, ${label} – Bestätigung per SMS versendet${saved && saved.googleEventId ? ", im Google Kalender eingetragen" : ""}`, ref: { type: "slot", id: slot.id }, channel: session.channel });
         await sendSms(args.phone_e164, `Ihr Termin bei ${config.agent.company}: ${label}. Bis dann!`).catch((e) => log.error("[agent] SMS:", e.message));
         return { tool: name, booked: true, proposal: false, slot: { id: slot.id, start, end }, say: `Ihr Termin ist fest eingetragen: ${label}. Sie bekommen eine SMS-Bestätigung. Auf Wiederhören!` };
       }
@@ -258,6 +260,7 @@ function createAgent(config, deps = {}) {
 }
 
 const mask = (p) => String(p || "").replace(/(\+\d{2,3})\d+(\d{2})$/, "$1…$2");
+const calLabel = (s) => (s === "google" ? "Google Kalender" : "Microsoft-365-Kalender");
 const srcLabel = (s) => ({ google: "Google Kalender", icloud: "iCloud", microsoft: "Microsoft 365", ai: "KI-Agent", manual: "manuell" })[s] || "Kalender";
 
 module.exports = { createAgent, agentReadiness };

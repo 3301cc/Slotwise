@@ -829,8 +829,10 @@ function $h() {
           CalenSync-Plattform mit den Buchungsdaten. Für diese Website gilt dieser Abschnitt.
         </p>
         <p>
-          Cookies, Tracking- oder Analysedienste setzen wir auf dieser Website nicht ein. Schriften werden von unserem eigenen Server geladen.
-          Was das Dashboard im Speicher deines Browsers ablegt, steht in den Abschnitten zur Dashboard-Vorschau und zur Anmeldung mit Microsoft.
+          Tracking- oder Analysedienste setzen wir auf dieser Website nicht ein. Ein Cookie setzen wir nur in einem Fall: ein technisch
+          notwendiges, kurzlebiges Cookie beim Verbinden eines Google Kalenders im Dashboard (siehe Abschnitt „Google Kalender verbinden“).
+          Schriften werden von unserem eigenen Server geladen. Was das Dashboard im Speicher deines Browsers ablegt, steht in den Abschnitten
+          zur Dashboard-Vorschau und zur Anmeldung mit Microsoft.
         </p>
       </SwPrivacySection>
 
@@ -945,6 +947,76 @@ function $h() {
           Arbeitgeber. Betreiben wir die Umgebung für das Unternehmen, handeln wir als Auftragsverarbeiter nach Art. 28 DSGVO. Rechtsgrundlage
           für die Anmeldung ist Art. 6 Abs. 1 lit. f DSGVO; das berechtigte Interesse liegt in einer sicheren Anmeldung mit dem bestehenden
           Geschäftskonto, ohne eigenes Passwort und nur für berechtigte Personen des Unternehmens.
+        </p>
+      </SwPrivacySection>
+
+      <SwPrivacySection title="Google Kalender verbinden (Dashboard, optional)">
+        <p>
+          Unternehmen und Praxen, die den KI-Terminassistenten mit eigenem Dashboard-Zugang nutzen, können im Dashboard ihren Google Kalender
+          verbinden. Das ist freiwillig. Beim Verbinden leitet dein Browser zur Anmeldeseite von Google weiter (OAuth 2.0) und danach zurück
+          zum Dashboard. Dein Passwort gibst du nur bei Google ein. Google fragt dich dort, ob CalenSync folgende Berechtigungen erhalten
+          darf: die E-Mail-Adresse deines Google-Kontos, die Frei/Belegt-Informationen deiner Kalender und das Anlegen und Löschen von
+          Terminen in Kalendern, die dir gehören. Die Berechtigung zum Anlegen von Terminen kannst du dort abwählen; dann gleichen wir nur
+          belegte Zeiten ab.
+        </p>
+        <p>
+          Wir verarbeiten dabei nur, was für die Funktion nötig ist:
+        </p>
+        <ul className="list-disc space-y-1 pl-5">
+          <li>
+            <span className="font-semibold text-slate-900">Verbindung:</span> E-Mail-Adresse des verbundenen Google-Kontos (zur Anzeige im
+            Dashboard), Zeitpunkt der Verbindung, die erteilten Berechtigungen und ein Aktualisierungstoken (Refresh-Token) von Google. Den
+            Token speichern wir verschlüsselt (AES-256-GCM) in der Redis-Datenbank in der Region Frankfurt am Main (siehe Abschnitt
+            „Warteliste“). Kurzlebige Zugriffstoken liegen nur im Arbeitsspeicher unseres Servers.
+          </li>
+          <li>
+            <span className="font-semibold text-slate-900">Belegte Zeiten:</span> Bei jeder Terminsuche und vor jeder Buchung fragen wir bei
+            Google ab, wann dein Hauptkalender belegt ist – nur Beginn und Ende, ohne Titel, Teilnehmende oder sonstige Inhalte. Das Ergebnis
+            bleibt höchstens etwa eine Minute im Arbeitsspeicher und wird nicht dauerhaft gespeichert. So bietet der Assistent keine Zeiten an,
+            zu denen du schon einen Termin hast.
+          </li>
+          <li>
+            <span className="font-semibold text-slate-900">Neue Termine:</span> Bucht der Assistent einen Termin fest oder gibst du einen
+            Vorschlag frei, tragen wir ihn als privaten Termin in deinen Hauptkalender ein: Beginn, Ende, Titel „Termin: &lt;Name der
+            buchenden Person&gt;“ (im Praxismodus ohne Namen) und ein kurzer Hinweis auf Terminart und Kanal. Telefonnummer, E-Mail-Adresse,
+            Geburtsdatum und Notizen übertragen wir nicht, Einladungen verschickt Google nicht. Die Kennung des Google-Termins speichern wir
+            an der Buchung; sie wird mit der Buchung gelöscht (90 Tage nach Terminende).
+          </li>
+        </ul>
+        <p>
+          Beim Start der Verbindung setzt unser Server ein technisch notwendiges Cookie (<code>sw_google_oauth</code>, nur für die
+          Google-Schnittstelle dieser Website, HttpOnly, höchstens zehn Minuten gültig). Es enthält eine Zufallszahl und sorgt dafür, dass
+          der Rücksprung von Google nur in dem Browser angenommen wird, der die Verbindung gestartet hat – so kann niemand einen fremden
+          Google Kalender unterschieben. Nach dem Rücksprung wird es gelöscht. Rechtsgrundlage ist § 25 Abs. 2 Nr. 2 TDDDG.
+        </p>
+        <p>
+          Zweck ist, Doppelbuchungen zu vermeiden und gebuchte Termine in deinem Kalender sichtbar zu machen. Rechtsgrundlage ist
+          Art. 6 Abs. 1 lit. b DSGVO (Nutzung der von dir gewünschten Funktion im Rahmen des Vertrags). Für die Daten der buchenden Personen
+          ist das Unternehmen bzw. die Praxis verantwortlich, das den Assistenten einsetzt; wir handeln dafür als Auftragsverarbeiter nach
+          Art. 28 DSGVO.
+        </p>
+        <p>
+          Für die Anmeldung und den Google Kalender selbst ist Google eigenständig verantwortlich; Anbieter ist für Nutzer im EWR die Google
+          Ireland Limited, Gordon House, Barrow Street, Dublin 4, Irland. Es gilt die Datenschutzerklärung von Google:{" "}
+          <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 underline underline-offset-2">policies.google.com/privacy</a>.
+          Eine Übermittlung an die Google LLC in den USA ist möglich; Google LLC ist unter dem EU-U.S. Data Privacy Framework zertifiziert
+          (Art. 45 DSGVO).
+        </p>
+        <p>
+          Die Nutzung und Übertragung von Informationen, die CalenSync von Google-APIs erhält, an andere Anwendungen hält sich an die{" "}
+          <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 underline underline-offset-2">Google API Services User Data Policy</a>,
+          einschließlich der Anforderungen zur eingeschränkten Nutzung („Limited Use“). Das heißt: Wir verwenden Daten aus deinem Google
+          Kalender ausschließlich für die oben beschriebenen Funktionen, die du im Dashboard siehst. Wir verkaufen sie nicht, nutzen sie
+          nicht für Werbung, geben sie nicht an Dritte weiter (außer an unsere Auftragsverarbeiter für Hosting und Speicherung, soweit für
+          die Funktion nötig, oder wenn das Gesetz es verlangt) und verwenden sie nicht zum Entwickeln, Verbessern oder Trainieren von
+          KI- oder Machine-Learning-Modellen. Menschen lesen diese Daten nicht, außer du willigst ausdrücklich ein, es ist zur Sicherheit
+          (etwa zur Untersuchung von Missbrauch) erforderlich oder gesetzlich vorgeschrieben.
+        </p>
+        <p>
+          Du kannst die Verbindung jederzeit im Dashboard mit „Trennen“ beenden. Wir widerrufen dann den Zugriff bei Google und löschen den
+          gespeicherten Token und die E-Mail-Adresse sofort. Zusätzlich kannst du den Zugriff in deinem Google-Konto unter{" "}
+          <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" className="font-medium text-slate-900 underline underline-offset-2">myaccount.google.com/permissions</a>{" "}
+          entziehen. Bereits eingetragene Termine bleiben in deinem Kalender, bis du sie dort löschst.
         </p>
       </SwPrivacySection>
 

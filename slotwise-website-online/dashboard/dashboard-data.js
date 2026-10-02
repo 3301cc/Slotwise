@@ -12,6 +12,7 @@
  *   GET  /api/agent/settings · PUT /api/agent/settings
  *   POST /api/agent/decision { id, action }       → Vorschlag freigeben/ablehnen
  *   GET  /api/waitlist/stats                      → { confirmed }          ← Zähler „Verifizierte Leads“
+ *   GET  /api/google/status · POST /api/google/connect · POST /api/google/disconnect   ← Karte „Google Kalender“
  * Ohne Token: Beispieldaten (MOCK) – die Formen sind identisch.
  * Noch Mock (kein Endpunkt): Kunden, Event-Typen, Berichte
  * (Änderungen landen im localStorage dieses Browsers; geplante Endpunkte stehen bei getContacts() ff.).
@@ -327,6 +328,25 @@
       if (this.live) return this.http("/api/agent/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
       this._store(TASKS_KEY, this._local(TASKS_KEY, PRAXIS.tasks).map((t) => (t.id === id ? { ...t, done: true } : t)));
       return delay({ ok: true }, 100);
+    },
+
+    // ---------- Google Kalender verbinden (nur live; api/_lib/core/google.js) ----------
+    //   GET  /api/google/status     → { enabled, connected, email?, connectedAt?, lastError?, writeEvents? }
+    //                                 503 { enabled: false } = auf dem Server nicht eingerichtet
+    //   POST /api/google/connect    → { url }  (Weiterleitung zu Google; setzt ein kurzlebiges HttpOnly-Cookie für den Rücksprung)
+    //   POST /api/google/disconnect → { ok, revoked }
+    async googleStatus() {
+      if (!this.live) return { demo: true, enabled: false, connected: false };
+      const res = await fetch(this.baseUrl + "/api/google/status", { headers: { Authorization: `Bearer ${this.adminToken()}` }, cache: "no-store" });
+      if (res.status === 503) return { enabled: false, connected: false };
+      if (!res.ok) throw new Error(`/api/google/status: ${res.status}`);
+      return res.json();
+    },
+    async googleConnect() {
+      return this.http("/api/google/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    },
+    async googleDisconnect() {
+      return this.http("/api/google/disconnect", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     },
 
     /** Vorschlag freigeben/ablehnen. Live: Server; Demo: nur lokal. */

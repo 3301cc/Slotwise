@@ -14,8 +14,16 @@
  *   GET <url>?from=<iso>&to=<iso>, Authorization: Bearer <token> → { busy: [{ start, end }] } (max. 62 Tage, ohne Personenbezug)
  *   Abruf mit 3 s Timeout; Ergebnis je Zeitfenster ~60 s im Prozess zwischengespeichert.
  *
- *   Ausfallverhalten (bewusst unterschiedlich):
- *   - findAvailability: FAIL-OPEN. Ist CalenSync nicht erreichbar, werden Slots nur nach lokalem Kalender angeboten.
+ * Optional: Google Kalender des Mandanten (core/google.js, „Google Kalender verbinden“ im Dashboard) → opts.google
+ *   Belegt-Abgleich per freeBusy.query auf „primary“ (gleiches Fenster, gleiche ~60 s Zwischenspeicher, 3 s Timeout) und
+ *   dasselbe Ausfallverhalten wie unten. Nicht verbunden = keine Quelle (weder Sperre noch Fehler).
+ *   Feste Buchungen (addBooking, Freigabe eines Vorschlags) werden zusätzlich als Termin im Google-Hauptkalender eingetragen –
+ *   best effort: ein Fehler bei Google bricht keine Buchung ab. Titel „Termin: <Name>“ (im Praxismodus ohne Namen:
+ *   „Termin (CalenSync)“), Beschreibung ohne Telefonnummer, E-Mail oder Notizen (Datensparsamkeit), privat, ohne Einladung;
+ *   die Google-Termin-ID steht danach als googleEventId an der Buchung.
+ *
+ *   Ausfallverhalten (bewusst unterschiedlich, für CalenSync und Google gleich):
+ *   - findAvailability: FAIL-OPEN. Ist CalenSync (bzw. Google) nicht erreichbar, werden Slots nur nach lokalem Kalender angeboten.
  *     Eine Liste ohne Vorschläge wäre für Anrufende schlechter, und kein angebotener Slot wird ungeprüft gebucht:
  *   - conflictFor (letzte Prüfung vor Buchung/Vorschlag): FAIL-CLOSED. Lässt sich der Slot nicht frisch gegen
  *     CalenSync prüfen, gilt er als belegt (kind "unverified") – der Agent bucht nicht, sondern bietet Rückruf bzw.
@@ -58,13 +66,29 @@ function cacheSet(key, value) {
   if (busyCache.size > 200) busyCache.delete(busyCache.keys().next().value); // ältester Eintrag zuerst
 }
 
+/** Fenster auf volle UTC-Tage erweitern (weniger verschiedene Schlüssel, bessere Trefferquote), höchstens BUSY_MAX_DAYS. */
+function busyWindow(fromMs, toMs) {
+  const from = Math.floor(fromMs / DAY_MS) * DAY_MS;
+  const to = Math.min(Math.max(Math.ceil(toMs / DAY_MS) * DAY_MS, from + DAY_MS), from + BUSY_MAX_DAYS * DAY_MS);
+  return { from, to };
+}
+
+/** Rohliste [{ start, end }] → geprüfte Blocker; unbrauchbare Einträge werden übersprungen. */
+function toBlocks(raw, source) {
+  const list = [];
+  for (const b of raw.slice(0, BUSY_MAX_ITEMS)) {
+    const s = Date.parse(b && b.start), e = Date.parse(b && b.end);
+    if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue;
+    list.push({ start: new Date(s).toISOString(), end: new Date(e).toISOString(), title: "Belegt", source, kind: "blocked", s, e });
+  }
+  return list;
+}
+
 /** Belegungen aus CalenSync. Wirft bei jedem Fehler (Timeout, HTTP-Status, kaputte Antwort) – Aufrufer entscheidet. */
 function createBusyFetcher(src, { fetchFn, now }) {
   const tokenHash = crypto.createHash("sha256").update(src.token).digest("hex").slice(0, 16);
   return async function fetchBusy(fromMs, toMs, { fresh = false } = {}) {
-    // Fenster auf volle UTC-Tage erweitern: weniger verschiedene Schlüssel, bessere Trefferquote
-    const from = Math.floor(fromMs / DAY_MS) * DAY_MS;
-    const to = Math.min(Math.max(Math.ceil(toMs / DAY_MS) * DAY_MS, from + DAY_MS), from + BUSY_MAX_DAYS * DAY_MS);
+    const { from, to } = busyWindow(fromMs, toMs);
     const key = `${src.url}|${tokenHash}|${from}|${to}`;
     const hit = busyCache.get(key);
     if (!fresh && hit && now() - hit.at < BUSY_CACHE_MS) return hit.list;
@@ -83,14 +107,44 @@ function createBusyFetcher(src, { fetchFn, now }) {
       clearTimeout(timer);
     }
     if (!body || !Array.isArray(body.busy)) throw new Error("CalenSync busy: Antwort ohne busy[]");
-    const list = [];
-    for (const b of body.busy.slice(0, BUSY_MAX_ITEMS)) {
-      const s = Date.parse(b && b.start), e = Date.parse(b && b.end);
-      if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue; // unbrauchbare Einträge überspringen
-      list.push({ start: new Date(s).toISOString(), end: new Date(e).toISOString(), title: "Belegt", source: "microsoft", kind: "blocked", s, e });
-    }
+    const list = toBlocks(body.busy, "microsoft");
     cacheSet(key, { at: now(), list });
     return list;
+  };
+}
+
+/**
+ * Belegungen aus dem verbundenen Google Kalender (opts.google = core/google.js forTenant()).
+ * null = nicht verbunden (keine Quelle). Wirft bei jedem Fehler (Timeout, Token, HTTP, kaputte Antwort) – Aufrufer entscheidet.
+ */
+function createGoogleBusyFetcher(google, { now }) {
+  return async function fetchGoogleBusy(fromMs, toMs, { fresh = false } = {}) {
+    const conn = await google.connection();
+    if (!conn) return null;
+    const { from, to } = busyWindow(fromMs, toMs);
+    const key = `google|${conn.key}|${from}|${to}`;
+    const hit = busyCache.get(key);
+    if (!fresh && hit && now() - hit.at < BUSY_CACHE_MS) return hit.list;
+    const raw = await conn.freeBusy(new Date(from).toISOString(), new Date(to).toISOString());
+    const list = toBlocks(raw, "google");
+    cacheSet(key, { at: now(), list });
+    return list;
+  };
+}
+
+/** Termin-Titel und -Beschreibung für Google: nur Name und Terminart, keine Telefonnummer, E-Mail oder Notizen. */
+const plain = (v, max) => String(v ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+function googleEvent(booking, tz, withName = true) {
+  const name = withName ? plain(booking.with, 100) : "";
+  const kind = plain(booking.title, 60);
+  const via = { phone: "Telefon", email: "E-Mail", chat: "Chat" }[booking.channel];
+  return {
+    bookingId: String(booking.id || `${booking.start}|${booking.end}`),
+    summary: name ? `Termin: ${name}` : "Termin (CalenSync)",
+    description: [`Gebucht über CalenSync${kind ? ` (${kind})` : ""}${via ? `, Kanal: ${via}` : ""}.`, "Details im CalenSync-Dashboard."].join("\n"),
+    start: booking.start,
+    end: booking.end,
+    timeZone: tz,
   };
 }
 
@@ -101,17 +155,64 @@ function createCalendar(store, opts = {}) {
   const log = opts.log || console;
   const list = (k) => store.listRange(k, 500);
   const fetchBusy = opts.busySource ? createBusyFetcher(opts.busySource, { fetchFn: opts.fetch || globalThis.fetch, now }) : null;
+  const google = opts.google || null;
+  const fetchGoogleBusy = google ? createGoogleBusyFetcher(google, { now }) : null;
+  // Name im Google-Termintitel? Der Agent schaltet ihn im Praxismodus ab (Gesundheitsdaten, Art. 9 DSGVO). Standard: ja.
+  const googleEventNames = opts.googleEventNames || (async () => true);
 
   async function busyIntervals() {
     const [b, p, x] = await Promise.all([list("cal:bookings"), list("cal:proposals"), list("cal:blocked")]);
     return [...b, ...p, ...x].map((s) => ({ ...s, s: Date.parse(s.start), e: Date.parse(s.end) }));
   }
-  /** Fail-open (siehe oben): bei Fehler leere Liste, damit trotzdem Slots angeboten werden. */
+  /** Fail-open (siehe oben): bei Fehler leere Liste je Quelle, damit trotzdem Slots angeboten werden. */
   async function remoteBusyOpen(fromMs, toMs) {
-    if (!fetchBusy) return [];
-    try { return await fetchBusy(fromMs, toMs); } catch (err) {
-      log.error(`[calendar] CalenSync-Belegungen nicht abrufbar, Slots nur nach lokalem Kalender: ${err.message}`);
-      return [];
+    const [ms, gg] = await Promise.all([
+      fetchBusy ? fetchBusy(fromMs, toMs).catch((err) => {
+        log.error(`[calendar] CalenSync-Belegungen nicht abrufbar, Slots nur nach lokalem Kalender: ${err.message}`);
+        return [];
+      }) : [],
+      fetchGoogleBusy ? fetchGoogleBusy(fromMs, toMs).then((l) => l || [], (err) => {
+        log.error(`[calendar] Google-Kalender-Belegungen nicht abrufbar, Slots ohne Google-Abgleich: ${err.message}`);
+        return [];
+      }) : [],
+    ]);
+    return [...ms, ...gg];
+  }
+
+  /** Feste Buchung zusätzlich in Google eintragen – best effort, liefert die Buchung (mit googleEventId bei Erfolg). */
+  async function withGoogleEvent(booking) {
+    if (!google) return booking;
+    try {
+      const conn = await google.connection();
+      if (!conn || !conn.writeEvents) return booking;
+      const id = await conn.insertEvent(googleEvent(booking, tz, await googleEventNames()));
+      return id ? { ...booking, googleEventId: id } : booking;
+    } catch (err) {
+      log.error(`[calendar] Termin nicht in Google Kalender eingetragen (Buchung bleibt bestehen): ${err.message}`);
+      return booking;
+    }
+  }
+  /** Buchung speichern. Der Google-Termin wird vorher angelegt, damit die Buchung genau einmal (mit ID) gespeichert wird. */
+  async function storeBooking(booking) {
+    const full = await withGoogleEvent(booking);
+    try {
+      await store.listPush("cal:bookings", full, 500);
+    } catch (err) {
+      // Buchung nicht gespeichert → Google-Termin wieder entfernen (best effort), Fehler wie bisher an den Aufrufer
+      if (full.googleEventId) await removeGoogleEvent(full);
+      throw err;
+    }
+    return full;
+  }
+  /** Google-Termin einer Buchung löschen (best effort). Für Stornierungen, sobald es sie gibt. */
+  async function removeGoogleEvent(booking) {
+    if (!google || !booking || !booking.googleEventId) return false;
+    try {
+      const conn = await google.connection();
+      return conn ? await conn.deleteEvent(booking.googleEventId) : false;
+    } catch (err) {
+      log.error(`[calendar] Google-Termin nicht gelöscht: ${err.message}`);
+      return false;
     }
   }
 
@@ -140,20 +241,26 @@ function createCalendar(store, opts = {}) {
     },
 
     /**
-     * Ist der Slot frei? Liefert bei Konflikt den Verursacher. Fail-closed (siehe oben): Ist CalenSync eingerichtet,
-     * aber nicht frisch abfragbar, kommt { kind: "unverified", unverified: true } zurück – der Slot gilt als belegt.
+     * Ist der Slot frei? Liefert bei Konflikt den Verursacher. Fail-closed (siehe oben): Ist CalenSync eingerichtet bzw.
+     * Google verbunden, aber nicht frisch abfragbar, kommt { kind: "unverified", unverified: true } zurück – der Slot gilt als belegt.
      */
     async conflictFor(start, end) {
       const s = Date.parse(start), e = Date.parse(end);
       const local = (await busyIntervals()).find((b) => overlaps(s, e, b.s, b.e));
-      if (local || !fetchBusy) return local || null;
-      try {
-        const remote = await fetchBusy(s, e, { fresh: true }); // letzte Prüfung immer ohne Zwischenspeicher
-        return remote.find((b) => overlaps(s, e, b.s, b.e)) || null;
-      } catch (err) {
-        log.error(`[calendar] CalenSync-Prüfung fehlgeschlagen, Slot gilt als belegt: ${err.message}`);
-        return { start, end, title: "Kalender nicht prüfbar", source: "microsoft", kind: "unverified", unverified: true };
+      if (local || (!fetchBusy && !fetchGoogleBusy)) return local || null;
+      // Letzte Prüfung immer ohne Zwischenspeicher, beide Quellen parallel
+      const checks = [];
+      if (fetchBusy) checks.push(fetchBusy(s, e, { fresh: true }).then((list) => ({ list }), (err) => ({ err, source: "microsoft", label: "CalenSync" })));
+      if (fetchGoogleBusy) checks.push(fetchGoogleBusy(s, e, { fresh: true }).then((list) => ({ list: list || [] }), (err) => ({ err, source: "google", label: "Google-Kalender" })));
+      const results = await Promise.all(checks);
+      for (const r of results) {
+        const hit = r.list && r.list.find((b) => overlaps(s, e, b.s, b.e));
+        if (hit) return hit;
       }
+      const failed = results.filter((r) => r.err);
+      for (const f of failed) log.error(`[calendar] ${f.label}-Prüfung fehlgeschlagen, Slot gilt als belegt: ${f.err.message}`);
+      if (failed.length) return { start, end, title: "Kalender nicht prüfbar", source: failed[0].source, kind: "unverified", unverified: true };
+      return null;
     },
     async countOnDay(startIso) {
       const d = berlinParts(startIso, tz).day;
@@ -161,7 +268,8 @@ function createCalendar(store, opts = {}) {
       return [...b, ...p].filter((x) => berlinParts(x.start, tz).day === d).length;
     },
 
-    async addBooking(slot) { await store.listPush("cal:bookings", { ...slot, kind: "booked" }, 500); },
+    /** Feste Buchung; mit verbundenem Google Kalender zusätzlich dort eingetragen (best effort). Liefert die gespeicherte Buchung. */
+    async addBooking(slot) { return storeBooking({ ...slot, kind: "booked" }); },
     async addProposal(slot) { await store.listPush("cal:proposals", { ...slot, kind: "proposed" }, 500); },
     async setBlocked(blocks) { await store.listReplace("cal:blocked", blocks.map((b) => ({ ...b, kind: "blocked" }))); },
     async addBlocked(block) { await store.listPush("cal:blocked", { ...block, kind: "blocked" }, 500); },
@@ -172,11 +280,13 @@ function createCalendar(store, opts = {}) {
       const p = proposals.find((x) => x.id === id);
       if (!p) return null;
       await store.listReplace("cal:proposals", proposals.filter((x) => x.id !== id));
-      if (action === "approve") await store.listPush("cal:bookings", { ...p, kind: "booked", approvedAt: new Date(now()).toISOString() }, 500);
+      if (action === "approve") return storeBooking({ ...p, kind: "booked", approvedAt: new Date(now()).toISOString() });
       return p;
     },
 
     /** Alles im Fenster, für die Wochenansicht. */
+    removeGoogleEvent,
+
     async week(fromIso, toIso) {
       const s = Date.parse(fromIso), e = Date.parse(toIso);
       const all = await busyIntervals();
