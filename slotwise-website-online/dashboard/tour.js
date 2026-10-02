@@ -17,7 +17,7 @@
     {
       target: "#kpi-grid",
       title: "Deine Zahlen auf einen Blick",
-      body: "Wie viele Termine gebucht wurden, wie viel Zeit dir der Agent gespart hat und wie viele Anfragen zu echten Terminen wurden. Kein Tabellenkram – nur das, was zählt.",
+      body: "Welche Terminarten gerade buchbar sind und wie viele Interessenten sich bestätigt eingetragen haben. Kein Tabellenkram – nur das, was zählt.",
     },
     {
       target: "#kalender",
