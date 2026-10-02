@@ -14,7 +14,7 @@
  *   POST /api/agent/tasks           { id } – Aufgabe erledigt (Bearer)
  */
 const crypto = require("node:crypto");
-const { twiml, validSignature } = require("./twilio");
+const { twiml, validSignature, keypadUtterance } = require("./twilio");
 
 const json = (status, body, headers) => ({ status, body, headers: { "Content-Type": "application/json; charset=utf-8", ...headers } });
 const xml = (body) => ({ status: 200, body, headers: { "Content-Type": "text/xml; charset=utf-8" } });
@@ -45,20 +45,26 @@ module.exports = {
     const actionUrl = `${config.siteUrl || input.baseUrl}/api/agent/voice-webhook`;
     const from = p.From ? String(p.From) : null;
 
+    // Tastatur je Modus: Praxis = eine Taste ("0" → Praxisteam), Unternehmen = bis zu 6 Ziffern für den SMS-Code
+    const keypad = (await agent.settings.get()).industry === "praxis" ? "single" : "code";
+
     // Anrufbeginn: Offenlegung (DSGVO/KI-VO), dann zuhören
     if (p.SpeechResult === undefined && !p.Digits) {
       await agent.activity.log({ kind: "info", text: `Eingehender Anruf von ${from ? from.replace(/(\+\d{2,3})\d+(\d{2})$/, "$1…$2") : "unbekannt"} angenommen – Assistent stellt sich vor`, channel: "phone" });
-      return xml(twiml({ say: await agent.disclosure(), gather: true, actionUrl }));
+      return xml(twiml({ say: await agent.disclosure(), gather: true, actionUrl, keypad }));
     }
-    // Taste 0: sofort zum Team (Notausgang, unabhängig vom Modell)
-    if (String(p.Digits || "") === "0") {
+    // Taste 0 allein (keine weiteren Ziffern): sofort zum Team (Notausgang, unabhängig vom Modell).
+    // Ein getippter Code, der mit 0 beginnt ("012345"), ist KEINE Übergabe, sondern geht an den Agenten.
+    const digits = String(p.Digits || "").trim();
+    if (digits === "0" && !String(p.SpeechResult || "").trim()) {
       const h = await agent.keyHandover({ sessionId: callSid, from });
       return xml(h.escalationPhone ? twiml({ say: h.say, dial: h.escalationPhone }) : twiml({ say: h.say, hangup: true }));
     }
-    const r = await agent.turn({ sessionId: callSid, channel: "phone", from, utterance: String(p.SpeechResult || p.Digits || "") });
+    const utterance = String(p.SpeechResult || "").trim() || keypadUtterance(digits);
+    const r = await agent.turn({ sessionId: callSid, channel: "phone", from, utterance });
     if (r.handover && r.escalationPhone) return xml(twiml({ say: r.say, dial: r.escalationPhone }));
     if (r.done) return xml(twiml({ say: r.say, hangup: true }));
-    return xml(twiml({ say: r.say, gather: true, actionUrl }));
+    return xml(twiml({ say: r.say, gather: true, actionUrl, keypad }));
   },
 
   async intake(agent, config, input) {
@@ -73,6 +79,7 @@ module.exports = {
     if (!authorized(config, input.headers)) return unauthorized();
     const since = input.query.since || null;
     const limit = Math.min(100, Number(input.query.limit) || 30);
+    await agent.sweepRetention();
     return json(200, { items: await agent.activity.list({ limit, since }), serverTime: new Date().toISOString() });
   },
 
@@ -97,6 +104,7 @@ module.exports = {
 
   async tasks(agent, config, input) {
     if (!authorized(config, input.headers)) return unauthorized();
+    await agent.sweepRetention();
     return json(200, { items: await agent.tasks.list({ includeDone: input.query.done === "1" }) });
   },
   async taskDone(agent, config, input) {

@@ -69,7 +69,19 @@ Google bietet **kein Gegenstück** zur Exchange-Scope-Begrenzung. Domänenweite 
 
 Zwei vertretbare Varianten:
 
-1. **DWD mit minimalem Scope und anwendungsseitiger Sperre.** Scope nur `https://www.googleapis.com/auth/calendar.events`. CalenSync impersoniert ausschließlich Nutzer, die per SCIM provisioniert, aktiv und Mitglied der Freigabegruppe sind. Jeder Impersonationsversuch außerhalb wird blockiert und im Audit-Log protokolliert. Das Dienstkonto nutzt Workload Identity Federation (AWS → Google) statt eines JSON-Schlüssels. **Restrisiko:** Die Begrenzung ist eine Eigenschaft der CalenSync-Software, nicht der Google-Plattform. Das gehört so ins Fact Sheet.
+1. **DWD mit minimalem Scope und anwendungsseitiger Sperre** (so umgesetzt für Google als *Ziel* „zweites Konto“, `core/src/googleCalendar.ts`). Kalender-Scope nur `https://www.googleapis.com/auth/calendar.events`, dazu `admin.directory.user.readonly` ausschließlich für ein eigenes Directory-Konto (Prüfung „dieselbe Person“). CalenSync impersoniert für den Kalender nur Google-Konten, die in einer freigegebenen Domain liegen, einer Pipeline eines per SCIM provisionierten, aktiven Mitglieds der Freigabegruppe gehören und laut Directory (Mitarbeiter-ID) und Entra (`employeeId`) dieselbe Person sind; nach dem Widerruf nur noch zum Löschen der eigenen Termine. Abgewiesene Ziele werden nicht aufgerufen, die Pipeline geht auf `config_error`, es gibt einen Betriebsalarm (`worker_alert`). Das Dienstkonto hat **keinen Schlüssel**: Google signiert die DWD-Assertion per IAM `signJwt`, CalenSync meldet sich dafür per Workload Identity Federation aus der AWS-Task-Rolle an. **Restrisiko:** Die Begrenzung auf Nutzer ist eine Eigenschaft der CalenSync-Software, nicht der Google-Plattform. Das gehört so ins Fact Sheet.
 2. **Admin-vertraute OAuth-App ohne DWD.** Die App wird unter *Sicherheit → API-Steuerung → App-Zugriffssteuerung* nur für eine Organisationseinheit als *Vertrauenswürdig* markiert. Nutzer verbinden sich selbst, können aber keine andere, nicht freigegebene App verbinden. Die Plattformgrenze greift, dafür entsteht wieder ein Klick pro Mitarbeiter.
 
 Für Kunden mit dem Anspruch „technisch unmöglich, Vorstandskalender zu lesen“ ist bei Google nur Variante 2 plattformseitig belastbar.
+
+### Einrichtung Variante 1 (Google-Admin, ca. 30 Minuten)
+
+Vollständig mit Beispielwerten in `DEPLOYMENT.md`, Abschnitt „Kalenderabgleich → Ziel Google Workspace“. Kurzfassung:
+
+1. **Google Cloud (Projekt des Betreibers):** APIs *IAM Service Account Credentials*, *Security Token Service*, *Google Calendar* und *Admin SDK* aktivieren. Dienstkonto `calensync-dwd@…` anlegen, **keinen Schlüssel** erzeugen (Organisationsrichtlinie `iam.disableServiceAccountKeyCreation`). Die numerische **Client-ID** (Unique ID) notieren.
+2. **Workload Identity Federation:** Pool + Provider vom Typ **AWS** mit der AWS-Konto-ID des CalenSync-Mandanten-Stacks, Bedingung `attribute.aws_role == "arn:aws:sts::<KONTO>:assumed-role/calensync-<tenant>-<env>-ecs-task"`. Auf dem Dienstkonto `roles/iam.serviceAccountTokenCreator` nur für dieses `principalSet://…/attribute.aws_role/…`.
+3. **Admin-Konsole → Sicherheit → Zugriffs- und Datenkontrolle → API-Steuerung → Domainweite Delegierung:** Client-ID aus 1. mit genau `https://www.googleapis.com/auth/calendar.events,https://www.googleapis.com/auth/admin.directory.user.readonly`.
+4. **Directory-Konto:** Nutzer `calensync-directory@…` mit einer benutzerdefinierten Admin-Rolle, die nur *Admin-API → Nutzer → Lesen* enthält. Mitarbeiter-ID der Nutzer = Entra `employeeId` pflegen.
+5. Werte an den Betreiber: Pool-/Provider-Ressource (`audience`), Dienstkonto, Domains, Directory-Konto → `APP_CONFIG` (`googleWorkloadIdentity`, `linkedGoogleWorkspaces`).
+
+Zur Kontrolle nach dem Einrichten: In der Admin-Konsole unter *Berichte → Audit und Untersuchung → OAuth-Logereignisse* sollten nur Token-Ausgaben an die Client-ID des Dienstkontos für Konten verbundener Mitarbeiter und für das Directory-Konto erscheinen. (Die Google-Anbindung ist bisher nur gegen gefälschte Google-Endpunkte getestet – vor dem ersten Kunden mit einem Test-Workspace prüfen.)

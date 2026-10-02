@@ -388,6 +388,48 @@ test("Taste 0: sofort zum Team, im Praxismodus mit Rückrufwunsch", async () => 
   assert.match(await agent.disclosure(), /Taste 0/);
 });
 
+const voice = (agent, config, body) => api.voiceWebhook(agent, config, { body, headers: {}, fullUrl: "http://l/api/agent/voice-webhook", baseUrl: "http://l" });
+
+test("Tastatur, Unternehmensmodus: getippter SMS-Code mit führender 0 ist der Code, keine Übergabe", async () => {
+  const { agent, config, sms, store } = build();
+  const from = "+4915112345678";
+  const start = await voice(agent, config, { CallSid: "CK1", From: from });
+  assert.match(start.body, /<Gather input="speech dtmf" numDigits="6" finishOnKey="#" timeout="5"/);
+  await voice(agent, config, { CallSid: "CK1", From: from, SpeechResult: "Ich hätte gern einen Termin nächste Woche." });
+  await voice(agent, config, { CallSid: "CK1", From: from, SpeechResult: "Der erste passt. Ich heiße Lena Test, lena@test.de, 0151 12345678" });
+  assert.strictEqual(sms.length, 1);
+  // Code deterministisch auf "012345" setzen (sonst zufällig)
+  const key = `otp:default:CK1:${from}`;
+  const rec = await store.getJson(key);
+  await store.setJson(key, { ...rec, code: "012345" }, 300);
+  const r = await voice(agent, config, { CallSid: "CK1", From: from, Digits: "012345" });
+  assert.match(r.body, /vorgemerkt/); assert.doesNotMatch(r.body, /<Dial>|mit dem Team/);
+  const feed = await agent.activity.list();
+  assert.ok(!feed.some((e) => /Taste 0/.test(e.text)), "keine Übergabe");
+  assert.ok(feed.some((e) => e.kind === "proposed"));
+  const sess = await store.getJson("agent:session:CK1");
+  assert.ok(sess.messages.some((m) => m.role === "user" && m.content.some((c) => c.text === "Tastatureingabe: 012345")));
+});
+
+test("Tastatur, Unternehmensmodus: nur eine einzelne 0 übergibt an das Team", async () => {
+  const { agent, config } = build({ AGENT_ESCALATION_PHONE: "+49301234567" });
+  const r = await voice(agent, config, { CallSid: "CK2", From: "+4915100000000", Digits: "0" });
+  assert.match(r.body, /<Dial>\+49301234567<\/Dial>/);
+  assert.ok((await agent.activity.list()).some((e) => /Taste 0/.test(e.text)));
+  // "00" oder "0#"-Reste sind keine Übergabe – nur die einzelne 0
+  const r2 = await voice(agent, config, { CallSid: "CK3", From: "+4915100000000", Digits: "00" });
+  assert.doesNotMatch(r2.body, /<Dial>/);
+});
+
+test("Tastatur, Praxismodus: eine Taste genügt, 0 → Praxisteam", async () => {
+  const { agent, config } = await buildPraxis();
+  const start = await voice(agent, config, { CallSid: "CK4", From: "+4915112345678" });
+  assert.match(start.body, /<Gather input="speech dtmf" numDigits="1" language/);
+  const r = await voice(agent, config, { CallSid: "CK4", From: "+4915112345678", Digits: "0" });
+  assert.match(r.body, /rufen Sie zurück/);
+  assert.strictEqual((await agent.tasks.list())[0].type, "callback");
+});
+
 test("Praxis: Brust/Atem-Formulierungen, Umlaute an Wortgrenzen, Absage nennt 112", () => {
   for (const u of ["Ich habe Schmerzen in der Brust", "Druck auf der Brust und linker Arm taub", "Ich habe Luftnot", "Ich kann kaum atmen", "Ich bekomme keine Luft", "Ich möchte sterben", "Er hat einen allergischen Schock", "Überdosis Tabletten genommen", "Annem bayıldı"]) assert.ok(detectEmergency(u), u);
   for (const u of ["Mein Gesicht ist taub, ganz plötzlich", "Es ist nicht dringend aber mein Herz rast"]) assert.ok(detectEmergency(u), u);
@@ -414,4 +456,60 @@ test("Praxis: Bestands- oder Neupatient – Folgerezept nur für Bestandspatient
   assert.strictEqual((await t("N3", "Mein Name ist Ida Klein, 0151 12345678")).say, NEW_CLOSED_DE);
   const p = buildSystemPrompt({ company: "X", hostName: "Y", timezone: "Europe/Berlin", language: "de", nowIso: "2026-10-01T08:00:00Z", settings: await agent.settings.get() });
   assert.match(p, /Aufnahmestopp/); assert.match(p, /schon einmal bei uns in Behandlung/);
+});
+
+test("Löschfristen: Aufgaben 30 Tage, Termine 90 Tage nach Ende, Protokoll 90 Tage; Frisches bleibt", async () => {
+  const { createRetention } = require("../api/_lib/core/agent/retention");
+  const store = memoryStore();
+  const DAY = 86400000, T = Date.parse("2026-10-01T12:00:00Z");
+  const iso = (ms) => new Date(ms).toISOString();
+  await store.listPush("agent:tasks", { id: "alt", at: iso(T - 31 * DAY), name: "Alt", dateOfBirth: "1950-01-01" }, 200);
+  await store.listPush("agent:tasks", { id: "neu", at: iso(T - 2 * DAY), name: "Neu" }, 200);
+  await store.listPush("cal:bookings", { id: "b-alt", start: iso(T - 92 * DAY), end: iso(T - 91 * DAY), dateOfBirth: "1960-02-02" }, 500);
+  await store.listPush("cal:bookings", { id: "b-neu", start: iso(T - 10 * DAY), end: iso(T - 10 * DAY + 1800000) }, 500);
+  await store.listPush("cal:proposals", { id: "p-alt", start: iso(T - 100 * DAY), end: iso(T - 100 * DAY + 1800000) }, 500);
+  await store.listPush("cal:blocked", { id: "ohne-ende" }, 500);
+  await store.listPush("agent:activity", { id: "a-alt", at: iso(T - 95 * DAY) }, 200);
+  await store.listPush("agent:activity", { id: "a-neu", at: iso(T - 1 * DAY) }, 200);
+  const r = createRetention(store, () => T);
+  const res = await r.sweep();
+  assert.deepStrictEqual(res, { tasks: 1, activity: 1, bookings: 1, proposals: 1, blocked: 0 });
+  assert.deepStrictEqual((await store.listRange("agent:tasks", 200)).map((x) => x.id), ["neu"]);
+  assert.deepStrictEqual((await store.listRange("cal:bookings", 500)).map((x) => x.id), ["b-neu"]);
+  assert.deepStrictEqual((await store.listRange("cal:proposals", 500)).length, 0);
+  assert.deepStrictEqual((await store.listRange("cal:blocked", 500)).map((x) => x.id), ["ohne-ende"], "ohne Zeitangabe nie löschen");
+  assert.deepStrictEqual((await store.listRange("agent:activity", 200)).map((x) => x.id), ["a-neu"]);
+  assert.ok(!JSON.stringify(await store.listRange("cal:bookings", 500)).includes("1960-02-02"), "Geburtsdatum alter Termine ist weg");
+  assert.strictEqual(await r.sweep(), null, "gedrosselt: zweiter Lauf binnen 6 h tut nichts");
+});
+
+test("Löschfristen: listRemove entfernt gezielt, parallel neu angelegte Einträge bleiben; Fristen per Umgebung", async () => {
+  const { createRetention } = require("../api/_lib/core/agent/retention");
+  const store = memoryStore();
+  const T = Date.parse("2026-10-01T12:00:00Z");
+  await store.listPush("agent:tasks", { id: "alt", at: new Date(T - 40 * 86400000).toISOString() }, 200);
+  const realRange = store.listRange.bind(store);
+  // Zwischen Lesen und Löschen kommt eine neue Aufgabe dazu (Race mit einem laufenden Anruf)
+  store.listRange = async (key, n) => { const r = await realRange(key, n); if (key === "agent:tasks") await store.listPush("agent:tasks", { id: "frisch", at: new Date(T).toISOString() }, 200); return r; };
+  await createRetention(store, () => T).sweep({ force: true });
+  store.listRange = realRange;
+  assert.deepStrictEqual((await store.listRange("agent:tasks", 200)).map((x) => x.id), ["frisch"]);
+  const cfg = fromEnv({ AGENT_MODEL: "fake", WAITLIST_SECRET: SECRET, AGENT_RETENTION_TASKS_DAYS: "14" });
+  assert.strictEqual(createRetention(store, () => T, cfg.agent.retention).days.tasksDays, 14);
+  assert.strictEqual(createRetention(store, () => T, fromEnv({ AGENT_MODEL: "fake", WAITLIST_SECRET: SECRET }).agent.retention).days.calendarDays, 90);
+});
+
+test("Löschfristen: redisRestStore.listRemove nutzt LREM je Eintrag (kein DEL/RPUSH)", async () => {
+  const { redisRestStore } = require("../api/_lib/core/store");
+  const calls = [];
+  const orig = global.fetch;
+  global.fetch = async (url, init) => { calls.push(JSON.parse(init.body)); return { ok: true, status: 200, json: async () => ({ result: 1 }) }; };
+  try {
+    const s = redisRestStore({ url: "https://redis.example", token: "t" });
+    const n = await s.listRemove("t:a:agent:tasks", [{ id: "x", at: "2026-01-01T00:00:00.000Z" }]);
+    assert.strictEqual(n, 1);
+  } finally { global.fetch = orig; }
+  assert.deepStrictEqual(calls.map((c) => c[0]), ["LREM"]);
+  assert.strictEqual(calls[0][1], "sw:t:a:agent:tasks");
+  assert.strictEqual(calls[0][3], JSON.stringify({ id: "x", at: "2026-01-01T00:00:00.000Z" }));
 });

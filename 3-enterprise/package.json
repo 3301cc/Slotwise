@@ -21,13 +21,16 @@
     "@aws-sdk/rds-signer": "^3.700.0",
     "@prisma/adapter-pg": "^6.0.0",
     "@prisma/client": "^6.0.0",
-    "pg": "^8.13.0",
-    "prisma": "^6.0.0"
+    "pg": "^8.13.0"
   },
   "devDependencies": {
+    "@azure/msal-browser": "^4.0.0",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.11.0",
-    "typescript": "^6.0.0",
-    "@azure/msal-browser": "^4.0.0"
+    "prisma": "^6.0.0",
+    "typescript": "^6.0.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
   }
 }

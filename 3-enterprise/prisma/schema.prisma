@@ -1,6 +1,6 @@
 // Prisma-Client-Schema des Mandanten-Backends (app/ + core/ + scim/).
 //
-// Quelle der Wahrheit für das DATENBANKSCHEMA sind die SQL-Migrationen in core/migrations (000–007), ausgeführt
+// Quelle der Wahrheit für das DATENBANKSCHEMA sind die SQL-Migrationen in core/migrations (000–008), ausgeführt
 // von app/src/migrate.ts. Diese Datei bildet sie für den generierten Client nur ab (Spalten 1:1 per @map/@@map)
 // und wird NICHT für Migrationen benutzt (kein prisma/migrations, kein `prisma db push`).
 // Prüfen nach jeder Migration:  npx prisma db pull --print  gegen eine frisch migrierte Datenbank.
@@ -11,7 +11,8 @@
 //   CHECK-Constraints  webhook_channels_provider_valid, webhook_channels_google_verifiable,
 //                      pipelines_mode_valid, pipelines_busy_label_len, pipelines_target_kind_valid,
 //                      pipelines_target_shape, pipelines_last_sync_error_code, pipelines_identity_attribute_valid,
-//                      pipelines_effective_mode_valid, sync_event_map_interval, job_queue.status
+//                      pipelines_effective_mode_valid, pipelines_target_provider_valid, pipelines_target_provider_shape,
+//                      sync_event_map_interval, job_queue.status
 //   Rechte             audit_events: kein UPDATE/DELETE für calensync_app (001/003)
 // job_queue wird nur per $executeRaw / pg benutzt (core/src/retryQueue.ts) und ist deshalb kein Modell.
 
@@ -59,7 +60,8 @@ model ScimUser {
   @@map("scim_users")
 }
 
-/// Sync-Pipeline je Nutzer (001; mode/busy_label/idempotency_key/created_at aus 005; Ziel + Sync-Zustand aus 007)
+/// Sync-Pipeline je Nutzer (001; mode/busy_label/idempotency_key/created_at aus 005; Ziel + Sync-Zustand aus 007;
+/// Ziel-Provider + Google-Workspace aus 008)
 model Pipeline {
   id             String    @id
   tenantId       String    @map("tenant_id")
@@ -81,6 +83,10 @@ model Pipeline {
   targetEntraTenantId  String?   @map("target_entra_tenant_id")
   /// team: ID aus teamCalendars
   targetRef            String?   @map("target_ref")
+  /// microsoft | google (008)
+  targetProvider       String    @default("microsoft") @map("target_provider")
+  /// provider google: ID aus linkedGoogleWorkspaces (008), sonst NULL
+  targetWorkspaceId    String?   @map("target_workspace_id")
   sourceDeltaLink      String?   @map("source_delta_link")
   sourceDeltaStartedAt DateTime? @map("source_delta_started_at") @db.Timestamptz(6)
   lastSyncedAt         DateTime? @map("last_synced_at") @db.Timestamptz(6)

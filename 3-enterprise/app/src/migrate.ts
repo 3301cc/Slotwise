@@ -1,15 +1,13 @@
 /**
  * Einmal-Task im Deployment (ECS run-task, siehe Terraform "migrate" / "db-bootstrap"):
  *
- *   node dist/app/src/migrate.js               Migrator: core/migrations (001 = Basisschema; Prisma-Migrationen nur,
- *                                              falls PRISMA_SCHEMA gesetzt UND prisma/migrations vorhanden ist –
- *                                              im Standard-Deployment nicht: prisma/schema.prisma ist nur der Client)
+ *   node dist/app/src/migrate.js               Migrator: core/migrations (001 = Basisschema). prisma/schema.prisma
+ *                                              dient nur dem Prisma-Client; PRISMA_SCHEMA wird abgelehnt
  *                                              Login als calensync_migrator per IAM-Token
  *   node dist/app/src/migrate.js --bootstrap   Einmalig: 000_bootstrap_roles.sql als Master-User
  *
  * Exit-Code 0 = Erfolg; alles andere stoppt die Pipeline VOR dem Rolling Update der App.
  */
-import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import pg from "pg";
 import { rdsTokenSource } from "../../core/src/dbAuth.js";
@@ -40,19 +38,10 @@ async function main(): Promise<void> {
     user = env("DB_USER");
     password = await rdsTokenSource({ host, port, user, region: env("AWS_REGION") }).getAuthToken();
 
-    // 1) Optional: Prisma-Migrationen. Standard ist AUS – die Tabellen scim_users, pipelines, webhook_channels,
-    //    provider_tokens, audit_events legt core/migrations/001_base_schema.sql an.
-    const schema = process.env.PRISMA_SCHEMA;
-    if (schema) {
-      const url = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${database}` +
-        `?sslmode=verify-full&sslrootcert=${encodeURIComponent(caPath)}`;
-      log(`prisma migrate deploy (${schema})`);
-      // distroless: keine Shell, kein /usr/bin/env → Prisma-CLI direkt mit dem laufenden Node starten
-      const r = spawnSync(process.execPath, ["node_modules/prisma/build/index.js", "migrate", "deploy", "--schema", schema], {
-        env: { ...process.env, DATABASE_URL: url, HOME: "/tmp" },
-        stdio: "inherit",
-      });
-      if (r.status !== 0) throw new Error(`prisma migrate deploy: Exit-Code ${r.status}`);
+    // Das Schema legen allein die SQL-Migrationen an (core/migrations/001 ff.). Die Prisma-CLI ist nur noch
+    // Build-Werkzeug (devDependency) und fehlt im Laufzeit-Image; ein altes PRISMA_SCHEMA wäre ein Konfigurationsfehler.
+    if (process.env.PRISMA_SCHEMA) {
+      throw new Error("PRISMA_SCHEMA wird nicht mehr unterstützt: Schema kommt aus core/migrations. Variable aus der Task-Definition entfernen.");
     }
   }
 

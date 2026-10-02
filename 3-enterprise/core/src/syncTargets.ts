@@ -14,7 +14,11 @@
  *            nie aus dem Request
  *   booking  CalenSync-Buchungsseite: kein Provider-Schreibzugriff, Belegt-Zeiten nur über die Busy-API
  *
- * Google-Ziele sind (noch) nicht vorgesehen.
+ *   account + provider "google": Google-Workspace-Kalender DERSELBEN Person in einem verknüpften Workspace
+ *            (linkedGoogleWorkspaces): workspaceId ∈ Allowlist, Domain ∈ deren domains. Dieselbe Person prüft die
+ *            Directory API (externalIds[type=organization] = employeeId) gegen Graph (employeeId des Inhabers),
+ *            bei der Anlage UND im Worker – core/src/googleCalendar.ts. Opt-in localPart wie bei Microsoft.
+ *            Geschrieben wird per domänenweiter Delegation NUR in das so geprüfte Postfach (Fact Sheet D4).
  * Rein funktional, ohne I/O – Ablehnungen liefern einen stabilen Code (API-Antwort, last_sync_error).
  */
 
@@ -33,6 +37,23 @@ export interface LinkedTenant {
   identityAttribute?: Exclude<IdentityAttribute, "objectId">;
 }
 
+/** Verknüpfter Google Workspace (Ziel account + provider google) */
+export interface LinkedGoogleWorkspace {
+  /** [a-z0-9_-], 1–64 Zeichen – steht in pipelines.target_workspace_id */
+  id: string;
+  label: string;
+  /** kleingeschrieben, ohne @ – nur Postfächer dieser Domains sind Ziel */
+  domains: readonly string[];
+  /** Dienstkonto, dessen Client-ID im Workspace für DWD freigegeben ist (Signatur per IAM signJwt, keyless) */
+  serviceAccountEmail: string;
+  /** employeeId (Default: Graph employeeId = Google externalIds[type=organization]) oder Opt-in localPart */
+  identityAttribute?: "employeeId" | "localPart";
+  /** Workspace-Nutzer mit Admin-Rolle "Nutzer: Lesen" – Subjekt NUR für die Directory-Abfrage (employeeId) */
+  directoryAdminSubject?: string | null;
+}
+
+export type TargetProvider = "microsoft" | "google";
+
 export interface TeamCalendar {
   id: string;
   mailbox: string;
@@ -50,6 +71,8 @@ export interface SyncAllowlist {
   linkedTenants: readonly LinkedTenant[];
   teamCalendars: readonly TeamCalendar[];
   bookingEnabled: boolean;
+  /** Google Workspaces als Ziel für account (optional; leer/fehlend = keine Google-Ziele) */
+  googleWorkspaces?: readonly LinkedGoogleWorkspace[];
 }
 
 export const EMPTY_ALLOWLIST: SyncAllowlist = Object.freeze({
@@ -58,7 +81,8 @@ export const EMPTY_ALLOWLIST: SyncAllowlist = Object.freeze({
 
 /** Was der Client wählt (bereits syntaktisch geprüft, siehe parseTargetRequest) */
 export type TargetRequest =
-  | { kind: "account"; mailbox: string; entraTenantId: string | null }
+  /** provider fehlt = microsoft; google verlangt workspaceId und kein entraTenantId */
+  | { kind: "account"; mailbox: string; entraTenantId: string | null; provider?: TargetProvider; workspaceId?: string | null }
   | { kind: "team"; teamId: string }
   | { kind: "booking" };
 
@@ -75,10 +99,15 @@ export interface ResolvedTarget {
   label: string;
   /** nur account: wie dieselbe Person geprüft wird */
   identityAttribute?: IdentityAttribute;
+  /** fehlt = microsoft */
+  provider?: TargetProvider;
+  /** nur provider google: ID aus linkedGoogleWorkspaces */
+  workspaceId?: string | null;
 }
 
 export type TargetRejection =
   | "tenant_not_linked"
+  | "workspace_not_linked"
   | "domain_not_allowed"
   | "not_same_person"
   | "target_is_source"
@@ -141,6 +170,15 @@ export function resolveSyncTarget(allow: SyncAllowlist, ownerUserName: string | 
       if (!mailbox) return { ok: false, reason: "domain_not_allowed" };
       const t = split(mailbox);
       const o = split(owner);
+      if (req.provider === "google") {
+        const ws = findWorkspace(allow, req.workspaceId);
+        if (!ws || req.entraTenantId) return { ok: false, reason: "workspace_not_linked" };
+        if (!ws.domains.includes(t.domain)) return { ok: false, reason: "domain_not_allowed" };
+        if (mailbox === owner) return { ok: false, reason: "target_is_source" };
+        const identityAttribute = ws.identityAttribute ?? "employeeId";
+        if (identityAttribute === "localPart" && t.local !== o.local) return { ok: false, reason: "not_same_person" };
+        return { ok: true, target: { kind: "account", provider: "google", workspaceId: ws.id, mailbox, entraTenantId: null, ref: null, label: `Google: ${ws.label}`, identityAttribute } };
+      }
       const linkedId = req.entraTenantId && !sameGuid(req.entraTenantId, allow.homeEntraTenantId) ? req.entraTenantId : null;
       if (linkedId) {
         const tenant = allow.linkedTenants.find((l) => sameGuid(l.entraTenantId, linkedId));
@@ -167,6 +205,20 @@ export interface StoredTarget {
   mailbox: string | null;
   entraTenantId: string | null;
   ref: string | null;
+  /** pipelines.target_provider (008); fehlt/NULL = microsoft */
+  provider?: string | null;
+  /** pipelines.target_workspace_id (008) */
+  workspaceId?: string | null;
+}
+
+const isGoogle = (s: { provider?: string | null }) => s.provider === "google";
+function findWorkspace(allow: SyncAllowlist, id: string | null | undefined): LinkedGoogleWorkspace | null {
+  if (!id) return null;
+  return (allow.googleWorkspaces ?? []).find((w) => w.id === id) ?? null;
+}
+/** Konfiguration des Google Workspace eines Ziels (Dienstkonto, Directory-Subjekt) – null, wenn nicht (mehr) verknüpft */
+export function googleWorkspaceFor(allow: SyncAllowlist, t: { provider?: string | null; workspaceId?: string | null }): LinkedGoogleWorkspace | null {
+  return isGoogle(t) ? findWorkspace(allow, t.workspaceId) : null;
 }
 
 /**
@@ -183,6 +235,12 @@ export function recheckStoredTarget(allow: SyncAllowlist, ownerUserName: string 
   }
   if (s.kind === "account") {
     if (!s.mailbox) return { ok: false, reason: "target_missing" };
+    if (s.provider && s.provider !== "microsoft" && s.provider !== "google") return { ok: false, reason: "target_missing" };
+    if (isGoogle(s)) {
+      if (s.entraTenantId) return { ok: false, reason: "workspace_not_linked" };
+      return resolveSyncTarget(allow, ownerUserName, { kind: "account", provider: "google", workspaceId: s.workspaceId ?? null, mailbox: s.mailbox, entraTenantId: null });
+    }
+    if (s.workspaceId) return { ok: false, reason: "target_missing" };
     return resolveSyncTarget(allow, ownerUserName, { kind: "account", mailbox: s.mailbox, entraTenantId: s.entraTenantId });
   }
   return { ok: false, reason: "target_missing" };
@@ -205,6 +263,11 @@ export function recheckTargetForCleanup(allow: SyncAllowlist, s: StoredTarget): 
   }
   if (s.kind === "account") {
     const { domain } = split(mailbox);
+    if (isGoogle(s)) {
+      const ws = findWorkspace(allow, s.workspaceId);
+      if (!ws) return { ok: false, reason: "workspace_not_linked" };
+      return ws.domains.includes(domain) ? { ok: true } : { ok: false, reason: "domain_not_allowed" };
+    }
     if (s.entraTenantId && !sameGuid(s.entraTenantId, allow.homeEntraTenantId)) {
       const tenant = allow.linkedTenants.find((l) => sameGuid(l.entraTenantId, s.entraTenantId));
       if (!tenant) return { ok: false, reason: "tenant_not_linked" };
@@ -216,9 +279,13 @@ export function recheckTargetForCleanup(allow: SyncAllowlist, s: StoredTarget): 
 }
 
 /** Dashboard-Anzeige eines gespeicherten Ziels – nur Label, nie das Postfach */
-export function targetLabel(allow: SyncAllowlist, s: StoredTarget): { kind: SyncTargetKind; label: string | null } | null {
+export function targetLabel(allow: SyncAllowlist, s: StoredTarget): { kind: SyncTargetKind; label: string | null; provider?: "google" } | null {
   if (s.kind === "booking") return { kind: "booking", label: "Buchungsseite" };
   if (s.kind === "team") return { kind: "team", label: allow.teamCalendars.find((t) => t.id === s.ref)?.label ?? null };
+  if (s.kind === "account" && isGoogle(s)) {
+    const ws = findWorkspace(allow, s.workspaceId);
+    return { kind: "account", label: ws ? `Google: ${ws.label}` : "Google", provider: "google" };
+  }
   if (s.kind === "account") {
     if (s.entraTenantId) return { kind: "account", label: allow.linkedTenants.find((l) => sameGuid(l.entraTenantId, s.entraTenantId))?.label ?? null };
     return { kind: "account", label: s.mailbox ? split(s.mailbox).domain : null };
@@ -226,13 +293,23 @@ export function targetLabel(allow: SyncAllowlist, s: StoredTarget): { kind: Sync
   return null;
 }
 
-export interface AccountSuggestion {
-  entraTenantId: string | null;
-  label: string;
-  mailbox: string;
-  /** immer false: Vorschlag aus lokalem Teil × Domain; dieselbe Person prüft erst die Anlage per Graph */
-  verified: false;
-}
+export type AccountSuggestion =
+  | {
+    entraTenantId: string | null;
+    label: string;
+    mailbox: string;
+    /** immer false: Vorschlag aus lokalem Teil × Domain; dieselbe Person prüft erst die Anlage per Graph */
+    verified: false;
+  }
+  | {
+    /** Google Workspace: Anlage mit { kind: "account", provider: "google", workspaceId, mailbox } */
+    provider: "google";
+    workspaceId: string;
+    label: string;
+    mailbox: string;
+    /** immer false: dieselbe Person prüft erst die Anlage (Directory API + Graph) */
+    verified: false;
+  };
 
 /**
  * Prüft den Modus gegen das Ziel: full (Betreff + Ort) in einen Team-Kalender nur mit allowFullMode.
@@ -259,6 +336,12 @@ export function accountSuggestions(allow: SyncAllowlist, ownerUserName: string |
       if (normalizeMailbox(m)) out.push({ entraTenantId: t.entraTenantId.toLowerCase(), label: t.label, mailbox: m, verified: false });
     }
   }
+  for (const w of allow.googleWorkspaces ?? []) {
+    for (const d of w.domains) {
+      const m = `${local}@${d}`;
+      if (m !== owner && normalizeMailbox(m)) out.push({ provider: "google", workspaceId: w.id, label: w.label, mailbox: m, verified: false });
+    }
+  }
   return out;
 }
 
@@ -268,7 +351,7 @@ export type TargetParse = { ok: true; target: TargetRequest } | { ok: false; err
 export function parseTargetRequest(v: unknown): TargetParse {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return { ok: false, error: "target_invalid" };
   const o = v as Record<string, unknown>;
-  const allowed: Record<string, readonly string[]> = { account: ["kind", "mailbox", "entraTenantId"], team: ["kind", "teamId"], booking: ["kind"] };
+  const allowed: Record<string, readonly string[]> = { account: ["kind", "mailbox", "entraTenantId", "provider", "workspaceId"], team: ["kind", "teamId"], booking: ["kind"] };
   if (typeof o.kind !== "string" || !Object.hasOwn(allowed, o.kind)) return { ok: false, error: "target_kind_invalid" };
   for (const k of Object.keys(o)) if (!allowed[o.kind].includes(k)) return { ok: false, error: `unknown_field:target.${k.slice(0, 24)}` };
   if (o.kind === "booking") return { ok: true, target: { kind: "booking" } };
@@ -284,5 +367,15 @@ export function parseTargetRequest(v: unknown): TargetParse {
     if (typeof o.entraTenantId !== "string" || !GUID.test(o.entraTenantId)) return { ok: false, error: "target_entra_tenant_id_invalid" };
     entraTenantId = o.entraTenantId.toLowerCase();
   }
-  return { ok: true, target: { kind: "account", mailbox, entraTenantId } };
+  const provider = o.provider === undefined || o.provider === null ? "microsoft" : o.provider;
+  if (provider !== "microsoft" && provider !== "google") return { ok: false, error: "target_provider_invalid" };
+  const hasWorkspace = o.workspaceId !== undefined && o.workspaceId !== null;
+  if (provider === "microsoft") {
+    if (hasWorkspace) return { ok: false, error: "target_workspace_id_invalid" };
+    return { ok: true, target: { kind: "account", mailbox, entraTenantId } };
+  }
+  // Google: Workspace Pflicht, Entra-Mandant verboten (kein Mischen der beiden Allowlists)
+  if (entraTenantId !== null) return { ok: false, error: "target_entra_tenant_id_invalid" };
+  if (typeof o.workspaceId !== "string" || !TEAM_ID.test(o.workspaceId)) return { ok: false, error: "target_workspace_id_invalid" };
+  return { ok: true, target: { kind: "account", provider: "google", workspaceId: o.workspaceId, mailbox, entraTenantId: null } };
 }

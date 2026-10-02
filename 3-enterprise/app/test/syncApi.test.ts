@@ -38,7 +38,8 @@ const env = (extra: Record<string, unknown>) => ({
 
 test("Config: Sync-Ziele optional; angegeben streng geprüft und normalisiert", () => {
   const empty = loadConfig(env({}));
-  assert.deepEqual(syncAllowlistFrom(empty.secrets), { homeEntraTenantId: TID, ownDomains: [], ownDomainsIdentityAttribute: "objectId", linkedTenants: [], teamCalendars: [], bookingEnabled: false });
+  assert.deepEqual(syncAllowlistFrom(empty.secrets), { homeEntraTenantId: TID, ownDomains: [], ownDomainsIdentityAttribute: "objectId", linkedTenants: [], teamCalendars: [], bookingEnabled: false, googleWorkspaces: [] });
+  assert.equal(empty.secrets.googleWorkloadIdentity, null);
   assert.equal(empty.secrets.syncTentative, false);
   const full = loadConfig(env({
     ownDomains: ["Acme-Alias.example"],
@@ -49,7 +50,7 @@ test("Config: Sync-Ziele optional; angegeben streng geprüft und normalisiert", 
   assert.deepEqual(syncAllowlistFrom(full.secrets), {
     homeEntraTenantId: TID, ownDomains: ["acme-alias.example"], ownDomainsIdentityAttribute: "objectId",
     linkedTenants: [{ entraTenantId: LINKED, label: "Tochter GmbH", domains: ["tochter.example"], identityAttribute: "employeeId" }],
-    teamCalendars: [{ id: "vertrieb", mailbox: "vertrieb@acme.example", label: "Vertrieb", allowFullMode: false }], bookingEnabled: true,
+    teamCalendars: [{ id: "vertrieb", mailbox: "vertrieb@acme.example", label: "Vertrieb", allowFullMode: false }], bookingEnabled: true, googleWorkspaces: [],
   });
   assert.equal(full.secrets.syncTentative, true);
   const bad: Array<[Record<string, unknown>, RegExp]> = [
@@ -68,6 +69,39 @@ test("Config: Sync-Ziele optional; angegeben streng geprüft und normalisiert", 
     [{ linkedTenants: [{ entraTenantId: LINKED, label: "a", domains: ["a.de"], identityAttribute: "mail" }] }, /identityAttribute/],
     [{ ownDomainsIdentityAttribute: "upn" }, /ownDomainsIdentityAttribute/],
     [{ teamCalendars: [{ id: "v", mailbox: "v@a.de", label: "V", allowFullMode: "ja" }] }, /allowFullMode/],
+  ];
+  for (const [extra, re] of bad) assert.throws(() => loadConfig(env(extra)), (e: unknown) => e instanceof ConfigError && re.test(e.message), JSON.stringify(extra));
+});
+
+const SA = "calensync-dwd@calensync-acme.iam.gserviceaccount.com";
+const AUDIENCE = "//iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/calensync-aws/providers/acme-prod";
+const GWS = { id: "acme-google", label: "Acme Google", domains: ["Acme-G.example"], directoryAdminSubject: "CalenSync-Dir@acme-g.example" };
+
+test("Config: Google-Ziele – googleWorkloadIdentity Pflicht, Domains disjunkt, employeeId braucht Directory-Subjekt, nur *.iam.gserviceaccount.com", () => {
+  const c = loadConfig(env({ ownDomains: ["acme-alias.example"], googleWorkloadIdentity: { audience: AUDIENCE, serviceAccountEmail: SA.toUpperCase() }, linkedGoogleWorkspaces: [GWS] }));
+  assert.deepEqual(c.secrets.googleWorkloadIdentity, { audience: AUDIENCE, serviceAccountEmail: SA });
+  assert.deepEqual(syncAllowlistFrom(c.secrets).googleWorkspaces, [{ id: "acme-google", label: "Acme Google", domains: ["acme-g.example"],
+    serviceAccountEmail: SA, identityAttribute: "employeeId", directoryAdminSubject: "calensync-dir@acme-g.example" }]);
+  // localPart ohne Directory-Subjekt; eigenes Dienstkonto je Workspace
+  const lp = loadConfig(env({ googleWorkloadIdentity: { audience: AUDIENCE, serviceAccountEmail: SA },
+    linkedGoogleWorkspaces: [{ id: "g2", label: "G2", domains: ["g2.example"], identityAttribute: "localPart", serviceAccountEmail: "other-dwd@calensync-acme.iam.gserviceaccount.com" }] }));
+  assert.deepEqual([lp.secrets.linkedGoogleWorkspaces[0].directoryAdminSubject, lp.secrets.linkedGoogleWorkspaces[0].serviceAccountEmail], [null, "other-dwd@calensync-acme.iam.gserviceaccount.com"]);
+  const wif = { googleWorkloadIdentity: { audience: AUDIENCE, serviceAccountEmail: SA } };
+  const bad: Array<[Record<string, unknown>, RegExp]> = [
+    [{ linkedGoogleWorkspaces: [GWS] }, /googleWorkloadIdentity fehlt/],
+    [{ googleWorkloadIdentity: { audience: "//iam.googleapis.com/projects/x/pools", serviceAccountEmail: SA } }, /audience/],
+    [{ googleWorkloadIdentity: { audience: AUDIENCE, serviceAccountEmail: "dwd@gmail.com" } }, /serviceAccountEmail/],
+    [{ ...wif, linkedGoogleWorkspaces: [{ ...GWS, serviceAccountEmail: "x@evil.example" }] }, /serviceAccountEmail/],
+    [{ ...wif, linkedGoogleWorkspaces: [{ ...GWS, id: "Acme Google" }] }, /\.id/],
+    [{ ...wif, linkedGoogleWorkspaces: [{ ...GWS, domains: [] }] }, /mindestens eine Domain/],
+    [{ ...wif, linkedGoogleWorkspaces: [{ ...GWS, label: "<b>" }] }, /label/],
+    [{ ...wif, linkedGoogleWorkspaces: [{ ...GWS, directoryAdminSubject: undefined }] }, /directoryAdminSubject: Pflicht/],
+    [{ ...wif, linkedGoogleWorkspaces: [{ ...GWS, directoryAdminSubject: "kein postfach" }] }, /directoryAdminSubject/],
+    [{ ...wif, linkedGoogleWorkspaces: [{ ...GWS, identityAttribute: "objectId" }] }, /identityAttribute/],
+    [{ ...wif, linkedGoogleWorkspaces: [GWS, { ...GWS, domains: ["andere.example"] }] }, /doppelte id/],
+    [{ ...wif, ownDomains: ["acme-g.example"], linkedGoogleWorkspaces: [GWS] }, /anderen Allowlist/],
+    [{ ...wif, linkedTenants: [{ entraTenantId: LINKED, label: "T", domains: ["acme-g.example"] }], linkedGoogleWorkspaces: [GWS] }, /anderen Allowlist/],
+    [{ ...wif, linkedGoogleWorkspaces: "acme-google" }, /Liste erwartet/],
   ];
   for (const [extra, re] of bad) assert.throws(() => loadConfig(env(extra)), (e: unknown) => e instanceof ConfigError && re.test(e.message), JSON.stringify(extra));
 });
@@ -151,6 +185,24 @@ test("GET /me/sync-targets: Vorschläge aus dem eigenen userName, Teams nur id+l
     assert.deepEqual(r.json.account, { allowed: false, suggestions: [] });
     assert.deepEqual(r.json.booking, { enabled: false });
   });
+});
+
+test("Google: sync-targets schlägt das Google-Konto vor (provider, workspaceId), sync-status zeigt \"Google: <Label>\" ohne Postfach", async () => {
+  const allow: SyncAllowlist = { ...ALLOW, googleWorkspaces: [{ id: "acme-google", label: "Acme Google", domains: ["acme-g.example"], serviceAccountEmail: SA, directoryAdminSubject: "dir@acme-g.example" }] };
+  const owners = { getActiveUserName: async () => "Max.Muster@acme.example" };
+  await withApp({ syncTargets: { allowlist: allow, owners } }, async (port) => {
+    const r = await call(port, "GET", "/api/v1/me/sync-targets", { Authorization: `Bearer ${tok()}` });
+    const sugg = (r.json.account as { suggestions: unknown[] }).suggestions;
+    assert.deepEqual(sugg[2], { provider: "google", workspaceId: "acme-google", label: "Acme Google", mailbox: "max.muster@acme-g.example", verified: false });
+    assert.equal(JSON.stringify(r.json).includes("gserviceaccount") || JSON.stringify(r.json).includes("dir@"), false, "kein Dienstkonto/Admin-Subjekt im Browser");
+  });
+  const rows = [{ user_active: true, pipeline_id: "pg", pipeline_status: "active", channel_expires_at: null, channel_live: false,
+    target_kind: "account", target_mailbox: "max.muster@acme-g.example", target_entra_tenant_id: null, target_ref: null,
+    target_provider: "google", target_workspace_id: "acme-google", last_synced_at: null, last_sync_error: null }];
+  const pool: PgLike = { query: async () => ({ rows: rows as never[], rowCount: 1 }) };
+  const st = await new PgStatusRepo(pool, allow).getSyncStatus("acme", "oid-42");
+  assert.deepEqual(st?.pipelines[0].target, { kind: "account", label: "Google: Acme Google", provider: "google" });
+  assert.equal(JSON.stringify(st).includes("@"), false);
 });
 
 test("sync-status: Ziel nur als Art + Label, letzter Abgleich, Fehler nur als Code (PgStatusRepo mit Fake-Pool)", async () => {

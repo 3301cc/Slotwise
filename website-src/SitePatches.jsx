@@ -740,7 +740,10 @@ function $h() {
           Die Aussage oben, dass CalenSync keine personenbezogenen Daten in Drittländer übermittelt, bezieht sich auf die
           CalenSync-Plattform mit den Buchungsdaten. Für diese Website gilt dieser Abschnitt.
         </p>
-        <p>Cookies, Tracking- oder Analysedienste setzen wir auf dieser Website nicht ein. Schriften werden von unserem eigenen Server geladen.</p>
+        <p>
+          Cookies, Tracking- oder Analysedienste setzen wir auf dieser Website nicht ein. Schriften werden von unserem eigenen Server geladen.
+          Was das Dashboard im Speicher deines Browsers ablegt, steht in den Abschnitten zur Dashboard-Vorschau und zur Anmeldung mit Microsoft.
+        </p>
       </SwPrivacySection>
 
       <SwPrivacySection title="Warteliste">
@@ -764,6 +767,59 @@ function $h() {
         </p>
       </SwPrivacySection>
 
+      <SwPrivacySection title="Zugang zur Dashboard-Vorschau">
+        <p>
+          Bevor sich die Dashboard-Vorschau zum ersten Mal öffnet, fragen wir nach deiner E-Mail-Adresse und deiner Einwilligung, dich über
+          den Start von CalenSync zu informieren. Die Eintragung läuft über die Warteliste mit Double-Opt-in; es gilt der Abschnitt
+          „Warteliste“. Als Quelle speichern wir „dashboard“. Rechtsgrundlage ist deine Einwilligung nach Art. 6 Abs. 1 lit. a DSGVO, die du
+          jederzeit widerrufen kannst.
+        </p>
+        <p>
+          Die Vorschau öffnet sich sofort nach dem Absenden, auch bevor du die Adresse bestätigt hast. Ist die Warteliste vorübergehend nicht
+          erreichbar, öffnet sie sich trotzdem; deine Adresse wird dann nicht gespeichert. Die Vorschau zeigt nur Beispieldaten.
+        </p>
+        <p>
+          Damit die Abfrage nicht bei jedem Besuch erscheint, legt dein Browser im lokalen Speicher (localStorage) einen Vermerk mit dem
+          Zeitpunkt der Freischaltung ab; deine E-Mail-Adresse steht darin nicht. Ebenfalls nur in deinem Browser speichert die Vorschau
+          Änderungen an den Beispieldaten und ob du die Einführungstour gesehen hast. Diese Einträge werden nicht an uns übertragen. Sie sind
+          für die von dir gewünschte Funktion unbedingt erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG). Du kannst sie jederzeit löschen, indem du die
+          Websitedaten in deinem Browser entfernst.
+        </p>
+      </SwPrivacySection>
+
+      <SwPrivacySection title="Anmeldung mit Microsoft im Dashboard (optional)">
+        <p>
+          Unternehmen, die CalenSync Enterprise in ihrer eigenen Umgebung einsetzen, können das Dashboard mit Microsoft Entra ID verbinden.
+          Nur dann erscheint die Schaltfläche „Mit Microsoft anmelden“. Die Anmeldung ist freiwillig; die Vorschau funktioniert auch ohne sie.
+        </p>
+        <p>
+          Wenn du dich anmeldest, leitet dich dein Browser zur Anmeldeseite von Microsoft weiter (Redirect-Verfahren) und danach zurück zu
+          dieser Website. Dein Passwort gibst du nur bei Microsoft ein, wir erhalten es nicht. Microsoft übermittelt deinem Browser dein
+          Benutzerkonto mit Anzeigename und Anmeldename (User Principal Name, meist deine geschäftliche E-Mail-Adresse) sowie Zugriffstoken.
+          Zweck ist allein der Zugriff auf die CalenSync-Enterprise-Schnittstelle deines Unternehmens, etwa um den Status des
+          Kalenderabgleichs anzuzeigen oder ihn einzurichten.
+        </p>
+        <p>
+          Konto und Token liegen nur im Sitzungsspeicher (sessionStorage) deines Browsers und werden gelöscht, wenn du dich abmeldest oder den
+          Tab schließt. Der Browser sendet die Token direkt an die CalenSync-Enterprise-Schnittstelle deines Unternehmens, nicht an die Server
+          dieser Website. Nach einer erfolgreichen Anmeldung merkt sich der Browser im lokalen Speicher, dass die Vorschau freigeschaltet ist
+          (siehe vorheriger Abschnitt). Die Anmeldebibliothek von Microsoft (MSAL) liefern wir von unserem eigenen Server aus; sie wird nicht
+          von einem fremden Content-Delivery-Netz geladen und nur, wenn die Anmeldung eingerichtet ist.
+        </p>
+        <p>
+          Für die Anmeldung selbst ist Microsoft eigenständig verantwortlich; Anbieter ist für Nutzer im EWR die Microsoft Ireland Operations
+          Limited, One Microsoft Place, South County Business Park, Leopardstown, Dublin 18, Irland. Es gelten die Datenschutzbestimmungen von
+          Microsoft und die Vereinbarungen deines Unternehmens mit Microsoft. Eine Übermittlung an die Microsoft Corporation in den USA ist
+          möglich; Microsoft ist unter dem EU-U.S. Data Privacy Framework zertifiziert (Art. 45 DSGVO).
+        </p>
+        <p>
+          Für die Daten in der CalenSync-Enterprise-Umgebung ist das Unternehmen verantwortlich, das sie einsetzt, in der Regel dein
+          Arbeitgeber. Betreiben wir die Umgebung für das Unternehmen, handeln wir als Auftragsverarbeiter nach Art. 28 DSGVO. Rechtsgrundlage
+          für die Anmeldung ist Art. 6 Abs. 1 lit. f DSGVO; das berechtigte Interesse liegt in einer sicheren Anmeldung mit dem bestehenden
+          Geschäftskonto, ohne eigenes Passwort und nur für berechtigte Personen des Unternehmens.
+        </p>
+      </SwPrivacySection>
+
       <section>
         <Ie>Verarbeitung auf der CalenSync-Plattform</Ie>
         <ul className="mt-2 list-disc space-y-2 pl-5">
@@ -776,10 +832,44 @@ function $h() {
         <p className="mt-2">{e.thirdParty.text}</p>
         <p className="mt-2">{e.thirdParty.euMode}</p>
       </section>
-      <section>
-        <Ie>KI-Telefonagent</Ie>
-        <p className="mt-2">{sc(Y.aiAgent.transparency)}</p>
-      </section>
+      <SwPrivacySection title="KI-Telefonagent">
+        <p>{sc(Y.aiAgent.transparency)}</p>
+        <p>
+          Verantwortlich für die Daten aus einem Anruf ist das Unternehmen oder die Praxis, die du anrufst; wir verarbeiten sie als
+          Auftragsverarbeiter nach Art. 28 DSGVO. Verarbeitet werden deine Rufnummer und die angerufene Nummer, das Gesagte als Text, über die
+          Telefontastatur eingegebene Ziffern (etwa der SMS-Bestätigungscode) sowie die Angaben für den Termin: Name, E-Mail-Adresse,
+          Mobilnummer und Wunschtermin. Bei Arztpraxen kommen Geburtsdatum, die Angabe, ob du schon Patientin oder Patient bist, und die Art
+          deines Anliegens hinzu (etwa Rezept, Überweisung oder Rückruf); diese Angaben können Gesundheitsdaten nach Art. 9 DSGVO sein.
+          Medizinische Fragen beantwortet der Agent nicht.
+        </p>
+        <p>
+          <span className="font-semibold text-slate-900">Telefonie und SMS.</span> Anrufe nimmt die Twilio Inc. (USA) entgegen. Twilio wandelt
+          das Gesagte in Text um, liest die Antworten des Agenten mit einer synthetischen Stimme vor und versendet SMS mit dem
+          Bestätigungscode, dem Buchungslink oder der Terminbestätigung. Wir lassen Gespräche nicht aufzeichnen. Twilio speichert
+          Verbindungsdaten wie Rufnummern, Zeitpunkt und Dauer nach den eigenen Aufbewahrungsfristen. Für die Übermittlung in die USA gilt
+          [Grundlage der Übermittlung, z. B. EU-U.S. Data Privacy Framework oder EU-Standardvertragsklauseln – vor dem Livegang eintragen].
+        </p>
+        <p>
+          <span className="font-semibold text-slate-900">Sprachmodell.</span> Den Gesprächstext verarbeitet ein Sprachmodell über Amazon Bedrock
+          der Amazon Web Services EMEA SARL, 38 Avenue John F. Kennedy, L-1855 Luxemburg, in der Standardeinstellung in der AWS-Region
+          Frankfurt am Main über ein EU-Inferenzprofil; dabei kann AWS Anfragen auf Rechenzentren in anderen EU-Regionen verteilen. Nach
+          Angaben von AWS werden die Eingaben weder an den Hersteller des Modells weitergegeben noch zum Training verwendet. Das Modell
+          schlägt nur Schritte vor; was tatsächlich ausgeführt wird, prüft unser Server nach festen Regeln.
+        </p>
+        <p>
+          <span className="font-semibold text-slate-900">Abgleich mit belegten Zeiten.</span> Setzt das Unternehmen CalenSync Enterprise ein,
+          fragt der Agent vor dem Vorschlagen und vor dem Eintragen eines Termins dort ab, welche Zeiten belegt sind. Dabei sendet er nur den
+          gesuchten Zeitraum und erhält nur Beginn und Ende belegter Zeiten zurück, ohne Titel, Teilnehmende oder andere personenbezogene
+          Daten. Daten von Anrufenden werden bei dieser Abfrage nicht übermittelt.
+        </p>
+        <p>
+          <span className="font-semibold text-slate-900">Speicherdauer.</span> Der Gesprächsverlauf wird für höchstens eine Stunde
+          zwischengespeichert, ein SMS-Bestätigungscode ist fünf Minuten gültig. Aufgaben für das Team werden 30 Tage nach ihrem Eingang
+          gelöscht, Termine und Terminvorschläge (im Praxismodus einschließlich Geburtsdatum) 90 Tage nach Terminende und Einträge im
+          Protokoll des Dashboards nach 90 Tagen. Unabhängig davon bleiben jeweils nur die neuesten Einträge erhalten (Termine 500, Aufgaben
+          und Protokoll je 200). Gespeichert wird in der Redis-Datenbank in der Region Frankfurt am Main (siehe Abschnitt „Warteliste“).
+        </p>
+      </SwPrivacySection>
       <section>
         <Ie>Buchungsdaten von Terminen</Ie>
         <p className="mt-2">

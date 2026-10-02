@@ -95,6 +95,8 @@
     target_team_id_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
     target_mailbox_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
     target_entra_tenant_id_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+    target_provider_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+    target_workspace_id_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
     idempotency_key_reused: "Zu diesem Vorgang gibt es schon eine Anfrage mit anderen Angaben. Bitte brechen Sie ab und laden Sie den Status neu.",
     busyLabel_length_1_64: "Der Titel muss 1 bis 64 Zeichen lang sein.",
     busyLabel_invalid_characters: "Der Titel enthält unzulässige Zeichen.",
@@ -105,6 +107,7 @@
   /** Gründe zu 422 target_not_allowed (core/src/syncTargets.ts) → genauere Meldung */
   const TARGET_REASONS = {
     tenant_not_linked: "Dieses Konto gehört zu keiner freigegebenen Organisation.",
+    workspace_not_linked: "Dieser Google Workspace ist für Ihre Organisation nicht (mehr) freigegeben. Bitte laden Sie die Seite neu.",
     domain_not_allowed: "Die Domain dieses Postfachs ist nicht freigegeben.",
     not_same_person: "Das Zielpostfach gehört nicht zu Ihrem Konto.",
     target_is_source: "Das Ziel ist Ihr eigenes Quellpostfach. Bitte wählen Sie ein anderes Ziel.",
@@ -114,6 +117,11 @@
     owner_unknown: "Ihr Konto ist noch nicht für CalenSync freigeschaltet.",
     identity_unverified: "Microsoft bestätigt nicht, dass dieses Postfach Ihnen gehört. Bitte wenden Sie sich an Ihre IT.",
     full_mode_not_allowed: "Für diesen Team-Kalender ist nur „Nur belegt“ freigegeben.",
+  };
+  /** Google-Ziele: dieselben Gründe, aber geprüft wird bei Google (Directory) statt bei Microsoft */
+  const GOOGLE_TARGET_REASONS = {
+    identity_unverified: "Google Workspace bestätigt nicht, dass dieses Konto Ihnen gehört. Bitte wenden Sie sich an Ihre IT.",
+    domain_not_allowed: "Die Domain dieses Google-Kontos ist nicht freigegeben.",
   };
 
   /** lastError einer Pipeline (Code aus dem Backend) → lesbare Meldung; unbekannt → der Code selbst */
@@ -146,30 +154,43 @@
     quota_exceeded: "Das Zielpostfach ist voll.",
     internal_error: "Interner Fehler bei CalenSync.",
   };
-  const pipelineErrorMessage = (code) => {
-    const hit = lookup(PIPELINE_ERRORS, code);
+  /** Google-Ziel: Codes, deren Text sonst Microsoft nennen würde */
+  const GOOGLE_PIPELINE_ERRORS = {
+    identity_unverified: "Google Workspace bestätigt nicht mehr, dass das Zielkonto Ihnen gehört – der Abgleich ist angehalten.",
+    scope_propagation: "Die Freigabe wird gerade bei Google wirksam – der Abgleich wird automatisch wiederholt.",
+    token: "Die Anmeldung bei Google wird erneuert – der Abgleich wird automatisch wiederholt.",
+    blocked_scope: "Kein Zugriff auf den Google-Kalender – bitte die IT um Freigabe bitten.",
+    config: "Google-Anbindung nicht vollständig eingerichtet – bitte an Ihre IT wenden.",
+    invalid_request: "Google hat den Abgleich abgelehnt – bitte an Ihre IT wenden.",
+  };
+  const pipelineErrorMessage = (code, provider) => {
+    const google = provider === "google";
+    const hit = (google && lookup(GOOGLE_PIPELINE_ERRORS, code)) || lookup(PIPELINE_ERRORS, code);
     if (hit) return hit;
     // Aufräumen nach dem Beenden: cleanup_<Kategorie> → „Termine im Ziel entfernen: <Meldung>“
     if (typeof code === "string" && code.startsWith("cleanup_")) {
-      const inner = lookup(PIPELINE_ERRORS, code.slice(8));
+      const inner = (google && lookup(GOOGLE_PIPELINE_ERRORS, code.slice(8))) || lookup(PIPELINE_ERRORS, code.slice(8));
       if (inner) return `Entfernen der Termine im Zielkalender: ${inner}`;
     }
     return `Fehler: ${String(code).slice(0, 80)}`;
   };
 
   const TARGET_KINDS = { account: "Zweites Konto", team: "Team-Kalender", booking: "Buchungsseite" };
-  /** "Zweites Konto: Tochter GmbH", "Team-Kalender: Vertrieb", "Buchungsseite" */
+  /** "Zweites Konto: Tochter GmbH", "Zweites Konto (Google): Acme", "Team-Kalender: Vertrieb", "Buchungsseite" */
   function targetLabel(t) {
     if (!t || typeof t !== "object") return "Kalender-Abgleich";
-    const kind = lookup(TARGET_KINDS, t.kind);
-    const label = typeof t.label === "string" ? t.label.trim().slice(0, 120) : "";
+    let kind = lookup(TARGET_KINDS, t.kind);
+    let label = typeof t.label === "string" ? t.label.trim().slice(0, 120) : "";
     if (!kind) return label || "Kalender-Abgleich";
+    // Server liefert für Google-Ziele label "Google: <Workspace>" und provider "google"
+    if (t.kind === "account" && t.provider === "google") { kind = "Zweites Konto (Google)"; label = label.replace(/^Google(: ?|$)/, "").trim(); }
     return t.kind === "booking" || !label ? kind : `${kind}: ${label}`;
   }
 
   /** Nur die Felder, die der Server erwartet (kein Durchreichen fremder Eigenschaften) */
   function targetBody(t) {
     if (!t) return undefined;
+    if (t.kind === "account" && t.provider === "google") return { kind: "account", provider: "google", workspaceId: t.workspaceId, mailbox: t.mailbox };
     if (t.kind === "account") return { kind: "account", mailbox: t.mailbox, entraTenantId: t.entraTenantId || null };
     if (t.kind === "team") return { kind: "team", teamId: t.teamId };
     if (t.kind === "booking") return { kind: "booking" };
@@ -226,14 +247,16 @@
         if ((res.status === 429 || res.status === 503) && attempt < maxRetries) { await backoff(attempt, res.headers.get("retry-after")); continue; }
         const errBody = await res.json().catch(() => null);
         const code = errBody && typeof errBody.error === "string" ? errBody.error.slice(0, 80) : "";
-        const reasonMsg = code === "target_not_allowed" && errBody && typeof errBody.reason === "string" ? lookup(TARGET_REASONS, errBody.reason) : null;
+        const google = Boolean(post && post.google);
+        const reasonMsg = code === "target_not_allowed" && errBody && typeof errBody.reason === "string"
+          ? (google && lookup(GOOGLE_TARGET_REASONS, errBody.reason)) || lookup(TARGET_REASONS, errBody.reason) : null;
         switch (res.status) {
           case 401: throw new CalensyncApiError("unauthenticated", "Anmeldung abgelaufen", 401, rid);
           case 403: throw new CalensyncApiError("forbidden", code === "origin_not_allowed" ? "Diese Website ist für die API nicht freigegeben" : "Keine Berechtigung", 403, rid);
           case 404: throw new CalensyncApiError("not_provisioned", "Ihr Konto ist noch nicht für CalenSync freigeschaltet", 404, rid);
           case 409: throw new CalensyncApiError("limit_reached", "Maximale Anzahl verbundener Kalender erreicht", 409, rid);
           case 400: case 413: case 415: case 422: throw new CalensyncApiError("invalid_request", (reasonMsg || lookup(REQUEST_ERRORS, code) || (code.startsWith("unknown_field:target") ? REQUEST_ERRORS.invalid_target : null)) || `Eingabe abgelehnt (${code || res.status})`, res.status, rid, code || null);
-          case 429: case 503: throw new CalensyncApiError("unavailable", code === "identity_check_unavailable" ? "Die Prüfung bei Microsoft ist gerade nicht möglich – bitte gleich erneut versuchen." : "CalenSync ist gerade ausgelastet – bitte gleich erneut versuchen", res.status, rid, code || null);
+          case 429: case 503: throw new CalensyncApiError("unavailable", code === "identity_check_unavailable" ? `Die Prüfung bei ${google ? "Google" : "Microsoft"} ist gerade nicht möglich – bitte gleich erneut versuchen.` : "CalenSync ist gerade ausgelastet – bitte gleich erneut versuchen", res.status, rid, code || null);
           default: throw new CalensyncApiError("unexpected", `Unerwartete Antwort ${res.status}`, res.status, rid);
         }
       }
@@ -248,7 +271,7 @@
       createPipeline: async (req, idempotencyKey = crypto.randomUUID()) => {
         const target = targetBody(req.target);
         const body = JSON.stringify(req.mode === "busy" && req.busyLabel !== undefined ? { target, mode: "busy", busyLabel: req.busyLabel } : { target, mode: req.mode });
-        const r = await request("/api/v1/me/pipelines", { body, idempotencyKey });
+        const r = await request("/api/v1/me/pipelines", { body, idempotencyKey, google: Boolean(target && target.provider === "google") });
         return { ...r.body, replayed: r.res.headers.get("idempotent-replayed") === "true" };
       },
     };
@@ -321,8 +344,10 @@
     const str = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
     const accountAllowed = Boolean(t.account && t.account.allowed === true);
     const accounts = accountAllowed && Array.isArray(t.account.suggestions)
-      ? t.account.suggestions.filter((x) => x && str(x.mailbox, 320)).slice(0, 50)
-        .map((x) => ({ kind: "account", mailbox: str(x.mailbox, 320), entraTenantId: str(x.entraTenantId, 64) || null, label: str(x.label, 120) || str(x.mailbox, 320), verified: x.verified !== false }))
+      ? t.account.suggestions.filter((x) => x && str(x.mailbox, 320) && (x.provider !== "google" || str(x.workspaceId, 64))).slice(0, 50)
+        .map((x) => x.provider === "google"
+          ? { kind: "account", provider: "google", workspaceId: str(x.workspaceId, 64), mailbox: str(x.mailbox, 320), label: str(x.label, 120) || str(x.mailbox, 320), verified: x.verified !== false }
+          : { kind: "account", mailbox: str(x.mailbox, 320), entraTenantId: str(x.entraTenantId, 64) || null, label: str(x.label, 120) || str(x.mailbox, 320), verified: x.verified !== false })
       : [];
     const teams = (Array.isArray(t.team) ? t.team : []).filter((x) => x && str(x.id, 128)).slice(0, 100)
       .map((x) => ({ kind: "team", teamId: str(x.id, 128), label: str(x.label, 120) || str(x.id, 128), fullMode: x.fullMode === true }));
@@ -360,7 +385,7 @@
       ? `Benachrichtigungen aktiv${fmtDate(p.subscription.expiresAt) ? ` bis ${esc(fmtDate(p.subscription.expiresAt))}` : ""}`
       : "Benachrichtigungen noch nicht aktiv";
     const synced = "lastSyncedAt" in p ? (fmtDate(p.lastSyncedAt) ? `Zuletzt abgeglichen: ${esc(fmtDate(p.lastSyncedAt))}` : "Noch nicht abgeglichen") : "";
-    const lastError = typeof p.lastError === "string" && p.lastError ? pipelineErrorMessage(p.lastError) : "";
+    const lastError = typeof p.lastError === "string" && p.lastError ? pipelineErrorMessage(p.lastError, p.target && p.target.provider) : "";
     return `<li class="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm" data-m365-pipeline>
             <span class="min-w-0"><span class="block break-words font-medium text-slate-900">${esc(targetLabel(p.target))}</span>
             <span class="block text-xs text-slate-500">${sub}</span>
@@ -392,13 +417,19 @@
     const t = targets;
     const single = t.accounts.length + t.teams.length + (t.booking ? 1 : 0) === 1; // nur eine Möglichkeit → vorausgewählt
     const isSel = (v) => sel === v || (!sel && single);
+    // Indizes bleiben die der Gesamtliste (Radio-Wert a<i>), Google-Konten bekommen eine eigene Gruppe
+    const indexed = t.accounts.map((a, i) => ({ a, i }));
+    const msAccounts = indexed.filter(({ a }) => a.provider !== "google");
+    const googleAccounts = indexed.filter(({ a }) => a.provider === "google");
     const group = (title, inner) => `<div class="mt-3"><p class="text-xs font-semibold text-slate-500">${title}</p>${inner}</div>`;
     return `
         <fieldset>
           <legend class="text-sm font-medium text-slate-800">Wohin soll Ihr Kalender abgeglichen werden?</legend>
-          ${t.accountAllowed ? group("Zweites Konto", t.accounts.length
-            ? t.accounts.map((a, i) => radio(`a${i}`, isSel(`a${i}`), a.label, [a.mailbox !== a.label ? a.mailbox : "", a.verified ? "" : "Beim Verbinden wird bei Microsoft geprüft, ob das Postfach Ihnen gehört."].filter(Boolean).join(" · "))).join("")
+          ${t.accountAllowed && (msAccounts.length || !googleAccounts.length) ? group("Zweites Konto", msAccounts.length
+            ? msAccounts.map(({ a, i }) => radio(`a${i}`, isSel(`a${i}`), a.label, [a.mailbox !== a.label ? a.mailbox : "", a.verified ? "" : "Beim Verbinden wird bei Microsoft geprüft, ob das Postfach Ihnen gehört."].filter(Boolean).join(" · "))).join("")
             : radio("", false, "Kein zweites Konto hinterlegt", "Ihre IT hat noch kein Zielkonto für Sie eingetragen. Bitte wenden Sie sich an sie.", true)) : ""}
+          ${t.accountAllowed && googleAccounts.length ? group("Zweites Konto (Google)", googleAccounts
+            .map(({ a, i }) => radio(`a${i}`, isSel(`a${i}`), a.label, [a.mailbox !== a.label ? a.mailbox : "", a.verified ? "" : "Beim Verbinden wird bei Google geprüft, ob das Konto Ihnen gehört."].filter(Boolean).join(" · "))).join("")) : ""}
           ${t.teams.length ? group("Team-Kalender", t.teams.map((x, i) => radio(`t${i}`, isSel(`t${i}`), x.label, "")).join("")) : ""}
           ${t.booking ? group("Buchungsseite", radio("b", isSel("b"), "Buchungsseite", "Zu belegten Zeiten bietet Ihre Buchungsseite keine Termine an.")) : ""}
         </fieldset>`;

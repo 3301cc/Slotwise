@@ -18,8 +18,8 @@ export interface PipelineStatus {
   status: string;
   /** Webhook-Abo bei Microsoft aktiv und bis wann (Erneuerung macht der Worker) */
   subscription: { active: boolean; expiresAt: string | null };
-  /** Ziel als Art + Label (nie ein Postfach); null = Altbestand ohne Ziel */
-  target: { kind: SyncTargetKind; label: string | null } | null;
+  /** Ziel als Art + Label (nie ein Postfach); Google-Ziele: label "Google: <Workspace>", provider "google" */
+  target: { kind: SyncTargetKind; label: string | null; provider?: "google" } | null;
   lastSyncedAt: string | null;
   /** nur ein Code (z. B. transient, blocked_scope, target_not_allowed, event_rejected, cleanup_failed) */
   lastError: string | null;
@@ -68,6 +68,8 @@ type Row = {
   target_mailbox: string | null;
   target_entra_tenant_id: string | null;
   target_ref: string | null;
+  target_provider?: string | null;
+  target_workspace_id?: string | null;
   last_synced_at: Date | string | null;
   last_sync_error: string | null;
   cleanup_requested_at: Date | string | null;
@@ -96,7 +98,7 @@ export class PgStatusRepo implements StatusRepo, OwnerLookup {
       `SELECT (u.active AND u.deletion_requested_at IS NULL) AS user_active,
               p.id AS pipeline_id, p.status AS pipeline_status,
               c.expires_at AS channel_expires_at, (c.id IS NOT NULL) AS channel_live,
-              p.target_kind, p.target_mailbox, p.target_entra_tenant_id, p.target_ref,
+              p.target_kind, p.target_mailbox, p.target_entra_tenant_id, p.target_ref, p.target_provider, p.target_workspace_id,
               p.last_synced_at, p.last_sync_error, p.cleanup_requested_at, p.cleanup_done_at
          FROM scim_users u
          LEFT JOIN pipelines p ON p.owner_user_id = u.id AND p.tenant_id = u.tenant_id
@@ -120,7 +122,8 @@ export class PgStatusRepo implements StatusRepo, OwnerLookup {
           active: bool(r.channel_live),
           expiresAt: r.channel_expires_at ? new Date(r.channel_expires_at).toISOString() : null,
         },
-        target: targetLabel(this.allow, { kind: r.target_kind, mailbox: r.target_mailbox, entraTenantId: r.target_entra_tenant_id, ref: r.target_ref }),
+        target: targetLabel(this.allow, { kind: r.target_kind, mailbox: r.target_mailbox, entraTenantId: r.target_entra_tenant_id, ref: r.target_ref,
+          provider: r.target_provider ?? null, workspaceId: r.target_workspace_id ?? null }),
         lastSyncedAt: r.last_synced_at ? new Date(r.last_synced_at).toISOString() : null,
         lastError: r.last_sync_error ?? null,
         cleanup: r.cleanup_requested_at ? (r.cleanup_done_at ? "done" : "pending") : null,

@@ -29,6 +29,8 @@ type CtxRow = {
   target_mailbox: string | null;
   target_entra_tenant_id: string | null;
   target_ref: string | null;
+  target_provider: string | null;
+  target_workspace_id: string | null;
   source_delta_link: string | null;
   source_delta_started_at: Date | string | null;
   created_at: Date | string | null;
@@ -71,8 +73,10 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
   async getCleanupContext(tenantId: string, pipelineId: string): Promise<CleanupContext | null> {
     // Bewusst OHNE Join auf scim_users: nach SCIM-DELETE ist der Nutzer ein PII-freier Tombstone
     const res = await this.pool.query<{ status: string; target_kind: string | null; target_mailbox: string | null;
-      target_entra_tenant_id: string | null; target_ref: string | null; cleanup_requested_at: Date | string | null; cleanup_done_at: Date | string | null }>(
-      `SELECT status, target_kind, target_mailbox, target_entra_tenant_id, target_ref, cleanup_requested_at, cleanup_done_at
+      target_entra_tenant_id: string | null; target_ref: string | null; target_provider: string | null; target_workspace_id: string | null;
+      cleanup_requested_at: Date | string | null; cleanup_done_at: Date | string | null }>(
+      `SELECT status, target_kind, target_mailbox, target_entra_tenant_id, target_ref, target_provider, target_workspace_id,
+              cleanup_requested_at, cleanup_done_at
          FROM pipelines WHERE tenant_id = $1 AND id = $2`,
       [tenantId, pipelineId],
     );
@@ -80,7 +84,8 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
     if (!r) return null;
     return {
       status: r.status,
-      target: { kind: r.target_kind, mailbox: r.target_mailbox, entraTenantId: r.target_entra_tenant_id, ref: r.target_ref },
+      target: { kind: r.target_kind, mailbox: r.target_mailbox, entraTenantId: r.target_entra_tenant_id, ref: r.target_ref,
+        provider: r.target_provider ?? "microsoft", workspaceId: r.target_workspace_id },
       cleanupRequestedAt: date(r.cleanup_requested_at),
       cleanupDoneAt: date(r.cleanup_done_at),
     };
@@ -115,7 +120,7 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
     const res = await this.pool.query<CtxRow>(
       `SELECT p.status, (u.active AND u.deletion_requested_at IS NULL) AS owner_active,
               u.external_id AS entra_object_id, u.user_name, p.mode, p.busy_label,
-              p.target_kind, p.target_mailbox, p.target_entra_tenant_id, p.target_ref,
+              p.target_kind, p.target_mailbox, p.target_entra_tenant_id, p.target_ref, p.target_provider, p.target_workspace_id,
               p.source_delta_link, p.source_delta_started_at, p.created_at,
               p.identity_verified_at, p.identity_attribute, p.effective_mode
          FROM pipelines p JOIN scim_users u ON u.id = p.owner_user_id AND u.tenant_id = p.tenant_id
@@ -131,7 +136,8 @@ export class PgSyncRepo implements SyncRepo, SyncScheduleRepo, BusyRepo, Cleanup
       ownerUserName: r.user_name,
       mode: r.mode === "full" ? "full" : "busy",
       busyLabel: r.busy_label,
-      target: { kind: r.target_kind, mailbox: r.target_mailbox, entraTenantId: r.target_entra_tenant_id, ref: r.target_ref },
+      target: { kind: r.target_kind, mailbox: r.target_mailbox, entraTenantId: r.target_entra_tenant_id, ref: r.target_ref,
+        provider: r.target_provider ?? "microsoft", workspaceId: r.target_workspace_id },
       deltaLink: r.source_delta_link,
       deltaStartedAt: date(r.source_delta_started_at),
       createdAt: date(r.created_at),

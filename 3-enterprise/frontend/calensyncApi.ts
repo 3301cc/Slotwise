@@ -38,8 +38,9 @@ export interface PipelineStatus {
   id: string;
   status: "active" | "pending" | "pending_scope" | "paused" | "revoked" | "blocked_scope" | "config_error" | "error" | string;
   subscription: { active: boolean; expiresAt: string | null };
-  /** Ziel des Abgleichs; label kommt aus der Serverkonfiguration (nicht vertrauenswürdig → escapen) */
-  target?: { kind: SyncTargetKind | string; label: string | null };
+  /** Ziel des Abgleichs; label kommt aus der Serverkonfiguration (nicht vertrauenswürdig → escapen).
+   *  Google-Workspace-Ziele: label "Google: <Workspace>", provider "google" */
+  target?: { kind: SyncTargetKind | string; label: string | null; provider?: "google" | string };
   /** ISO-Zeitpunkt des letzten erfolgreichen Abgleichs */
   lastSyncedAt?: string | null;
   /** Fehlercode des letzten Abgleichs (siehe pipelineErrorMessage) */
@@ -59,13 +60,18 @@ export interface SyncStatus {
   pipelines: PipelineStatus[];
 }
 
+/** Vorschlag für ein zweites Konto: Microsoft 365 (entraTenantId) oder Google Workspace (provider + workspaceId) */
+export type AccountSuggestion =
+  | { provider?: undefined; entraTenantId: string | null; label: string; mailbox: string; verified: boolean }
+  | { provider: "google"; workspaceId: string; label: string; mailbox: string; verified: boolean };
+
 /** GET /api/v1/me/sync-targets – was der Nutzer als Ziel wählen darf */
 export interface SyncTargets {
   /**
    * Vorschläge aus lokalem Teil × freigegebenen Domains – verified ist immer false: ob das Postfach wirklich
    * derselben Person gehört, prüft der Server erst beim Anlegen per Microsoft Graph (sonst 422 identity_unverified).
    */
-  account: { allowed: boolean; suggestions: { entraTenantId: string | null; label: string; mailbox: string; verified: boolean }[] };
+  account: { allowed: boolean; suggestions: AccountSuggestion[] };
   /** fullMode: „Mit Details“ (Betreff + Ort) ist für diesen Team-Kalender freigegeben; sonst nur „Nur belegt“ anbieten */
   team: { id: string; label: string; fullMode: boolean }[];
   booking: { enabled: boolean };
@@ -77,15 +83,22 @@ export const TARGET_REJECTION_MESSAGES: Record<string, string> = {
   full_mode_not_allowed: "Für diesen Team-Kalender ist nur „Nur belegt“ freigegeben.",
   not_same_person: "Das Postfach gehört nicht zu Ihrem Konto.",
   tenant_not_linked: "Dieser Mandant ist nicht freigegeben.",
+  workspace_not_linked: "Dieser Google Workspace ist nicht (mehr) freigegeben.",
   domain_not_allowed: "Diese Domain ist nicht freigegeben.",
   target_is_source: "Das ist bereits Ihr Quellkalender.",
   own_mailboxes_not_configured: "Zweite Konten im eigenen Unternehmen sind nicht freigegeben.",
   team_not_found: "Dieser Team-Kalender ist nicht (mehr) freigegeben.",
   booking_disabled: "Die Buchungsseite ist nicht freigegeben.",
 };
+/** Google-Ziele: geprüft wird bei Google (Directory) statt bei Microsoft */
+export const GOOGLE_TARGET_REJECTION_MESSAGES: Record<string, string> = {
+  identity_unverified: "Google Workspace bestätigt nicht, dass dieses Konto Ihnen gehört. Bitte wenden Sie sich an Ihre IT.",
+  domain_not_allowed: "Die Domain dieses Google-Kontos ist nicht freigegeben.",
+};
 
 export type SyncTarget =
-  | { kind: "account"; mailbox: string; entraTenantId: string | null }
+  | { kind: "account"; mailbox: string; entraTenantId: string | null; provider?: "microsoft" }
+  | { kind: "account"; provider: "google"; workspaceId: string; mailbox: string }
   | { kind: "team"; teamId: string }
   | { kind: "booking" };
 
@@ -144,6 +157,8 @@ export const REQUEST_ERROR_MESSAGES: Record<string, string> = {
   target_team_id_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
   target_mailbox_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
   target_entra_tenant_id_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+  target_provider_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
+  target_workspace_id_invalid: "Das gewählte Ziel ist ungültig. Bitte schließen Sie das Formular und öffnen Sie es erneut.",
   idempotency_key_reused: "Zu diesem Vorgang gibt es schon eine Anfrage mit anderen Angaben. Bitte brechen Sie ab und laden Sie den Status neu.",
   busyLabel_length_1_64: "Der Titel muss 1 bis 64 Zeichen lang sein.",
   busyLabel_invalid_characters: "Der Titel enthält unzulässige Zeichen.",
@@ -183,19 +198,40 @@ export const PIPELINE_ERROR_MESSAGES: Record<string, string> = {
   internal_error: "Interner Fehler bei CalenSync.",
 };
 
-/** Lesbare Meldung zu PipelineStatus.lastError; unbekannte Codes werden als Code angezeigt */
-export function pipelineErrorMessage(code: string): string {
-  return lookup(PIPELINE_ERROR_MESSAGES, code) ?? `Fehler: ${String(code).slice(0, 80)}`;
+/** Google-Ziel: Codes, deren Standardtext Microsoft nennen würde */
+export const GOOGLE_PIPELINE_ERROR_MESSAGES: Record<string, string> = {
+  identity_unverified: "Google Workspace bestätigt nicht mehr, dass das Zielkonto Ihnen gehört – der Abgleich ist angehalten.",
+  scope_propagation: "Die Freigabe wird gerade bei Google wirksam – der Abgleich wird automatisch wiederholt.",
+  token: "Die Anmeldung bei Google wird erneuert – der Abgleich wird automatisch wiederholt.",
+  blocked_scope: "Kein Zugriff auf den Google-Kalender – bitte die IT um Freigabe bitten.",
+  config: "Google-Anbindung nicht vollständig eingerichtet – bitte an Ihre IT wenden.",
+  invalid_request: "Google hat den Abgleich abgelehnt – bitte an Ihre IT wenden.",
+};
+
+/** Lesbare Meldung zu PipelineStatus.lastError; provider aus PipelineStatus.target; unbekannte Codes als Code */
+export function pipelineErrorMessage(code: string, provider?: string): string {
+  const google = provider === "google";
+  const hit = (google ? lookup(GOOGLE_PIPELINE_ERROR_MESSAGES, code) : null) ?? lookup(PIPELINE_ERROR_MESSAGES, code);
+  if (hit) return hit;
+  if (typeof code === "string" && code.startsWith("cleanup_")) {
+    const inner = (google ? lookup(GOOGLE_PIPELINE_ERROR_MESSAGES, code.slice(8)) : null) ?? lookup(PIPELINE_ERROR_MESSAGES, code.slice(8));
+    if (inner) return `Entfernen der Termine im Zielkalender: ${inner}`;
+  }
+  return `Fehler: ${String(code).slice(0, 80)}`;
 }
 
 const TARGET_KINDS: Record<string, string> = { account: "Zweites Konto", team: "Team-Kalender", booking: "Buchungsseite" };
 
-/** "Zweites Konto: Tochter GmbH", "Team-Kalender: Vertrieb", "Buchungsseite" (Rückgabe ist Klartext → escapen) */
+/** "Zweites Konto: Tochter GmbH", "Zweites Konto (Google): Acme", "Team-Kalender: Vertrieb", "Buchungsseite" (Klartext → escapen) */
 export function targetLabel(t: PipelineStatus["target"] | null | undefined): string {
   if (!t || typeof t !== "object") return "Kalender-Abgleich";
-  const kind = lookup(TARGET_KINDS, t.kind);
-  const label = typeof t.label === "string" ? t.label.trim().slice(0, 120) : "";
+  let kind = lookup(TARGET_KINDS, t.kind);
+  let label = typeof t.label === "string" ? t.label.trim().slice(0, 120) : "";
   if (!kind) return label || "Kalender-Abgleich";
+  if (t.kind === "account" && t.provider === "google") {
+    kind = "Zweites Konto (Google)";
+    label = label.replace(/^Google(: ?|$)/, "").trim();
+  }
   return t.kind === "booking" || !label ? kind : `${kind}: ${label}`;
 }
 
@@ -203,7 +239,9 @@ export function targetLabel(t: PipelineStatus["target"] | null | undefined): str
 function targetBody(t: SyncTarget | undefined): SyncTarget | undefined {
   if (!t) return undefined;
   switch (t.kind) {
-    case "account": return { kind: "account", mailbox: t.mailbox, entraTenantId: t.entraTenantId ?? null };
+    case "account":
+      if (t.provider === "google") return { kind: "account", provider: "google", workspaceId: t.workspaceId, mailbox: t.mailbox };
+      return { kind: "account", mailbox: t.mailbox, entraTenantId: t.entraTenantId ?? null };
     case "team": return { kind: "team", teamId: t.teamId };
     default: return { kind: t.kind };
   }

@@ -36,6 +36,7 @@ function memoryStore(initial = {}) {
     async listPush(key, value, max = 200) { const l = lists.get(key) || []; l.unshift(structuredClone(value)); if (l.length > max) l.length = max; lists.set(key, l); },
     async listRange(key, n = 50) { return structuredClone((lists.get(key) || []).slice(0, n)); },
     async listReplace(key, values) { lists.set(key, structuredClone(values)); },
+    async listRemove(key, values) { const drop = new Set(values.map((v) => JSON.stringify(v))); const l = lists.get(key) || []; const kept = l.filter((x) => !drop.has(JSON.stringify(x))); lists.set(key, kept); return l.length - kept.length; },
   };
 }
 
@@ -60,6 +61,7 @@ function fileStore(file) {
     async listPush(key, value, max = 200) { const d = read(); const l = d.lists[key] || []; l.unshift(value); if (l.length > max) l.length = max; d.lists[key] = l; write(d); },
     async listRange(key, n = 50) { return (read().lists[key] || []).slice(0, n); },
     async listReplace(key, values) { const d = read(); d.lists[key] = values; write(d); },
+    async listRemove(key, values) { const drop = new Set(values.map((v) => JSON.stringify(v))); const d = read(); const l = d.lists[key] || []; d.lists[key] = l.filter((x) => !drop.has(JSON.stringify(x))); write(d); return l.length - d.lists[key].length; },
   };
 }
 
@@ -99,6 +101,9 @@ function redisRestStore({ url, token }, fetchImpl = fetch) {
       await cmd(["DEL", `sw:${key}`]);
       if (values.length) await cmd(["RPUSH", `sw:${key}`, ...values.map((v) => JSON.stringify(v))]);
     },
+    // Gezielt entfernen (LREM je Eintrag): anders als listReplace gehen parallel hinzugefügte Einträge nicht verloren.
+    // Werte stammen aus listRange (JSON.parse) – JSON.stringify ergibt wieder exakt den gespeicherten String.
+    async listRemove(key, values) { let n = 0; for (const v of values) n += Number(await cmd(["LREM", `sw:${key}`, 0, JSON.stringify(v)])) || 0; return n; },
   };
 }
 

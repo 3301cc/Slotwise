@@ -21,3 +21,6 @@ export * from "./syncWorker.js";
 export * from "./pgSyncRepo.js";
 export * from "./cleanupWorker.js";
 export * from "./identity.js";
+export * from "./awsSigV4.js";
+export * from "./googleAuth.js";
+export * from "./googleCalendar.js";

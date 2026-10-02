@@ -1,7 +1,7 @@
 /**
  * Migration 007 + Sync-SQL gegen echtes PostgreSQL. Ohne DATABASE_URL übersprungen.
  *   DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres node --test dist/app/test/sync.pg.test.js
- * Legt eine EIGENE Wegwerf-Datenbank an (CREATEDB nötig) und migriert sie mit 000–007 – unabhängig von
+ * Legt eine EIGENE Wegwerf-Datenbank an (CREATEDB nötig) und migriert sie mit 000–008 – unabhängig von
  * migrations.pg.test (die eine leere DB erwartet) und parallel lauffähig.
  */
 import { test, before, after } from "node:test";
@@ -59,7 +59,7 @@ before(async () => {
     }
   }
   const r = await runMigrations(mig, dir, { bootstrap: false, log: () => {} });
-  assert.ok(r.applied.includes("007_sync.sql"));
+  assert.ok(r.applied.includes("007_sync.sql") && r.applied.includes("008_google_target.sql"));
   await mig.end();
   pool = new pg.Pool({ connectionString: u.toString(), max: 4 });
 });
@@ -89,7 +89,7 @@ async function seed(): Promise<void> {
 test("Migration 007: Spalten, Checks, Tabelle, Indizes, FK-Cascade, Rechte; erneutes Ausführen ist ein No-op", { skip }, async () => {
   const cols = await pool.query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'pipelines' AND column_name LIKE ANY (ARRAY['target_%', 'source_%', 'last_sync%', 'sync_lease%']) ORDER BY 1`);
   assert.deepEqual(cols.rows.map((r) => r.column_name as string).sort(), ["last_sync_error", "last_synced_at", "source_delta_link", "source_delta_started_at",
-    "sync_lease_owner", "sync_lease_until", "target_entra_tenant_id", "target_kind", "target_mailbox", "target_ref"]);
+    "sync_lease_owner", "sync_lease_until", "target_entra_tenant_id", "target_kind", "target_mailbox", "target_provider", "target_ref", "target_workspace_id"]);
   const more = await pool.query(`SELECT column_name FROM information_schema.columns
     WHERE (table_name = 'pipelines' AND column_name IN ('identity_verified_at', 'identity_attribute', 'effective_mode'))
        OR (table_name = 'sync_event_map' AND column_name = 'archived_at')`);
@@ -128,7 +128,7 @@ test("PgSyncRepo: Kontext, Lease, Zuordnungen, Schleifen-Lookup je Mandant, Zust
   const ctx = await repo.getSyncContext("acme", "p-team");
   assert.deepEqual({ ...ctx, createdAt: null }, {
     status: "active", ownerActive: true, ownerEntraObjectId: "oid-1", ownerUserName: "Max.Muster@acme.example", mode: "busy", busyLabel: "Termin",
-    target: { kind: "team", mailbox: "vertrieb@acme.example", entraTenantId: null, ref: "vertrieb" }, deltaLink: null, deltaStartedAt: null, createdAt: null,
+    target: { kind: "team", mailbox: "vertrieb@acme.example", entraTenantId: null, ref: "vertrieb", provider: "microsoft", workspaceId: null }, deltaLink: null, deltaStartedAt: null, createdAt: null,
     identityVerifiedAt: null, identityAttribute: null, effectiveMode: null,
   });
   assert.equal(await repo.getSyncContext("other", "p-team"), null, "fremder Mandant sieht nichts");
@@ -431,4 +431,59 @@ test("Review #1 (SQL): archivierte Zuordnungen bleiben für die Bereinigung, ups
   const ctx = await repo.getSyncContext("acme", "p-team");
   assert.deepEqual([ctx?.identityAttribute, ctx?.identityVerifiedAt instanceof Date, ctx?.effectiveMode], ["employeeId", true, "busy"]);
   await assert.rejects(pool.query(`UPDATE pipelines SET identity_attribute = 'mail' WHERE id = 'p-team'`), /violates/);
+});
+
+test("Migration 008: target_provider (Default microsoft) + target_workspace_id, Form-Checks, Repo/Prisma/Status lesen Google-Ziele, erneutes Ausführen ist ein No-op", { skip }, async () => {
+  await seed();
+  const cols = (await pool.query(`SELECT column_name, is_nullable, column_default FROM information_schema.columns
+    WHERE table_name = 'pipelines' AND column_name IN ('target_provider', 'target_workspace_id') ORDER BY 1`)).rows;
+  assert.deepEqual(cols.map((c) => [c.column_name, c.is_nullable, String(c.column_default ?? "")]),
+    [["target_provider", "NO", "'microsoft'::text"], ["target_workspace_id", "YES", ""]]);
+  const old = (await pool.query(`SELECT DISTINCT target_provider FROM pipelines`)).rows.map((r) => r.target_provider);
+  assert.deepEqual(old, ["microsoft"], "Bestand und alte App-Versionen (ohne Spalte im INSERT) = microsoft");
+
+  await pool.query(`INSERT INTO pipelines (id, tenant_id, owner_user_id, status, mode, busy_label, target_kind, target_mailbox, target_provider, target_workspace_id)
+                    VALUES ('p-g', 'acme', 'u1', 'active', 'busy', 'Termin', 'account', 'max.muster@acme-g.example', 'google', 'acme-google')`);
+  const bad = [
+    `UPDATE pipelines SET target_provider = 'yahoo' WHERE id = 'p-g'`,
+    `UPDATE pipelines SET target_workspace_id = NULL WHERE id = 'p-g'`,
+    `UPDATE pipelines SET target_kind = NULL WHERE id = 'p-g'`,
+    `UPDATE pipelines SET target_kind = 'booking', target_mailbox = NULL WHERE id = 'p-g'`,
+    `UPDATE pipelines SET target_workspace_id = 'Acme Google' WHERE id = 'p-g'`,
+    `UPDATE pipelines SET target_entra_tenant_id = '99999999-8888-7777-6666-555555555555' WHERE id = 'p-g'`,
+    `UPDATE pipelines SET target_workspace_id = 'acme-google' WHERE id = 'p-team'`,
+    `UPDATE pipelines SET target_provider = 'google', target_workspace_id = 'acme-google' WHERE id = 'p-team'`,
+    `UPDATE pipelines SET target_provider = NULL WHERE id = 'p-team'`,
+  ];
+  for (const q of bad) await assert.rejects(pool.query(q), /violates|constraint/, q);
+
+  const allow: SyncAllowlist = { ...ALLOW, googleWorkspaces: [{ id: "acme-google", label: "Acme Google", domains: ["acme-g.example"],
+    serviceAccountEmail: "calensync-dwd@calensync-acme.iam.gserviceaccount.com", identityAttribute: "employeeId", directoryAdminSubject: "dir@acme-g.example" }] };
+  const repo = new PgSyncRepo(pool);
+  assert.deepEqual((await repo.getSyncContext("acme", "p-g"))?.target,
+    { kind: "account", mailbox: "max.muster@acme-g.example", entraTenantId: null, ref: null, provider: "google", workspaceId: "acme-google" });
+  // Bereinigung: Postfach genullt, Provider/Workspace bleiben (Anzeige, Check gilt weiter)
+  await pool.query(`UPDATE pipelines SET status = 'revoked', cleanup_requested_at = now() WHERE id = 'p-g'`);
+  await repo.completeCleanup("acme", "p-g");
+  assert.deepEqual((await repo.getCleanupContext("acme", "p-g"))?.target,
+    { kind: "account", mailbox: null, entraTenantId: null, ref: null, provider: "google", workspaceId: "acme-google" });
+  const status = await new PgStatusRepo(pool, allow).getSyncStatus("acme", "oid-1");
+  assert.deepEqual(status?.pipelines.find((x) => x.id === "p-g")?.target, { kind: "account", label: "Google: Acme Google", provider: "google" });
+
+  // Echter Prisma-Client: Spalten-Mapping 008
+  await withPrisma(async (prisma) => {
+    const store = new PrismaPipelineStore(prisma, 10, () => "p-g2", allow, async (_t, subj) =>
+      (subj.provider === "google" && subj.workspaceId === "acme-google" ? { kind: "verified", attribute: subj.attribute } : { kind: "rejected", why: "forbidden" }));
+    const target = { kind: "account" as const, provider: "google" as const, workspaceId: "acme-google", mailbox: "max.muster@acme-g.example", entraTenantId: null };
+    const r = await store.createPipeline({ tenantId: "acme", entraObjectId: "oid-1", mode: "busy", busyLabel: null, idempotencyKey: "key-0000000000000080", target });
+    assert.deepEqual(r, { kind: "created", pipeline: { id: "p-g2", status: "pending", mode: "busy", busyLabel: null, target: { kind: "account", label: "Google: Acme Google", provider: "google" } } });
+    const row = (await pool.query(`SELECT target_kind, target_mailbox, target_entra_tenant_id, target_provider, target_workspace_id, identity_attribute FROM pipelines WHERE id = 'p-g2'`)).rows[0];
+    assert.deepEqual(row, { target_kind: "account", target_mailbox: "max.muster@acme-g.example", target_entra_tenant_id: null, target_provider: "google", target_workspace_id: "acme-google", identity_attribute: "employeeId" });
+    assert.equal((await store.createPipeline({ tenantId: "acme", entraObjectId: "oid-1", mode: "busy", busyLabel: null, idempotencyKey: "key-0000000000000080", target })).kind, "replayed");
+  });
+
+  // Idempotenz: Datei roh erneut ausführen
+  const sql = (await import("node:fs")).readFileSync(join(process.cwd(), "core/migrations/008_google_target.sql"), "utf8");
+  await pool.query(sql);
+  assert.equal((await pool.query(`SELECT count(*)::int AS n FROM pipelines WHERE target_provider = 'google'`)).rows[0].n, 2);
 });

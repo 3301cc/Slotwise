@@ -10,7 +10,9 @@ Object.assign(process.env, { WAITLIST_DATA_FILE: DATA, AGENT_MODEL: "fake", WAIT
 delete process.env.VERCEL;
 
 const { routes } = require("../api/_lib/http");
-const { parseTenants, tenantByToken } = require("../api/_lib/core/tenants");
+const { parseTenants, loadTenants, tenantByToken, tenantByNumber, normalizeE164 } = require("../api/_lib/core/tenants");
+const { fromEnv } = require("../api/_lib/core/config");
+const { agentReadiness } = require("../api/_lib/core/agent/agent");
 
 async function call(route, { method, body, token, query = {} }) {
   const req = { method, url: "/" + (Object.keys(query).length ? "?" + new URLSearchParams(query) : ""), headers: { host: "l", ...(token ? { authorization: `Bearer ${token}` } : {}), "content-type": "application/json" }, body, query };
@@ -22,7 +24,7 @@ async function call(route, { method, body, token, query = {} }) {
 
 test("TENANTS_JSON: ungültige Einträge werden verworfen, Token-Zuordnung", () => {
   const quiet = { error() {} };
-  const list = parseTenants(JSON.stringify([A, B, { id: "Kaputt!", adminToken: "x" }, { ...A }]), quiet);
+  const list = parseTenants(JSON.stringify([A, B, { id: "Kaputt!", adminToken: "x" }]), quiet);
   assert.deepStrictEqual(list.map((t) => t.id), ["praxis-berger", "kanzlei-krueger"]);
   assert.strictEqual(tenantByToken(list, { authorization: `Bearer ${B.adminToken}` }).id, "kanzlei-krueger");
   assert.strictEqual(tenantByToken(list, { authorization: "Bearer falsch" }), null);
@@ -57,4 +59,51 @@ test("Mandanten: Begrüßung mit dem Namen der angerufenen Praxis, unbekannte Nu
   assert.match(b.body, /Kanzlei Krüger/);
   const x = await call("POST /api/agent/voice-webhook", { method: "POST", body: { CallSid: "CA4", From: "+491", To: "+499999999" } });
   assert.match(x.body, /nicht vergeben/);
+});
+
+const quiet = { error() {} };
+test("TENANTS_JSON: Widersprüche sperren die ganze Konfiguration, Fehlertext und Log ohne Tokens", () => {
+  const C = { id: "zahnarzt-ost", adminToken: "c".repeat(32), phoneNumbers: ["+492113333333"] };
+  const cases = [
+    [[A, { ...C, id: "default" }], /id "default" ist reserviert/],
+    [[A, { ...C, id: "Default" }], /reserviert/],
+    [[A, B, { ...C, id: A.id }], /id doppelt/],
+    [[A, { ...C, adminToken: A.adminToken }], /adminToken identisch mit Eintrag 1/],
+    [[A, { ...C, phoneNumbers: ["+49 211 1111111"] }], /Rufnummer \+492111111111 schon bei Eintrag 1/],
+    [[A, { ...C, phoneNumbers: ["0049 (211) 111-1111"] }], /Rufnummer \+492111111111 schon bei/],
+    ["kein json", /kein gültiges JSON/],
+    [{ id: "x" }, /Liste/],
+  ];
+  for (const [input, re] of cases) {
+    const logged = [];
+    const r = loadTenants(typeof input === "string" ? input : JSON.stringify(input), { error: (m) => logged.push(m) });
+    assert.deepStrictEqual(r.tenants, [], String(re));
+    assert.match(r.error, re);
+    for (const text of [r.error, ...logged]) for (const tok of [A.adminToken, B.adminToken, C.adminToken]) assert.ok(!text.includes(tok), "kein Token im Text");
+  }
+  // Mandanten-Token gleich WAITLIST_ADMIN_TOKEN (würde den Wartelisten-Export öffnen)
+  assert.match(loadTenants(JSON.stringify([A]), quiet, { waitlistAdminToken: A.adminToken }).error, /WAITLIST_ADMIN_TOKEN/);
+  // Gültig: Nummern werden normalisiert, Doppelung im selben Eintrag ist harmlos, Zuordnung auch mit Leerzeichen
+  const ok = loadTenants(JSON.stringify([{ ...C, phoneNumbers: ["+49 211 3333333", "+492113333333", "00492113333334"] }]), quiet);
+  assert.strictEqual(ok.error, "");
+  assert.deepStrictEqual(ok.tenants[0].phoneNumbers, ["+492113333333", "+492113333334"]);
+  assert.strictEqual(tenantByNumber(ok.tenants, "+49 211 3333334").id, "zahnarzt-ost");
+  assert.strictEqual(normalizeE164("0211 12345"), "");
+});
+
+test("TENANTS_JSON ungültig: Status nennt den Grund, Agenten-Routen gesperrt statt Einzelbetrieb", async () => {
+  const cfg = fromEnv({ AGENT_MODEL: "fake", TENANTS_JSON: JSON.stringify([A, { ...B, id: "default" }]) });
+  assert.deepStrictEqual(cfg.tenants, []);
+  const state = agentReadiness(cfg);
+  assert.strictEqual(state.ready, false);
+  assert.ok(state.missing.some((m) => /TENANTS_JSON.*reserviert/.test(m)));
+
+  const wl = require("../api/_lib/http").getWaitlist();
+  wl.config.tenantsError = "TENANTS_JSON: Test";
+  try {
+    const s = await call("GET /api/agent/settings", { method: "GET", token: A.adminToken });
+    assert.strictEqual(s.status, 503); assert.strictEqual(s.json.error, "config_error");
+    const v = await call("POST /api/agent/voice-webhook", { method: "POST", body: { CallSid: "CA9", From: "+491", To: A.phoneNumbers[0] } });
+    assert.match(v.body, /nicht erreichbar/); assert.match(v.body, /<Hangup\/>/);
+  } finally { wl.config.tenantsError = ""; }
 });

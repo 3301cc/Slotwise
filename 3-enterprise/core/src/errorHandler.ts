@@ -123,6 +123,95 @@ export function classifyGraphError(f: GraphFailure, ctx: ClassifyContext): Error
 }
 
 // ---------------------------------------------------------------------------------------------------
+// Google (Ziel "account" mit provider google): Calendar API v3, Directory API, Token-Kette
+// ---------------------------------------------------------------------------------------------------
+export interface GoogleFailure extends GraphFailure {
+  /** gesetzt, wenn die Token-Kette scheiterte (core/src/googleAuth.ts) – dann ist body leer */
+  authStage?: "aws" | "sts" | "iam" | "oauth" | "config";
+  /** OAuth-/Google-Fehlercode der Token-Kette, z. B. unauthorized_client */
+  authCode?: string;
+}
+
+/** Nur feste Bezeichner übernehmen – Meldungen von Google gehen nie in Reason/Log */
+const safeCode = (v: unknown): string => (typeof v === "string" && /^[A-Za-z_]{1,48}$/.test(v) ? v : "");
+
+/** reason aus errors[0].reason bzw. details[].reason (ErrorInfo); nie die Meldung */
+export function parseGoogleError(body: string): { reason: string; status: string } {
+  try {
+    const j = JSON.parse(body) as { error?: { errors?: Array<{ reason?: unknown }>; details?: Array<{ reason?: unknown }>; status?: unknown } };
+    const e = j.error && typeof j.error === "object" ? j.error : {};
+    const reason = safeCode(e.errors?.[0]?.reason) || safeCode(e.details?.find((d) => safeCode(d?.reason))?.reason);
+    return { reason, status: safeCode(e.status) };
+  } catch {
+    return { reason: "", status: "" };
+  }
+}
+
+const GOOGLE_RATE_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded", "RATE_LIMIT_EXCEEDED"]);
+/** API im Google-Cloud-Projekt nicht aktiviert, DWD-Scope fehlt, Domänenrichtlinie verbietet den Zugriff */
+const GOOGLE_CONFIG_REASONS = new Set(["accessNotConfigured", "SERVICE_DISABLED", "insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT", "domainPolicy"]);
+
+/**
+ * Wie classifyGraphError, nur mit Googles Fehlerformat:
+ *   0 / 429 / 5xx                     transient (Backoff, Retry-After)
+ *   401                               token (Cache verworfen, erneuter Versuch), wiederholt → config
+ *   403 rateLimitExceeded / userRateLimitExceeded / quotaExceeded → transient mit Backoff
+ *   403 accessNotConfigured / insufficientPermissions / domainPolicy … → config (Admin muss handeln)
+ *   403 sonst (forbidden …) / 404     im Propagationsfenster Retry, danach blocked_scope
+ *   400 / sonstige 4xx                invalid_request
+ * Token-Kette: sts/iam/config 4xx → config; oauth unauthorized_client (DWD fehlt) → im Fenster Retry, sonst config;
+ * oauth invalid_grant (Nutzer unbekannt/gesperrt) → im Fenster Retry, sonst blocked_scope.
+ */
+export function classifyGoogleError(f: GoogleFailure, ctx: ClassifyContext): ErrorDecision {
+  const window = ctx.propagationWindowMs ?? DEFAULT_PROPAGATION_WINDOW_MS;
+  const inWindow = ctx.grantedAt !== null && ctx.now.getTime() - ctx.grantedAt.getTime() < window;
+  const propagationRetry = (reason: string): ErrorDecision => ({
+    action: "retry", category: "scope_propagation",
+    delayMs: backoffDelayMs(SCOPE_PROPAGATION, (ctx.attempts.scope_propagation ?? 0) + 1, ctx.random), reason,
+  });
+  // Netz, Drosselung, Serverfehler (und unten 401 der APIs) verhalten sich wie bei Graph (ohne Body: kein Graph-Code)
+  const asGraph = (status: number, tag: string) => {
+    const d = classifyGraphError({ status, body: "", retryAfter: f.retryAfter }, ctx);
+    return { ...d, reason: `${tag} ${d.reason}` } as ErrorDecision;
+  };
+  if (f.status === 0 || f.status === 429 || f.status >= 500) return asGraph(f.status, f.authStage ? `google_${f.authStage}` : "google");
+
+  // Token-Kette VOR dem 401-Zweig: Googles Token-Endpunkt meldet fehlende Delegation als 401 unauthorized_client
+  if (f.authStage) {
+    const code = safeCode(f.authCode);
+    const tag = `google_${f.authStage} HTTP ${f.status}${code ? ` ${code}` : ""}`;
+    if (f.authStage === "oauth" && code === "unauthorized_client") {
+      if (inWindow) return propagationRetry(`${tag}: domänenweite Delegation noch nicht wirksam`);
+      return { action: "fail", category: "config", reason: `${tag}: domänenweite Delegation (Client-ID/Scope) fehlt`, alert: true };
+    }
+    if (f.authStage === "oauth" && code === "invalid_grant") {
+      if (inWindow) return propagationRetry(`${tag}: Google-Konto noch nicht bereit`);
+      return { action: "fail", category: "blocked_scope", reason: `${tag}: Google-Konto unbekannt, gesperrt oder außerhalb der Domain`, alert: true };
+    }
+    return { action: "fail", category: "config", reason: `${tag}: Workload Identity / Dienstkonto prüfen`, alert: true };
+  }
+
+  if (f.status === 401) return asGraph(401, "google");
+  const { reason } = parseGoogleError(f.body);
+  const tag = `google HTTP ${f.status}${reason ? ` ${reason}` : ""}`;
+  if (f.status === 403) {
+    if (GOOGLE_RATE_REASONS.has(reason)) {
+      // Drosselung über 403 (Calendar): wie 429 behandeln
+      const d = classifyGraphError({ status: 429, body: "", retryAfter: f.retryAfter }, ctx);
+      return { ...d, reason: tag } as ErrorDecision;
+    }
+    if (GOOGLE_CONFIG_REASONS.has(reason)) return { action: "fail", category: "config", reason: `${tag}: Google-Konfiguration prüfen`, alert: true };
+    if (inWindow) return propagationRetry(`${tag}: Freigabe noch nicht wirksam`);
+    return { action: "fail", category: "blocked_scope", reason: `${tag}: kein Zugriff auf den Google-Kalender`, alert: true };
+  }
+  if (f.status === 404) {
+    if (inWindow) return propagationRetry(`${tag}: Google-Kalender noch nicht bereit`);
+    return { action: "fail", category: "blocked_scope", reason: `${tag}: Google-Kalender nicht gefunden`, alert: true };
+  }
+  return { action: "fail", category: "invalid_request", reason: tag, alert: true };
+}
+
+// ---------------------------------------------------------------------------------------------------
 // Anwendung der Entscheidung auf Queue + Pipeline
 // ---------------------------------------------------------------------------------------------------
 export interface RetryableJob<P> {

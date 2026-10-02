@@ -29,9 +29,15 @@ import {
   TargetCleanupWorker,
   TeardownJobWorker,
   createGraphCaller,
+  createGoogleCaller,
+  googleWorkspaceFor,
+  verifyGoogleIdentity,
   verifyIdentity,
+  WorkloadIdentityGoogleTokenProvider,
   type AppTokenProvider,
   type FetchLike,
+  type GoogleTokenSource,
+  type IdentitySubject,
 } from "../../core/src/index.js";
 import { HashedTokenAuthenticator } from "../../scim/src/auth.js";
 import { PrismaScimStore } from "../../scim/src/prismaStore.js";
@@ -81,6 +87,36 @@ const graphTokens = new KmsSignedGraphTokenProvider(
   },
   fetchFn,
 );
+// --- Google-Ziele: domänenweite Delegation OHNE Schlüssel ----------------------------------------------
+// AWS-Task-Rolle → (signierter sts:GetCallerIdentity) → Google STS → IAM signJwt → OAuth-Token je Postfach
+// (core/src/googleAuth.ts). Die AWS-Credentials kommen aus derselben Kette wie der KMS-Client (ECS-Task-Rolle).
+const googleTokens: GoogleTokenSource | undefined = cfg.secrets.googleWorkloadIdentity && cfg.secrets.linkedGoogleWorkspaces.length > 0
+  ? new WorkloadIdentityGoogleTokenProvider({
+    audience: cfg.secrets.googleWorkloadIdentity.audience,
+    region: cfg.db.region,
+    serviceAccounts: [...new Set(cfg.secrets.linkedGoogleWorkspaces.map((w) => w.serviceAccountEmail))],
+    awsCredentials: async () => {
+      const c = await kms.config.credentials();
+      return { accessKeyId: c.accessKeyId, secretAccessKey: c.secretAccessKey, sessionToken: c.sessionToken };
+    },
+    fetchFn,
+  })
+  : undefined;
+
+/** "Dieselbe Person" bei der Anlage: Microsoft-Ziele per Graph, Google-Ziele per Directory API + Graph */
+const checkIdentity = (tenantId: string, subj: IdentitySubject) => {
+  const graph = createGraphCaller(graphTokens, fetchFn, tenantId, 10_000, async () => {});
+  const ws = subj.provider === "google" ? googleWorkspaceFor(syncAllowlist, subj) : null;
+  if (subj.provider === "google") {
+    if (!ws || !googleTokens) return Promise.resolve({ kind: "rejected" as const, why: "forbidden" as const });
+    return verifyGoogleIdentity(graph, createGoogleCaller(googleTokens, fetchFn, ws.serviceAccountEmail, 10_000, async () => {}), {
+      ownerObjectId: subj.ownerObjectId, mailbox: subj.mailbox, directoryAdminSubject: ws.directoryAdminSubject ?? null,
+      attribute: subj.attribute === "localPart" ? "localPart" : "employeeId",
+    });
+  }
+  return verifyIdentity(graph, subj);
+};
+
 const tokens: AppTokenProvider = {
   getToken: async (tenantId, provider) => {
     if (provider !== "microsoft") throw new Error("Google-Provider ist in diesem Stack nicht konfiguriert");
@@ -121,7 +157,7 @@ const renewalScheduler = new RenewalScheduler(channels);
 // Kalenderabgleich: Quelle = Postfach des Inhabers (Heim-Mandant), Ziel laut Allowlist; Token je Entra-Mandant
 // (verknüpfte Mandanten: gleiche App, dort per Admin-Consent freigegeben, Cache-Schlüssel = Entra-Mandant)
 const syncWorker = new SyncWorker({
-  queue, repo: syncRepo, tokens: graphTokens, fetchFn, allowlist: syncAllowlist, workerId,
+  queue, repo: syncRepo, tokens: graphTokens, googleTokens, fetchFn, allowlist: syncAllowlist, workerId,
   alert: (a) => alert({ kind: "sync_failed", ...a }),
   log,
   options: { includeTentative: cfg.secrets.syncTentative },
@@ -129,7 +165,7 @@ const syncWorker = new SyncWorker({
 const syncScheduler = new SyncScheduler(syncRepo);
 // Nach Widerruf (SCIM, Nutzer): alle von CalenSync angelegten Zieltermine löschen, dann Zielpostfach nullen
 const cleanupWorker = new TargetCleanupWorker({
-  queue, repo: syncRepo, tokens: graphTokens, fetchFn, allowlist: syncAllowlist, workerId, log,
+  queue, repo: syncRepo, tokens: graphTokens, googleTokens, fetchFn, allowlist: syncAllowlist, workerId, log,
   alert: (a) => alert({ ...a }),
 });
 
@@ -153,8 +189,8 @@ const app = createAppServer({
   auth: new EntraTokenVerifier({ tenantId: cfg.secrets.entraTenantId, audiences: cfg.api.audiences, requiredScope: cfg.api.requiredScope, fetchFn }),
   status: statusRepo,
   pipelines: new PrismaPipelineStore(prisma, Number(process.env.MAX_PIPELINES_PER_USER ?? "5"), undefined, syncAllowlist,
-    // "dieselbe Person" per Graph bei der Anlage (account-Ziele); Token je Entra-Mandant
-    (tenantId, subj) => verifyIdentity(createGraphCaller(graphTokens, fetchFn, tenantId, 10_000, async () => {}), subj)),
+    // "dieselbe Person" bei der Anlage (account-Ziele); Token je Entra-Mandant bzw. je Google-Subjekt
+    checkIdentity),
   syncTargets: { allowlist: syncAllowlist, owners: statusRepo },
   booking: { token: cfg.secrets.bookingApiToken, repo: syncRepo },
   writeScope: cfg.api.writeScope,

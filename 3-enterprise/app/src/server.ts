@@ -9,19 +9,22 @@
  *        GET  /api/v1/me/sync-status   (Scope Sync.Read)
  *        GET  /api/v1/me/sync-targets  (Scope Sync.Read) wählbare Ziele laut Admin-Allowlist
  *        POST /api/v1/me/pipelines     (Scope Sync.Write, Idempotency-Key Pflicht, Body { mode, busyLabel?, target })
+ *                                       target account: { kind, mailbox, entraTenantId? } (Microsoft) oder
+ *                                       { kind: "account", provider: "google", workspaceId, mailbox } (Google Workspace)
  *        DELETE /api/v1/me/pipelines/{id} (Scope Sync.Write) eigene Pipeline beenden → 202 bzw. 200 (schon beendet)
  *        GET  /api/v1/availability/busy?from&to   Buchungsseite, statisches Bearer-Token (kein Entra), ≤ 62 Tage
  *
  * Fehlercodes der API ({ error, … }):
  *   400 idempotency_key_required · invalid_json · body_must_be_object · unknown_field:<f> · mode_must_be_busy_or_full
  *       busyLabel_* · target_invalid · target_kind_invalid · unknown_field:target.<f> · target_mailbox_invalid
- *       target_entra_tenant_id_invalid · target_team_id_invalid · invalid_range · bad_path
+ *       target_entra_tenant_id_invalid · target_team_id_invalid · target_provider_invalid · target_workspace_id_invalid
+ *       invalid_range · bad_path
  *   401 missing_bearer_token · token_expired · … (Entra) · invalid_token (Busy-API)
  *   403 insufficient_scope · origin_not_allowed
  *   404 not_found · user_not_provisioned · pipeline_not_found · booking_api_disabled
  *   409 pipeline_limit_reached
  *   413 payload_too_large   415 unsupported_media_type
- *   422 idempotency_key_reused · target_required · target_not_allowed (+ reason: tenant_not_linked | domain_not_allowed |
+ *   422 idempotency_key_reused · target_required · target_not_allowed (+ reason: tenant_not_linked | workspace_not_linked | domain_not_allowed |
  *       not_same_person | target_is_source | own_mailboxes_not_configured | team_not_found | booking_disabled | owner_unknown |
  *       identity_unverified | full_mode_not_allowed) · range_too_large
  *   503 temporarily_unavailable (+ Retry-After) · identity_check_unavailable (+ Retry-After) · busy_too_many

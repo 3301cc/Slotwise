@@ -106,6 +106,7 @@ Dashboard ◀── /api/agent/activity · week · settings · decision ◀─�
 | `AGENT_MODEL` | nein | `fake` = Testmodell ohne AWS (nie in Produktion setzen) |
 | `SITE_URL` | ja | Basis der Webhook-Adresse, die in TwiML zurückgegeben wird |
 | `ENTERPRISE_BUSY_URL`, `ENTERPRISE_BUSY_TOKEN` | nein | Belegte Zeiten aus CalenSync Enterprise (Ziel „Buchungsseite“), z. B. `https://acme.calensync.de/api/v1/availability/busy` + Bearer-Token. Slot-Suche: bei Ausfall nur lokaler Kalender (fail-open); Prüfung vor dem Buchen: bei Ausfall gilt der Slot als belegt, der Agent bietet Rückruf bzw. Buchungslink an (fail-closed). Mit `TENANTS_JSON` je Mandant `enterpriseBusyUrl`/`enterpriseBusyToken` (keine Vererbung) |
+| `AGENT_RETENTION_TASKS_DAYS`, `AGENT_RETENTION_CALENDAR_DAYS`, `AGENT_RETENTION_ACTIVITY_DAYS` | nein | Löschfristen des Agenten in Tagen (Standard 30 / 90 / 90): Aufgaben ab Eingang, Termine und Vorschläge ab Terminende, Protokoll ab Eintrag (`agent/retention.js`). Bei Änderung die Datenschutzerklärung anpassen |
 
 Der Admin-Token für Feed/Einstellungen/Freigaben ist `WAITLIST_ADMIN_TOKEN`, das Signatur-Geheimnis der OTP-Tokens `WAITLIST_SECRET`.
 `GET /api/agent/status` zeigt ohne Token, was fehlt. Fehlt etwas, antwortet der Voice-Webhook mit 503.

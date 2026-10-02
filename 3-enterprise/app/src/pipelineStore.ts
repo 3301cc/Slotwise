@@ -48,8 +48,8 @@ export interface PipelineDto {
   status: string;
   mode: PipelineMode;
   busyLabel: string | null;
-  /** Anzeige: Zielart + Label – nie ein Postfach */
-  target?: { kind: SyncTargetKind; label: string | null } | null;
+  /** Anzeige: Zielart + Label – nie ein Postfach (Google: provider "google") */
+  target?: { kind: SyncTargetKind; label: string | null; provider?: "google" } | null;
 }
 
 export type CreatePipelineResult =
@@ -85,12 +85,15 @@ export interface PipelineStore {
   endPipeline?(input: EndPipelineInput): Promise<EndPipelineResult>;
 }
 
-type StoredPipeline = PipelineRow & { targetKind?: string | null; targetMailbox?: string | null; targetEntraTenantId?: string | null; targetRef?: string | null };
+type StoredPipeline = PipelineRow & { targetKind?: string | null; targetMailbox?: string | null; targetEntraTenantId?: string | null; targetRef?: string | null;
+  targetProvider?: string | null; targetWorkspaceId?: string | null };
 
 const toDto = (p: StoredPipeline, allow: SyncAllowlist): PipelineDto => ({
   id: p.id, status: p.status, mode: (p.mode === "full" ? "full" : "busy") as PipelineMode, busyLabel: p.busyLabel,
-  target: targetLabel(allow, { kind: p.targetKind ?? null, mailbox: p.targetMailbox ?? null, entraTenantId: p.targetEntraTenantId ?? null, ref: p.targetRef ?? null }),
+  target: targetLabel(allow, { kind: p.targetKind ?? null, mailbox: p.targetMailbox ?? null, entraTenantId: p.targetEntraTenantId ?? null, ref: p.targetRef ?? null,
+    provider: p.targetProvider ?? null, workspaceId: p.targetWorkspaceId ?? null }),
 });
+const providerOf = (t: Pick<ResolvedTarget, "provider">): "microsoft" | "google" => t.provider ?? "microsoft";
 
 export class PrismaPipelineStore implements PipelineStore {
   constructor(
@@ -116,7 +119,9 @@ export class PrismaPipelineStore implements PipelineStore {
     const attribute = t.target.identityAttribute ?? "employeeId";
     if (attribute === "localPart") return { ok: true, target: t.target, verifiedAttribute: "localPart" };
     if (!this.identity || !ownerObjectId) return { ok: false, result: { kind: "target_not_allowed", reason: "identity_unverified" } };
-    const v = await this.identity(i.tenantId, { ownerObjectId, mailbox: t.target.mailbox ?? "", entraTenantId: t.target.entraTenantId, attribute });
+    // Google: Directory API + Graph (Dispatcher in main.ts); Microsoft: Graph in beiden Mandanten
+    const v = await this.identity(i.tenantId, { ownerObjectId, mailbox: t.target.mailbox ?? "", entraTenantId: t.target.entraTenantId, attribute,
+      ...(providerOf(t.target) === "google" ? { provider: "google" as const, workspaceId: t.target.workspaceId ?? null } : {}) });
     if (v.kind === "unavailable") {
       const sec = Number(v.retryAfter);
       return { ok: false, result: { kind: "identity_unavailable", retryAfterSeconds: Number.isFinite(sec) && sec > 0 ? Math.min(Math.ceil(sec), 300) : 5 } };
@@ -155,7 +160,8 @@ export class PrismaPipelineStore implements PipelineStore {
       const t = resolveSyncTarget(this.targets, user.userName ?? null, i.target);
       if (!t.ok) return { kind: "target_not_allowed", reason: t.reason } as const;
       const target = t.target;
-      if (target.mailbox !== pc.target.mailbox || target.entraTenantId !== pc.target.entraTenantId) {
+      if (target.mailbox !== pc.target.mailbox || target.entraTenantId !== pc.target.entraTenantId
+          || providerOf(target) !== providerOf(pc.target) || (target.workspaceId ?? null) !== (pc.target.workspaceId ?? null)) {
         return { kind: "target_not_allowed", reason: "identity_unverified" } as const;
       }
 
@@ -167,7 +173,8 @@ export class PrismaPipelineStore implements PipelineStore {
         const ex = existing as StoredPipeline;
         const same = existing.mode === i.mode && (existing.busyLabel ?? null) === i.busyLabel
           && (ex.targetKind ?? null) === target.kind && (ex.targetMailbox ?? null) === target.mailbox
-          && (ex.targetEntraTenantId ?? null) === target.entraTenantId && (ex.targetRef ?? null) === target.ref;
+          && (ex.targetEntraTenantId ?? null) === target.entraTenantId && (ex.targetRef ?? null) === target.ref
+          && (ex.targetProvider ?? "microsoft") === providerOf(target) && (ex.targetWorkspaceId ?? null) === (target.workspaceId ?? null);
         return same ? ({ kind: "replayed", pipeline: toDto(ex, this.targets) } as const) : ({ kind: "idempotency_conflict" } as const);
       }
 
@@ -187,6 +194,8 @@ export class PrismaPipelineStore implements PipelineStore {
           targetMailbox: target.mailbox,
           targetEntraTenantId: target.entraTenantId,
           targetRef: target.ref,
+          targetProvider: providerOf(target),
+          targetWorkspaceId: target.workspaceId ?? null,
           identityVerifiedAt: verifiedAt,
           identityAttribute: pc.verifiedAttribute,
         },

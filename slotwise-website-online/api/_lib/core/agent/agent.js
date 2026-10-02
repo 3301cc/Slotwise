@@ -22,6 +22,7 @@ const { ToolRouter, otpStoreFrom } = require("./toolRouter");
 const { createModel } = require("./bedrock");
 const { createCalendar, formatForSpeech } = require("./calendar");
 const { createActivity } = require("./activity");
+const { createRetention } = require("./retention");
 const { createSettings } = require("./settings");
 const { smsSender, consoleSms } = require("./twilio");
 const { createStore } = require("../store");
@@ -34,6 +35,7 @@ function agentReadiness(config) {
   const missing = [...base.missing];
   if (config.deployed && !config.agent.aws && config.agent.model !== "fake") missing.push("AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY");
   if (config.deployed && !config.agent.twilio) missing.push("TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN/TWILIO_FROM_NUMBER");
+  if (config.tenantsError) missing.push(config.tenantsError); // gilt lokal wie im Deployment
   return { ready: missing.length === 0, mode: base.mode, missing };
 }
 
@@ -47,6 +49,9 @@ function createAgent(config, deps = {}) {
   const activity = deps.activity || createActivity(store, now);
   const settings = deps.settings || createSettings(store, now);
   const tasks = deps.tasks || createTasks(store, now);
+  const retention = createRetention(store, now, config.agent.retention || {});
+  // Löschfristen nebenbei durchsetzen (gedrosselt); ein Fehler darf kein Gespräch und keine Anzeige blockieren
+  const sweepRetention = () => retention.sweep().catch((e) => log.error("[agent] Löschfristen:", e && e.message));
   const router = new ToolRouter({ otp: otpStoreFrom(store), audit: activity.audit, hmacSecret: config.secret || "local-dev-secret-not-for-production-use", sendSms, now });
   const state = agentReadiness(config);
 
@@ -134,7 +139,7 @@ function createAgent(config, deps = {}) {
   }
 
   return {
-    state, store, calendar, activity, settings, model, tasks,
+    state, store, calendar, activity, settings, model, tasks, retention, sweepRetention,
 
     /** Begrüßung mit KI-Hinweis; im Praxismodus mit Notruf-Hinweis. */
     async disclosure() {
@@ -148,6 +153,7 @@ function createAgent(config, deps = {}) {
      */
     async turn({ sessionId, channel = "phone", from = null, utterance }) {
       if (!model) return { say: "Der Assistent ist gerade nicht verfügbar. Bitte versuchen Sie es später noch einmal.", done: true, handover: false };
+      await sweepRetention();
       const session = await loadSession(sessionId, { channel, from });
       const cfg = await settings.get();
       const offeredTools = toolsFor(L0_TOOLS, cfg.industry, cfg.praxisBooking);
