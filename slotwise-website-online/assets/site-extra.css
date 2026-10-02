@@ -93,3 +93,8 @@
 @media (min-width:640px){.sm\:px-12{padding-left:3rem;padding-right:3rem}}
 @media (min-width:1024px){.lg\:grid-cols-\[1\.05fr_1fr\]{grid-template-columns:1.05fr 1fr}}
 @media (min-width:1024px){.lg\:grid-cols-\[1\.15fr_1fr\]{grid-template-columns:1.15fr 1fr}}
+
+/* Startseite: kompakter Live-Feed (SwLiveFeedCompact) */
+.gap-8{gap:2rem}.max-h-\[22rem\]{max-height:22rem}.bg-emerald-50{background-color:#ecfdf5}.text-emerald-600{color:#059669}
+.line-clamp-2{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+@media (min-width:1024px){.lg\:gap-12{gap:3rem}.lg\:grid-cols-\[minmax\(0\,5fr\)_minmax\(0\,7fr\)\]{grid-template-columns:minmax(0,5fr) minmax(0,7fr)}}
