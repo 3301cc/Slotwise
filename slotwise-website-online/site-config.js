@@ -13,7 +13,7 @@ window.SLOTWISE_ENV = {
   VITE_COMPANY_LEGAL_FORM: "Einzelunternehmen", // "Einzelunternehmen": Inhaber statt "Vertreten durch", Register/USt-IdNr. nur wenn gesetzt
   VITE_COMPANY_STREET: "",
   VITE_COMPANY_CITY: "",        // z. B. "40213 Düsseldorf"
-  VITE_COMPANY_EMAIL: "",
+  VITE_COMPANY_EMAIL: "hi@calensync.eu",
   VITE_COMPANY_PHONE: "+49 155 1151216",
   VITE_COMPANY_REPRESENTATIVE: "",
   VITE_COMPANY_REGISTER: "",    // z. B. "Amtsgericht Düsseldorf, HRB 12345"
